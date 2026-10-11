@@ -108,6 +108,25 @@
   `input_named_within_ms + input_other_ms == input_ms()` 加桥接式
   `decode + resize + crop == input_named_within_ms + input_overflow_ms`。
 
+## 分位口径统一（P0-2，未发布）
+
+破坏性口径变更，对应 `docs/12-structure-refactor-plan.md` 的 P0-2（L-1 / D-3）。
+
+- **全 crate 唯一的分位实现**是 `evaluation::stats::percentile`（线性插值，
+  `position = q * (n - 1)`，与 numpy 默认 `linear` 一致）。此前页面基准
+  （`bench_warm_e2e::stats`：下中位 + 最近秩）与表格报告（`table::run::summarize`：
+  最近秩）各写一套，对同一组样本会给出不同读数。
+- **口径变更（数值会变，键名不变）**：`[1,2,3,4]` 的 p50 从页面基准的 `2`、表格报告的
+  `3.0` 统一为 `2.5`；p90 从 `4` 统一为 `3.7`。三份报告的统计键集合逐一保持不变。
+- **公式评测报告结构不变**：`Stats` 字段与序列化结构原样保留，其分位本就是线性，
+  因此不新增、不删除任何键，也不加标记。
+- **新增 `percentile_method` 标记**：页面基准与表格报告在**报告顶层**写
+  `"percentile_method": "linear"`（单点常量 `evaluation::stats::PERCENTILE_METHOD`）。
+  旧报告没有这个键，按“无标记 = 旧口径”解读。
+- **跨版本不可比**：`tools/check_provider_claims.ps1` 的比较前提是“same fingerprint”，
+  分位口径变化不体现在指纹里。`tests/baseline/windows-baseline/*.json` 等**已入库基线的
+  数字来自旧口径**，按裁决**不重建**，因此不得把新跑出的分位数字与这些旧基线并列比较。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

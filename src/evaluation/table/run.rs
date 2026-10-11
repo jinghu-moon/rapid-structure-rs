@@ -622,6 +622,9 @@ pub fn run_table_evaluation(
         // 字段"去猜自己拿到的是哪一种。
         "domain": "table",
         "tool": "table_eval",
+        // P0-2：耗时/计数分布的分位口径标记（与页面基准同一个单点值）。
+        // 旧报告无此键，按“无标记 = 旧的最近秩口径”解读，不可与新报告并列比较。
+        "percentile_method": crate::evaluation::stats::PERCENTILE_METHOD,
         "content_source": config.content.as_str(),
         // 表格路径自己的 det 分辨率（doc 09 §11 = doc 07 的 R2）。写进报告是必须的：
         // 完整 TEDS 的绝对值绑定在产出文本的那份引擎配置上，而同一份 ocr_config 会被
@@ -1523,22 +1526,22 @@ pub fn digest_file(path: &Path) -> Result<(u64, String)> {
 }
 
 /// 报告里的耗时/计数分布。
+///
+/// P0-2：分位口径统一到 `evaluation::stats::percentile`（线性插值），不再是本文件
+/// 旧的“最近秩”闭包。键名一律不变（`count/min/p50/p90/max/mean`）；报告顶层另写
+/// `percentile_method` 标记口径。空分布只报 `count`（不 panic）。
 fn summarize(values: &[f64]) -> Value {
     if values.is_empty() {
         return json!({ "count": 0 });
     }
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
-    let percentile = |q: f64| -> f64 {
-        let index = ((sorted.len() - 1) as f64 * q).round() as usize;
-        sorted[index]
-    };
     let sum: f64 = sorted.iter().sum();
     json!({
         "count": sorted.len(),
         "min": sorted[0],
-        "p50": percentile(0.50),
-        "p90": percentile(0.90),
+        "p50": crate::evaluation::stats::percentile(&sorted, 0.50),
+        "p90": crate::evaluation::stats::percentile(&sorted, 0.90),
         "max": sorted[sorted.len() - 1],
         "mean": sum / sorted.len() as f64,
     })
@@ -1607,6 +1610,25 @@ mod tests {
         assert_eq!(summary["min"], 1.0);
         assert_eq!(summary["max"], 4.0);
         assert_eq!(summary["mean"], 2.5);
+    }
+
+    /// P0-2 对拍用例（消除 L-1 的“未对拍”）：表格报告的 p50/p90 与共享层
+    /// `stats::percentile` 逐值一致，且 p50 与 `Stats` 的线性口径一致。
+    #[test]
+    fn the_table_summary_quantiles_agree_with_the_shared_percentile() {
+        use crate::evaluation::stats::{Stats, percentile};
+        let values = [3.0, 1.0, 4.0, 2.0];
+        let mut sorted = values.to_vec();
+        sorted.sort_by(f64::total_cmp);
+
+        let summary = summarize(&values);
+        assert_eq!(summary["p50"], percentile(&sorted, 0.50));
+        assert_eq!(summary["p90"], percentile(&sorted, 0.90));
+        // [1,2,3,4] 的线性 p50=2.5、p90=3.7（不再是最近秩的 3.0 / 4.0）。
+        assert_eq!(summary["p50"], 2.5);
+        assert!((summary["p90"].as_f64().unwrap() - 3.7).abs() < 1e-12);
+        // p50 与 `Stats` 的序列化读数一致（两份报告同一口径）。
+        assert_eq!(summary["p50"], Stats::from_samples(values.to_vec()).p50_ms);
     }
 
     #[test]

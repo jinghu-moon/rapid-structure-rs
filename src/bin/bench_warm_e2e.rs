@@ -1,4 +1,5 @@
 use clap::Parser;
+use rapid_structure_rs::evaluation::stats::{PERCENTILE_METHOD, percentile};
 use rapid_structure_rs::{
     ClassifierPlan, ClassifierPolicy, DetectionPolicy, EngineConfig, ImageInput, OcrEngine,
     OcrRequest, OutputPolicy, PreprocessPolicy, RapidOcrEngine, RecognitionPolicy, StagePlan,
@@ -215,6 +216,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // 让“版本”这一项可以直接被 grep 到，不必先理解整个指纹结构。
             "ort_runtime_version": rapid_structure_rs::ort_runtime_version(),
         },
+        "percentile_method": PERCENTILE_METHOD,
         "stats": {
             "wall_ms": stats(&wall),
             "ocr_total_ms": stats(&total),
@@ -256,7 +258,10 @@ fn stats(v: &[f64]) -> serde_json::Value {
     let mut s = v.to_vec();
     s.sort_by(|a, b| a.total_cmp(b));
     let avg = s.iter().sum::<f64>() / s.len() as f64;
-    json!({"count":s.len(),"avg":avg,"p50":s[(s.len()-1)/2],"p90":s[((s.len()-1) as f64*0.9).round() as usize],"min":s[0],"max":s[s.len()-1]})
+    // P0-2：p50/p90 统一走共享层 `stats::percentile`（线性插值），不再是旧的
+    // “下中位 + 最近秩”。键名不变（`count/avg/p50/p90/min/max`），口径由报告顶层
+    // 的 `percentile_method` 标记。
+    json!({"count":s.len(),"avg":avg,"p50":percentile(&s,0.50),"p90":percentile(&s,0.90),"min":s[0],"max":s[s.len()-1]})
 }
 
 /// `None` 计时（某个阶段没有运行）不得被当成 0 ms 混进统计。
@@ -572,6 +577,29 @@ mod tests {
             "an empty distribution reports only `count`"
         );
         assert_eq!(empty["count"], 0);
+    }
+
+    /// P0-2 对拍用例：页面基准的 p50/p90 现在与共享层 `stats::percentile`（线性）一致。
+    ///
+    /// `[1,2,3,4]` 旧口径给出 `p50=2`（下中位）、`p90=4`（最近秩）；统一后
+    /// 应为 `p50=2.5`、`p90=3.7`。键名不变（上方契约用例已钉住）。
+    #[test]
+    fn the_page_benchmark_stats_use_the_shared_linear_percentile() {
+        use rapid_structure_rs::evaluation::stats::percentile;
+        let sorted = [1.0, 2.0, 3.0, 4.0];
+        let full = stats(&[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(full["p50"], percentile(&sorted, 0.50));
+        assert_eq!(full["p50"], 2.5);
+        assert!((full["p90"].as_f64().unwrap() - 3.7).abs() < 1e-12);
+    }
+
+    /// P0-2：页面基准报告顶层写的 `percentile_method` 必须等于单点常量 `"linear"`。
+    #[test]
+    fn the_page_benchmark_declares_the_linear_percentile_method() {
+        assert_eq!(
+            rapid_structure_rs::evaluation::stats::PERCENTILE_METHOD,
+            "linear"
+        );
     }
 
     /// 手工构造账本：只填恒等式用到的分量，其余为 0；

@@ -5,6 +5,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 分位口径的**唯一标记值**（P0-2 / N1 裁决）。
+///
+/// 三份报告（页面基准 / 表格报告）都在报告顶层写 `percentile_method: PERCENTILE_METHOD`，
+/// 让跨版本比较能识别“这份数字是线性插值口径”。公式评测的 `Stats` 结构不变，其分位
+/// 本就是线性，无需标记。旧报告没有这个键，按“无标记 = 旧口径”解读。
+pub const PERCENTILE_METHOD: &str = "linear";
+
 /// 一个指标的采样统计（毫秒）。
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Stats {
@@ -44,10 +51,30 @@ impl Stats {
             stddev_ms: variance.sqrt(),
         }
     }
+
+    /// 需要额外分位时的通用入口：**不给 `Stats` 增加任何序列化字段**，只取数。
+    ///
+    /// 报告层要哪些分位由该报告自己的适配器声明（见 `table::run::summarize`、
+    /// `bench_warm_e2e::stats`），口径统一走 [`percentile`]。
+    pub fn quantile(values: &[f64], q: f64) -> f64 {
+        if values.is_empty() {
+            return 0.0;
+        }
+        let mut sorted = values.to_vec();
+        sorted.sort_by(f64::total_cmp);
+        percentile(&sorted, q)
+    }
 }
 
 /// 线性插值百分位，与 numpy `percentile` 默认插值一致。
+///
+/// 入参必须**已按升序排列**且全部有限；含 `NaN`/`Inf` 的样本一律拒绝（P0-2 定义用例），
+/// 避免非有限值经插值悄悄污染分位读数。
 pub fn percentile(sorted: &[f64], fraction: f64) -> f64 {
+    assert!(
+        sorted.iter().all(|value| value.is_finite()),
+        "percentile samples must be finite; found a non-finite value"
+    );
     if sorted.is_empty() {
         return 0.0;
     }
@@ -66,7 +93,7 @@ pub fn percentile(sorted: &[f64], fraction: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Stats, percentile};
+    use super::{PERCENTILE_METHOD, Stats, percentile};
 
     /// 公式评测报告把 `Stats` 当作字段整体序列化（`formula_eval.rs` 的
     /// `per_image_ms`/`per_batch_ms`，`formula_bench.rs` 同理），所以这三份报告里
@@ -112,7 +139,43 @@ mod tests {
         assert!((percentile(&values, 0.0) - 1.0).abs() < 1e-12);
         assert!((percentile(&values, 1.0) - 4.0).abs() < 1e-12);
         assert!((percentile(&values, 0.5) - 2.5).abs() < 1e-12);
+        // P0-2 钉住的新读数：[1,2,3,4] 的 p90 = 3.7（position = 0.9*3 = 2.7）。
+        assert!((percentile(&values, 0.9) - 3.7).abs() < 1e-12);
         assert!((percentile(&values, 0.95) - 3.85).abs() < 1e-12);
+    }
+
+    #[test]
+    fn percentile_of_an_empty_sample_is_zero() {
+        assert_eq!(percentile(&[], 0.5), 0.0);
+    }
+
+    #[test]
+    fn percentile_of_a_single_sample_ignores_the_fraction() {
+        assert_eq!(percentile(&[7.0], 0.0), 7.0);
+        assert_eq!(percentile(&[7.0], 0.5), 7.0);
+        assert_eq!(percentile(&[7.0], 1.0), 7.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be finite")]
+    fn percentile_rejects_non_finite_samples() {
+        percentile(&[1.0, f64::NAN, 3.0], 0.5);
+    }
+
+    #[test]
+    fn quantile_matches_percentile_without_touching_the_serialized_shape() {
+        let values = [4.0, 1.0, 3.0, 2.0];
+        // 通用入口自行排序，结果与预先排序后调用 `percentile` 一致。
+        assert!((Stats::quantile(&values, 0.9) - 3.7).abs() < 1e-12);
+        assert_eq!(Stats::quantile(&[], 0.5), 0.0);
+        // `quantile` 不得往 `Stats` 的序列化里添加任何字段。
+        let value = serde_json::to_value(Stats::from_samples(values.to_vec())).unwrap();
+        assert!(value.get("quantile").is_none());
+    }
+
+    #[test]
+    fn the_percentile_method_marker_is_locked_to_linear() {
+        assert_eq!(PERCENTILE_METHOD, "linear");
     }
 
     #[test]
