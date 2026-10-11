@@ -262,6 +262,27 @@
   `text_lines` / `region_indices`；删除就地拼 bbox 的 `quad_to_flat8` 辅助函数。
 - 新增对拍用例：规范视图导出的两视图与合并前装配手拼结果逐字段相等（含倾斜/负坐标/退化四边形）。
 
+## 表格净化白名单规范化与转义合并（P1-6，未发布）
+
+对应 `docs/12-structure-refactor-plan.md` 的 P1-6（D-3 / N2 裁决：唯一权威规范文件 + 生成脚本，
+生成物入库）。把 Rust 引擎与页面的表格 HTML 净化收敛到同一份白名单，并以指纹测试兜底防止两者漂移；
+附带四项产品可见的收紧。
+
+- **转义合并**：删除 `table::emitter` 私有的逐字符 `escape_html`，`encode_text` 的 `Escape` 分支改调
+  `output::html::escape_html`——转义从此全链单点。新增字节对照用例（委派输出与旧逐字符实现逐字节相等）。
+- **权威规范 + 生成 + 指纹对拍**：新建 `assets/table_html_whitelist.json`（唯一权威）与
+  `tools/generate-table-whitelist.mjs`（派生 `src/output/table_whitelist.rs` 与页面 `index.html` 的
+  `generated:table-whitelist` 标记区，两份内嵌同一个对规范化串取 sha256 的 fingerprint）。`output::html`
+  新增 fingerprint 测试从权威文件重算指纹，与 Rust 常量、页面生成区注释三者比对，任一不一致即失败；
+  `--check` 模式供门禁校验生成物是否与权威同步。
+- **消费点合并**：`output::html` 删除内联的 `ALLOWED_TABLE_TAGS` / `ALIGNMENTS`，改消费 `table_whitelist::*`；
+  `sanitize_attrs` 用 `ALLOWED_TABLE_ATTRS.contains` + `MIN_SPAN..=MAX_SPAN` 判据重写。
+- **产品可见的收紧（破坏性，但更安全）**：① 引擎与页面标签集统一为引擎的 28 标签集（含 `html`/`body`
+  外壳，页面因此从原 11 标签扩集；未引入任何新增可执行标签/属性）；② `align`/`valign` 按安全交集移出
+  白名单（真实发射器从不产出它们，仅保留 `colspan`/`rowspan`）；③ 引擎 span 上界由 1000 收紧到 64，与页面对齐；
+  ④ 页面 `colspan` 下界由 `>1` 改为 `>=1`，与引擎的 `[1,64]` 一致，保证双重净化幂等。
+- 新增用例：span 边界（1✓ / 64✓ / 65✗ / 1000✗）、`align`/`valign` 拒绝、转义字节对照、fingerprint 三份对拍。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

@@ -3052,20 +3052,17 @@
    **刻意不用正则**：HTML 的容错解析规则用正则是写不对的，而"正则净化"漏掉任何一个
    变体就是一个可执行注入点（docs/11 §4.3 E16.3.2 明确禁止）。
    `DOMParser` 解析 `text/html` 得到的文档是**惰性**的：脚本不执行、图片不加载。 */
-        const TABLE_ALLOWED_TAGS = [
-          "table",
-          "thead",
-          "tbody",
-          "tr",
-          "td",
-          "th",
-          "b",
-          "i",
-          "sub",
-          "sup",
-          "br",
-        ];
+        /* 表格净化白名单：由 assets/table_html_whitelist.json 经
+           tools/generate-table-whitelist.mjs 生成，**请勿手改**。下方标记区之间的内容
+           每次生成都被整段重写；fingerprint 测试断言它与权威规范、与 Rust 侧
+           src/output/table_whitelist.rs 三者一致。 */
+        /* <generated:table-whitelist> */
+        const TABLE_ALLOWED_TAGS = ["html", "body", "table", "thead", "tbody", "tfoot", "caption", "colgroup", "col", "tr", "th", "td", "br", "sub", "sup", "b", "i", "u", "em", "strong", "span", "p", "div", "ul", "ol", "li", "code", "small"];
         const TABLE_ALLOWED_ATTRS = ["colspan", "rowspan"];
+        const TABLE_MIN_SPAN = 1;
+        const TABLE_MAX_SPAN = 64;
+        /* fingerprint=rapid-structure/table-html-whitelist/v1 sha256=32cf61e192b52ea82bd3d74cd735c90a8edd840bd126f835f29d399b6f77d789 */
+        /* </generated:table-whitelist> */
         function sanitizeTableHtml(html) {
           if (typeof html !== "string" || html === "") return "";
           let doc;
@@ -3097,10 +3094,11 @@
                   const raw = child.getAttribute(name);
                   if (raw === null) return;
                   const n = Number(raw);
-                  /* 只接受 >1 的整数：`colspan="1"` 与默认等价，`colspan="0"`、
-                     `colspan="abc"`、`colspan="1e9"` 一律当作没写（HTML 规范里 0 是
-                     "跨到最后一列"，我们不复刻这个特例——宁可少一个属性，不可多一个面）。 */
-                  if (Number.isInteger(n) && n > 1 && n <= 64)
+                  /* 只接受 [TABLE_MIN_SPAN, TABLE_MAX_SPAN] 的整数：`colspan="0"`、
+                     `colspan="abc"`、`colspan="1e9"`、`colspan="65"` 一律当作没写
+                     （HTML 规范里 0 是"跨到最后一列"，我们不复刻这个特例——宁可少一个
+                     属性，不可多一个面）。下界与引擎侧一致，保证双重净化幂等。 */
+                  if (Number.isInteger(n) && n >= TABLE_MIN_SPAN && n <= TABLE_MAX_SPAN)
                     attrs += " " + name + '="' + n + '"';
                 });
               }

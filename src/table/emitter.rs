@@ -372,27 +372,10 @@ fn text_for(index: usize, cell_texts: &[String]) -> Result<&str> {
 fn encode_text(text: &str, policy: TextPolicy) -> String {
     match policy {
         TextPolicy::Raw => text.to_string(),
-        TextPolicy::Escape => escape_html(text),
+        // 与页面/报告出口共用同一份 HTML 转义（`crate::output::html::escape_html`）：
+        // 同形五映射（`& < > " '`），合并前后逐字节相同，避免两处转义漂移。
+        TextPolicy::Escape => crate::output::html::escape_html(text),
     }
-}
-
-/// HTML 文本节点转义。
-///
-/// 转义 `'` 与 `"` 的理由不是"它们出现在文本里会破坏结构"（文本节点里不会），而是
-/// 这段文本可能被嵌进属性或别处；统一转义比按位置区分更容易证明正确。
-fn escape_html(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 /// Markdown 单元格转义。

@@ -1713,7 +1713,7 @@ struct TableDecoded {
 ///
 /// 生产上两条路径目前**产出相同字节**：`TextPolicy::Escape`（用户默认）已经让
 /// 单元格文本里的 `<` 变成 `&lt;`，而发射器只会写出白名单内的标签与
-/// `rowspan`/`colspan`/`align`/`valign` 四种属性，因此净化是空操作。净化在这里是
+/// `rowspan`/`colspan` 两种属性，因此净化是空操作。净化在这里是
 /// **纵深防御**：它约束的是未来任何新的发射路径，而不是今天的输出。
 fn finalize_table_html(
     html: String,
@@ -2919,7 +2919,7 @@ mod table_html_policy_tests {
     /// 而那正是需要知道的时候。
     #[test]
     fn sanitizing_is_a_no_op_on_whitelisted_emitter_output() {
-        let table_html = "<table><thead><tr><td rowspan=\"2\" colspan=\"3\">a</td></tr></thead><tbody><tr><td align=\"center\">b</td></tr></tbody></table>";
+        let table_html = "<table><thead><tr><td rowspan=\"2\" colspan=\"3\">a</td></tr></thead><tbody><tr><td colspan=\"2\">b</td></tr></tbody></table>";
         let shell = format!("<html><body>{table_html}</body></html>");
         let (escaped_html, escaped_table) = super::finalize_table_html(
             shell.clone(),

@@ -5,4 +5,5 @@
 pub mod html;
 pub mod json;
 pub mod markdown;
+pub(crate) mod table_whitelist;
 pub mod visualize;

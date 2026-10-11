@@ -1,5 +1,6 @@
 use std::{fmt::Write as _, path::Path};
 
+use crate::output::table_whitelist::{ALLOWED_TABLE_ATTRS, ALLOWED_TABLE_TAGS, MAX_SPAN, MIN_SPAN};
 use crate::{OcrJsonItem, OcrOutput, error::Result};
 
 /// 报告渲染模式（`docs/05` §9.5）。
@@ -343,22 +344,16 @@ pub(crate) fn escape_attr(value: &str) -> String {
         .replace('\t', "&#9;")
 }
 
-/// 表格 HTML 的标签白名单（`docs/11` §3 E15.2 / G8）。
-///
-/// 含 `<html>` / `<body>`：引擎的 `TableOutcome::html` 带着这一层外壳，而官方
-/// `metric.py` 的 `pred.xpath('body/table')` 依赖它 —— 净化不能把外壳吃掉。
-const ALLOWED_TABLE_TAGS: &[&str] = &[
-    "html", "body", "table", "thead", "tbody", "tfoot", "caption", "colgroup", "col", "tr", "th",
-    "td", "br", "sub", "sup", "b", "i", "u", "em", "strong", "span", "p", "div", "ul", "ol", "li",
-    "code", "small",
-];
-
-/// 表格 HTML 的**唯一**净化实现（`docs/11` §3 E15.2）。
+/// 表格 HTML 的**唯一**净化实现（`docs/11` §3 E15.2；白名单权威见 `docs/12` §4.2 P1-6）。
 ///
 /// # 它做什么
 ///
-/// 只保留 [`ALLOWED_TABLE_TAGS`] 里的标签与取值合法的 `rowspan`/`colspan`/`align`/`valign`，
-/// 丢掉 HTML 注释，其余标记一律从输出里移除。
+/// 只保留 [`ALLOWED_TABLE_TAGS`] 里的标签与取值合法的 `colspan`/`rowspan`（整数 span 必须
+/// 落在 `MIN_SPAN..=MAX_SPAN`，即 1..=64），丢掉 HTML 注释，其余标记一律从输出里移除。
+/// 白名单集合与上下界都不是本地字面量，而是 `table_whitelist`（由 `assets/table_html_whitelist.json`
+/// 生成）—— 页面渲染侧读同一规范，两侧判据因此不会漂移。含 `<html>` / `<body>`：引擎的
+/// `TableOutcome::html` 带着这一层外壳，而官方 `metric.py` 的 `pred.xpath('body/table')` 依赖它。
+/// `align`/`valign` 已按安全交集从白名单移除（与页面对齐）。
 ///
 /// **文本节点原样通过**：调用方必须已经用 `TextPolicy::Escape` 转义过单元格文本，
 /// 否则这里再转义一次会把 `&lt;` 变成 `&amp;lt;`。这条前置条件由 `Escape` 保证 ——
@@ -439,12 +434,9 @@ fn sanitize_tag(inner: &str) -> Option<String> {
     Some(format!("<{name}{}>", sanitize_attrs(attrs)))
 }
 
-/// 属性串 → 只保留白名单属性（`rowspan`/`colspan` 必须是 1..=1000 的整数，
-/// `align`/`valign` 必须落在固定枚举里）。取值一律重新拼装，因此没有编码歧义。
+/// 属性串 → 只保留 [`ALLOWED_TABLE_ATTRS`] 里的属性（当前为 `colspan`/`rowspan`），
+/// 取值必须是 `MIN_SPAN..=MAX_SPAN`（即 1..=64）的正整数。取值一律重新拼装，因此没有编码歧义。
 fn sanitize_attrs(raw: &str) -> String {
-    const ALIGNMENTS: [&str; 7] = [
-        "left", "center", "right", "top", "middle", "bottom", "justify",
-    ];
     let bytes = raw.as_bytes();
     let mut out = String::new();
     let mut index = 0usize;
@@ -488,22 +480,14 @@ fn sanitize_attrs(raw: &str) -> String {
                 value = raw[value_start..index].to_string();
             }
         }
-        match name.as_str() {
-            "rowspan" | "colspan" => {
-                // 只接受正整数，且拒绝荒唐的大值（`rowspan="999999"` 会让渲染器炸掉）。
-                if let Ok(number) = value.parse::<u32>()
-                    && (1..=1000).contains(&number)
-                {
-                    out.push_str(&format!(" {name}=\"{number}\""));
-                }
+        if ALLOWED_TABLE_ATTRS.contains(&name.as_str()) {
+            // 白名单属性都是 span 整数：只接受 [MIN_SPAN, MAX_SPAN] 的整数，
+            // 其余（`rowspan="999999"`、`colspan="0"`、非数字）一律丢弃。
+            if let Ok(number) = value.parse::<u32>()
+                && (MIN_SPAN..=MAX_SPAN).contains(&number)
+            {
+                out.push_str(&format!(" {name}=\"{number}\""));
             }
-            "align" | "valign" => {
-                let normalized = value.to_ascii_lowercase();
-                if ALIGNMENTS.contains(&normalized.as_str()) {
-                    out.push_str(&format!(" {name}=\"{normalized}\""));
-                }
-            }
-            _ => {}
         }
     }
     out
@@ -531,7 +515,8 @@ const TABLES_STYLE: &str = r#"
 #[cfg(test)]
 mod tests {
     use super::{
-        REPORT_SCRIPT, ReportMode, relative_image_name, render_report, sanitize_table_html,
+        REPORT_SCRIPT, ReportMode, escape_html, relative_image_name, render_report,
+        sanitize_table_html,
     };
     use crate::{OcrJsonItem, OcrTableItem};
 
@@ -998,6 +983,143 @@ mod tests {
         assert_eq!(
             relative_image_name(std::path::Path::new("case 01.jpg")),
             "case 01-source.jpg"
+        );
+    }
+
+    /// P1-6a 合并前的逐字符对照：`table::emitter` 曾自带一份逐字符 `escape_html`，
+    /// 现在它委派到这里。用一个独立的逐字符参考实现钉住两者逐字节相同（含 `&<>"'`、
+    /// 已存实体不会被二次转义、`\0` 与多字节字符原样通过）。
+    #[test]
+    fn escape_html_matches_the_removed_char_by_char_reference() {
+        let reference = |text: &str| -> String {
+            let mut out = String::with_capacity(text.len());
+            for ch in text.chars() {
+                match ch {
+                    '&' => out.push_str("&amp;"),
+                    '<' => out.push_str("&lt;"),
+                    '>' => out.push_str("&gt;"),
+                    '"' => out.push_str("&quot;"),
+                    '\'' => out.push_str("&#39;"),
+                    _ => out.push(ch),
+                }
+            }
+            out
+        };
+        for sample in [
+            "&amp; <tag> \"attr\" 'quoted'",
+            "a<b>&c\"d'e",
+            "\u{0}nul\u{0}byte 汉字 ẞ",
+            "&<>",
+            "",
+            "nothing special",
+        ] {
+            assert_eq!(escape_html(sample), reference(sample), "sample: {sample:?}");
+        }
+    }
+
+    /// P1-6 fingerprint 测试：从权威规范重算指纹，与两份生成物（Rust 常量 + 页面生成区）
+    /// 对拍。任一不一致即失败 —— 这是"两份实现共享一个规范"的可执行保证，而不是靠约定。
+    #[test]
+    fn whitelist_artifacts_match_the_authoritative_spec() {
+        use sha2::{Digest, Sha256};
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let spec_raw = std::fs::read_to_string(root.join("assets/table_html_whitelist.json"))
+            .expect("whitelist spec must exist");
+        let spec: serde_json::Value = serde_json::from_str(&spec_raw).expect("spec is valid JSON");
+
+        let tags: Vec<String> = spec["tags"]
+            .as_array()
+            .expect("tags array")
+            .iter()
+            .map(|v| v.as_str().expect("tag string").to_string())
+            .collect();
+        let attrs: Vec<String> = spec["attrs"]
+            .as_array()
+            .expect("attrs array")
+            .iter()
+            .map(|v| v.as_str().expect("attr string").to_string())
+            .collect();
+        let min_span = spec["min_span"].as_u64().expect("min_span");
+        let max_span = spec["max_span"].as_u64().expect("max_span");
+        let policy = spec["text_policy"].as_str().expect("text_policy");
+
+        // 规范化串必须与 tools/generate-table-whitelist.mjs 的 canonical() 逐字节一致。
+        let canonical = format!(
+            "rapid-structure/table-html-whitelist/v1\ntags={}\nattrs={}\nmin_span={min_span}\nmax_span={max_span}\ntext_policy={policy}\n",
+            tags.join(","),
+            attrs.join(",")
+        );
+        let digest = Sha256::digest(canonical.as_bytes());
+        let fingerprint: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+
+        // (a) Rust 生成物里的指纹常量与 Rust 常量集合必须等于规范。
+        assert_eq!(
+            crate::output::table_whitelist::FINGERPRINT,
+            fingerprint,
+            "Rust FINGERPRINT is stale; re-run the generator"
+        );
+        assert_eq!(
+            crate::output::table_whitelist::ALLOWED_TABLE_TAGS,
+            tags.iter().map(String::as_str).collect::<Vec<_>>(),
+            "Rust tag list diverges from the spec"
+        );
+        assert_eq!(
+            crate::output::table_whitelist::ALLOWED_TABLE_ATTRS,
+            attrs.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert_eq!(crate::output::table_whitelist::MIN_SPAN as u64, min_span);
+        assert_eq!(crate::output::table_whitelist::MAX_SPAN as u64, max_span);
+
+        // (b) 页面生成区里的指纹与规范重算的一致（两侧共享同一指纹）。
+        let page = std::fs::read_to_string(root.join("src/bin/web/index.html"))
+            .expect("page template must exist");
+        let marker = "fingerprint=rapid-structure/table-html-whitelist/v1 sha256=";
+        let at = page
+            .find(marker)
+            .expect("page must carry the whitelist fingerprint");
+        let page_fp = &page[at + marker.len()..at + marker.len() + 64];
+        assert_eq!(
+            page_fp, fingerprint,
+            "page fingerprint diverges from the spec"
+        );
+    }
+
+    /// P1-6 span 边界：1 / 64 接受，65 / 1000 拒绝。页面侧因共享同一
+    /// `TABLE_MIN_SPAN`/`TABLE_MAX_SPAN`（上面的 fingerprint 测试已钉住）而判据一致。
+    #[test]
+    fn span_bounds_are_1_to_64() {
+        let cell = |span: &str| format!("<table><tr><td colspan=\"{span}\">x</td></tr></table>");
+        assert!(
+            sanitize_table_html(&cell("1")).contains("colspan=\"1\""),
+            "span=1 必须保留"
+        );
+        assert!(
+            sanitize_table_html(&cell("64")).contains("colspan=\"64\""),
+            "span=64 必须保留"
+        );
+        assert!(
+            !sanitize_table_html(&cell("65")).contains("colspan"),
+            "span=65 必须丢弃"
+        );
+        assert!(
+            !sanitize_table_html(&cell("1000")).contains("colspan"),
+            "span=1000 必须丢弃"
+        );
+    }
+
+    /// P1-6 属性收紧：`align`/`valign` 不再放行（与页面对齐到安全交集）。
+    #[test]
+    fn align_and_valign_are_no_longer_allowed() {
+        let cleaned = sanitize_table_html(
+            "<table><tr><td align=\"center\" valign=\"top\">x</td></tr></table>",
+        );
+        assert!(!cleaned.contains("align"), "{cleaned}");
+        assert!(!cleaned.contains("valign"), "{cleaned}");
+        // 标签骨架与文本不受影响。
+        assert!(
+            cleaned.contains("<table><tr><td>x</td></tr></table>"),
+            "{cleaned}"
         );
     }
 }
