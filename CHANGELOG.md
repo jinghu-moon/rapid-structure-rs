@@ -189,6 +189,24 @@
   调度器统一收口。新增 `PageRoute` 四组合矩阵与 `plan` 的 `roi`/`tile` 拒绝用例；
   serve 的 M4 公式队列与 E16.2 表格路由两块全绿。
 
+## 输入物化入口单点化（P1-5，未发布）
+
+对应 `docs/12-structure-refactor-plan.md` 的 P1-5：把“请求 → 像素”的转换从两处重复
+收敛为单一入口。逐像素行为等价，非破坏性（不改动任何公开 API）。“只解码一次”归 P2-3，
+本阶段**保持两次解码**不变。
+
+- 新增模块私有 `MaterializedInput { rec, original_size }` 与 `RapidOcrEngine::materialize
+  (&OcrRequest)`：一次把 `Pixels`/`Encoded`/`File`/`Url`/`Image` 五个变体物化为**整页**（未裁
+  `roi`）的 `RecImage`。校验/限长顺序统一取 `view.validate() → ensure_decode_pixels →
+  to_bgr(None)`（与 `decode_source_image`、分块原路径一致）。
+- `recognize_text` 与 `recognize_tiled_request` 各自那段五变体 `match request.input` 删除，
+  改为调用 `materialize`：文本路由由 `rec_image_input` 裁 `roi`，分块路由由 `crop_imm`
+  裁 `roi`；`roi` 仍不在 `materialize` 里应用（页面级阶段需要未裁的整页像素）。
+- `decode_source_image` 保持不动：页面级阶段的第二次解码仍由它发生，故页级路由的解码
+  次数仍为 2（一次 `decode_source_image` + 一次回落文本通道的 `load_with_limit`）。
+- 新增 `input::image_loader` 的测试专用解码计数（`thread_local`），并用它钉住“纯文本=1、
+  页面级=2”（`materialization_preserves_the_decode_count_per_route`，随真实资产门控）。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

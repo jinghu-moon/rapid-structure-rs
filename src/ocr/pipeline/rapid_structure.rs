@@ -487,6 +487,17 @@ fn rec_image_input(
     Ok((OcrInput::Image(cropped), original_size, (roi.x, roi.y)))
 }
 
+/// 一个已物化的请求输入：**整页**（未裁 roi）的 `RecImage` + 页尺寸。
+///
+/// 这是"把请求变成像素"的唯一入口（P1-5）。roi 不在这里应用：文本与分块两条路径各自
+/// 把 `rec` 裁到 roi（`rec_image_input` / `crop_imm`），而页面级阶段的 `decode_source_image`
+/// 需要**未抹白、未裁的整页像素**。`Encoded` 输入在此只解码一次（`load_with_limit`）；
+/// 页面级阶段的第二次解码由 `decode_source_image` 保持，故整条页级路径的解码次数仍为 2。
+struct MaterializedInput {
+    rec: crate::config::RecImage,
+    original_size: crate::api::ImageSize,
+}
+
 fn rec_image_to_rgba(image: &crate::config::RecImage) -> Result<image::RgbaImage> {
     let bgr = image.as_bgr_cow();
     let mut rgba = vec![0_u8; image.width() * image.height() * 4];
@@ -650,8 +661,8 @@ impl RapidOcrEngine {
     /// 未启用公式时 `recognize` 直接走这里，不经过任何公式代码。
     fn recognize_text(&mut self, request: crate::api::OcrRequest) -> Result<crate::api::OcrOutput> {
         use crate::api::{
-            ClassifierPolicy, ImageInput, OcrRegion, RegionSource, StageReport, StageState,
-            StageTiming, TextOrientation, WordKind,
+            ClassifierPolicy, OcrRegion, RegionSource, StageReport, StageState, StageTiming,
+            TextOrientation, WordKind,
         };
         if let Some(tile) = request.preprocess.tile {
             return self.recognize_tiled_request(request, tile);
@@ -661,55 +672,9 @@ impl RapidOcrEngine {
             width: roi.width,
             height: roi.height,
         });
-        let (input, original_size, offset) = match request.input {
-            ImageInput::Pixels(view) => {
-                ensure_decode_pixels(
-                    view.width as usize,
-                    view.height as usize,
-                    request.preprocess.max_decode_pixels,
-                )?;
-                let (bgr, size, offset) = view.to_bgr(request.roi)?;
-                (
-                    OcrInput::BgrU8 {
-                        width: size.width as usize,
-                        height: size.height as usize,
-                        data: bgr,
-                    },
-                    crate::api::ImageSize {
-                        width: view.width,
-                        height: view.height,
-                    },
-                    offset,
-                )
-            }
-            ImageInput::Encoded(bytes) => {
-                let image = self.inner.loader.load_with_limit(
-                    OcrInput::Bytes(bytes.to_vec()),
-                    request.preprocess.max_decode_pixels,
-                    request.preprocess.max_encoded_bytes,
-                )?;
-                rec_image_input(image, request.roi, request.preprocess.max_decode_pixels)?
-            }
-            ImageInput::File(path) => {
-                let image = self.inner.loader.load_with_limit(
-                    OcrInput::Path(path),
-                    request.preprocess.max_decode_pixels,
-                    request.preprocess.max_encoded_bytes,
-                )?;
-                rec_image_input(image, request.roi, request.preprocess.max_decode_pixels)?
-            }
-            ImageInput::Url(url) => {
-                let image = self.inner.loader.load_with_limit(
-                    OcrInput::Url(url),
-                    request.preprocess.max_decode_pixels,
-                    request.preprocess.max_encoded_bytes,
-                )?;
-                rec_image_input(image, request.roi, request.preprocess.max_decode_pixels)?
-            }
-            ImageInput::Image(image) => {
-                rec_image_input(image, request.roi, request.preprocess.max_decode_pixels)?
-            }
-        };
+        let m = self.materialize(&request)?;
+        let (input, original_size, offset) =
+            rec_image_input(m.rec, request.roi, request.preprocess.max_decode_pixels)?;
         let mut input = input;
         if matches!(
             request.preprocess.enhance,
@@ -1178,6 +1143,56 @@ impl RapidOcrEngine {
         };
         output.validate()?;
         Ok(output)
+    }
+
+    /// 把请求输入物化成**整页**像素（P1-5 的唯一入口）。
+    ///
+    /// 文本与分块两条路径原本各自有一段五变体的 `match request.input`，逐像素语义完全
+    /// 一致，只是产出形态不同（`OcrInput` vs `RgbaImage`）。这里统一收成一次：
+    /// 校验/限长顺序取 `view.validate() -> ensure_decode_pixels -> to_bgr(None)`（与
+    /// `decode_source_image`、分块原路径一致），`Encoded`/`File`/`Url` 经 `load_with_limit`
+    /// 解码一次。roi **不在这里裁剪**——`offset` 只携带偏移，裁剪仍由调用方
+    /// （`rec_image_input` / `crop_imm`）完成，页面级阶段仍需未裁的整页像素。
+    fn materialize(&self, request: &crate::api::OcrRequest) -> Result<MaterializedInput> {
+        use crate::api::ImageInput;
+        let pixels = request.preprocess.max_decode_pixels;
+        let encoded = request.preprocess.max_encoded_bytes;
+        let rec = match &request.input {
+            ImageInput::Pixels(view) => {
+                view.validate()?;
+                ensure_decode_pixels(view.width as usize, view.height as usize, pixels)?;
+                let (bgr, size, _) = view.to_bgr(None)?;
+                crate::config::RecImage::from_bgr_u8(
+                    size.width as usize,
+                    size.height as usize,
+                    bgr,
+                )?
+            }
+            ImageInput::Encoded(bytes) => self.inner.loader.load_with_limit(
+                OcrInput::Bytes(bytes.to_vec()),
+                pixels,
+                encoded,
+            )?,
+            ImageInput::File(path) => {
+                self.inner
+                    .loader
+                    .load_with_limit(OcrInput::Path(path.clone()), pixels, encoded)?
+            }
+            ImageInput::Url(url) => {
+                self.inner
+                    .loader
+                    .load_with_limit(OcrInput::Url(url.clone()), pixels, encoded)?
+            }
+            ImageInput::Image(image) => {
+                ensure_decode_pixels(image.width(), image.height(), pixels)?;
+                image.clone()
+            }
+        };
+        let original_size = crate::api::ImageSize {
+            width: rec.width() as u32,
+            height: rec.height() as u32,
+        };
+        Ok(MaterializedInput { rec, original_size })
     }
 
     /// 解码请求输入为原图 `DynamicImage`，复用共享输入层的限制与错误语义。
@@ -1878,89 +1893,9 @@ impl RapidOcrEngine {
                 "invalid tile policy".into(),
             ));
         }
-        let (rgba, original_size) = match request.input {
-            crate::api::ImageInput::Encoded(bytes) => {
-                let decoded = self.inner.loader.load_with_limit(
-                    OcrInput::Bytes(bytes.to_vec()),
-                    request.preprocess.max_decode_pixels,
-                    request.preprocess.max_encoded_bytes,
-                )?;
-                let image = rec_image_to_rgba(&decoded)?;
-                let size = crate::api::ImageSize {
-                    width: image.width(),
-                    height: image.height(),
-                };
-                (image, size)
-            }
-            crate::api::ImageInput::Pixels(view) => {
-                view.validate()?;
-                ensure_decode_pixels(
-                    view.width as usize,
-                    view.height as usize,
-                    request.preprocess.max_decode_pixels,
-                )?;
-                let (bgr, size, _) = view.to_bgr(None)?;
-                let rgb = crate::config::RecImage::from_bgr_u8(
-                    size.width as usize,
-                    size.height as usize,
-                    bgr,
-                )?
-                .as_bytes()
-                .to_vec();
-                let mut rgba = vec![0_u8; size.width as usize * size.height as usize * 4];
-                for (src, dst) in rgb
-                    .as_chunks::<3>()
-                    .0
-                    .iter()
-                    .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
-                {
-                    dst[..3].copy_from_slice(&[src[2], src[1], src[0]]);
-                    dst[3] = 255;
-                }
-                (
-                    image::RgbaImage::from_raw(size.width, size.height, rgba).ok_or_else(|| {
-                        crate::error::RapidOcrError::InvalidImage("invalid pixel buffer".into())
-                    })?,
-                    size,
-                )
-            }
-            crate::api::ImageInput::File(path) => {
-                let image = self.inner.loader.load_with_limit(
-                    OcrInput::Path(path),
-                    request.preprocess.max_decode_pixels,
-                    request.preprocess.max_encoded_bytes,
-                )?;
-                let size = crate::api::ImageSize {
-                    width: image.width() as u32,
-                    height: image.height() as u32,
-                };
-                (rec_image_to_rgba(&image)?, size)
-            }
-            crate::api::ImageInput::Url(url) => {
-                let image = self.inner.loader.load_with_limit(
-                    OcrInput::Url(url),
-                    request.preprocess.max_decode_pixels,
-                    request.preprocess.max_encoded_bytes,
-                )?;
-                let size = crate::api::ImageSize {
-                    width: image.width() as u32,
-                    height: image.height() as u32,
-                };
-                (rec_image_to_rgba(&image)?, size)
-            }
-            crate::api::ImageInput::Image(image) => {
-                let size = crate::api::ImageSize {
-                    width: image.width() as u32,
-                    height: image.height() as u32,
-                };
-                ensure_decode_pixels(
-                    size.width as usize,
-                    size.height as usize,
-                    request.preprocess.max_decode_pixels,
-                )?;
-                (rec_image_to_rgba(&image)?, size)
-            }
-        };
+        let m = self.materialize(&request)?;
+        let rgba = rec_image_to_rgba(&m.rec)?;
+        let original_size = m.original_size;
         if let Some(roi) = request.roi {
             roi.validate_against(original_size.width, original_size.height)?;
         }
@@ -2916,6 +2851,45 @@ rec:
         assert_eq!(session.inter_threads, None);
         assert_eq!(session.rayon_threads, None);
         assert!(!session.auto_tune_threads);
+    }
+
+    /// P1-5：输入物化入口收口后，各路由的**解码次数**不得改变。
+    ///
+    /// `materialize` 取代了文本与分块两条路径各自的五变体 `match`，`Encoded` 输入仍
+    /// 在文本通道解码一次（`load_with_limit`）；页面级阶段额外由 `decode_source_image`
+    /// 解码一次。这里用真实模型钉住“纯文本=1、页面级=2”，证明统一入口既没有多
+    /// 解码一次，也没有把页级路径悄悄降成一次。
+    #[test]
+    fn materialization_preserves_the_decode_count_per_route() {
+        let Some(mut assets) = assets() else {
+            return;
+        };
+        // 纯文本（公式关闭）：`Encoded` 只在 `materialize` 里解码一次。
+        let bytes = std::fs::read(&assets.page_without_detections).expect("page readable");
+        crate::input::image_loader::reset_decode_calls();
+        assets
+            .engine
+            .recognize(request(bytes.clone(), FormulaPolicy::default()))
+            .expect("plain text route must succeed");
+        assert_eq!(
+            crate::input::image_loader::decode_calls(),
+            1,
+            "the text channel must decode an Encoded input exactly once"
+        );
+
+        // 页面级公式（检测器在该页返回 0 候选 → regions 为空）：`decode_source_image`
+        // 与回落到同一段 `Encoded` 的文本通道各解码一次，合计仍为 2。
+        crate::input::image_loader::reset_decode_calls();
+        let policy = formula_policy(&assets);
+        assets
+            .engine
+            .recognize(request(bytes, policy))
+            .expect("page-level formula route must succeed");
+        assert_eq!(
+            crate::input::image_loader::decode_calls(),
+            2,
+            "the page-level route must still decode twice (source + text fallback)"
+        );
     }
 }
 

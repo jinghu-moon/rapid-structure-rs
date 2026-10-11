@@ -72,6 +72,33 @@ impl Default for LoadImage {
     }
 }
 
+// 仅在测试构建下统计"编码输入被解码成像素"的次数（`load_with_limit` 的编码分支 +
+// `load_dynamic_with_limit`）。P1-5 的判据之一是"页面级阶段的解码次数仍为 2"。
+// `LoadImage` 是 `Copy`，因此计数放在 `thread_local` 而非结构字段里；整条管线在单线程
+// 内跑完一次 `recognize`，线程局部的计数即等于该次请求的解码次数。
+#[cfg(test)]
+thread_local! {
+    static DECODE_CALLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_decode_calls() {
+    DECODE_CALLS.with(|cell| cell.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn decode_calls() -> u32 {
+    DECODE_CALLS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn count_decode() {
+    DECODE_CALLS.with(|cell| cell.set(cell.get() + 1));
+}
+
+#[cfg(not(test))]
+fn count_decode() {}
+
 impl LoadImage {
     pub fn load(&self, input: OcrInput) -> Result<RecImage> {
         self.load_with_limit(input, u64::MAX, u64::MAX)
@@ -102,6 +129,7 @@ impl LoadImage {
             OcrInput::Path(_) | OcrInput::Url(_) | OcrInput::Bytes(_) => {
                 let bytes =
                     self.read_encoded_with_limit(input, max_decode_pixels, max_encoded_bytes)?;
+                count_decode();
                 self.decode_bytes_with_exif(&bytes, true, max_decode_pixels)
             }
             other => self.load_raw(other, max_decode_pixels),
@@ -121,6 +149,7 @@ impl LoadImage {
         max_encoded_bytes: u64,
     ) -> Result<DynamicImage> {
         let bytes = self.read_encoded_with_limit(input, max_decode_pixels, max_encoded_bytes)?;
+        count_decode();
         let mut image = image::load_from_memory(&bytes)
             .map_err(|e| RapidOcrError::InvalidImage(e.to_string()))?;
         image = apply_exif_orientation(image, exif_orientation_from_bytes(&bytes));
