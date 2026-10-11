@@ -47,7 +47,8 @@ impl OcrSession {
         kind: OcrSessionKind,
     ) -> Result<Self> {
         let model_path = model.path();
-        let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
+        // 会话从凭证的**内容快照**打开：校验过的字节就是交给 ORT 的字节（审核点 1）。
+        let inner = OrtSession::open_verified(model, runtime_cfg, &[])?;
         let probe = inner.probe_io()?;
         let input = require_single_input(&probe, model_path, "OCR")?;
         require_tensor(input, "input", 4, TensorElementType::Float32, model_path)?;
@@ -118,8 +119,8 @@ mod tests {
             .join(name)
     }
 
-    /// 会话构造器现在只收凭证：测试用“无期望”的凭证（存在性仍被检查，
-    /// 但不读盘算摘要）作为夹具，与库用户自备模型的语义一致。
+    /// 会话构造器现在只收凭证：测试用“无期望”的凭证（存在性仍被检查、内容仍被绑定，
+    /// 只是不算摘要）作为夹具，与库用户自备模型的语义一致。
     fn cred(name: &str) -> VerifiedModel {
         VerifiedModel::verify(&fixture(name), None).expect("fixture credential")
     }

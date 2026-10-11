@@ -13,6 +13,7 @@ use ort::{
 use crate::{
     config::RuntimeConfig,
     error::{RapidOcrError, Result},
+    model_verify::VerifiedModel,
     runtime::contracts::{ModelIoProbe, TensorSpec},
     runtime::provider::{
         ProviderResolution, ResolvedExecutionProvider, resolve_execution_providers,
@@ -202,12 +203,45 @@ impl OrtSession {
     /// 优化级别、线程、provider 与 `dimension_overrides` 都只在 [`open_session`] 里施加一次。
     /// Domain sessions must call [`Self::probe_io`] and validate their typed
     /// contract through [`crate::runtime::contracts`].
+    ///
+    /// 本入口把路径读成字节再交给 ORT（与 [`Self::open_verified`] 同一条加载链），
+    /// 仅用于测试夹具与没有凭证可用的探针场景；生产会话一律用 [`Self::open_verified`]，
+    /// 它把“被校验的内容”与“被加载的内容”钉成同一份字节（[`VerifiedModel`]）。
     pub fn open_unchecked(
         model_path: &Path,
         runtime_cfg: &RuntimeConfig,
         dimension_overrides: &[DimensionOverride],
     ) -> Result<Self> {
-        let opened = open_session(model_path, runtime_cfg, dimension_overrides)?;
+        let bytes = std::fs::read(model_path)?;
+        Self::open_bytes(model_path, &bytes, runtime_cfg, dimension_overrides)
+    }
+
+    /// 从**已验证内容**打开会话（审核点 1：校验对象 = 加载对象）。
+    ///
+    /// 模型字节来自 [`VerifiedModel::content`]（凭证构造那一刻的快照），而不是重新打开
+    /// [`VerifiedModel::path`]：校验与打开之间文件被替换时，这里加载的仍是校验过的那份。
+    /// 路径只进入错误文案与诊断。
+    pub fn open_verified(
+        model: &VerifiedModel,
+        runtime_cfg: &RuntimeConfig,
+        dimension_overrides: &[DimensionOverride],
+    ) -> Result<Self> {
+        Self::open_bytes(
+            model.path(),
+            model.content(),
+            runtime_cfg,
+            dimension_overrides,
+        )
+    }
+
+    /// 字节加载的唯一出口：`open_unchecked` / `open_verified` 都汇到这里。
+    fn open_bytes(
+        model_path: &Path,
+        model_bytes: &[u8],
+        runtime_cfg: &RuntimeConfig,
+        dimension_overrides: &[DimensionOverride],
+    ) -> Result<Self> {
+        let opened = open_session(model_path, model_bytes, runtime_cfg, dimension_overrides)?;
         let output_names = opened
             .session
             .outputs()
@@ -487,19 +521,24 @@ struct OpenedSession {
 /// 现在两个方向都只经过 [`RuntimeConfig::effective_session_threads`]。
 ///
 /// `dimension_overrides` 是**逐会话**的（理由见 [`DimensionOverride`]），在 provider 之前施加，
-/// 因为它是"图怎么编"的一部分：ORT 在 `commit_from_file` 时就做形状推断与优化，
+/// 因为它是"图怎么编"的一部分：ORT 在 commit（从内存字节装载模型）时就做形状推断与优化，
 /// 会话建好之后再改已经来不及。
 ///
 /// # 顺序为什么是这样
 ///
 /// 1. **先解析 provider**，因为 [`SessionBuildPolicy`] 是按 selected EP 分支的，而它的两个
-///    setter（mem pattern / 执行模式）都必须在 `commit_from_file` **之前**调用。
+///    setter（mem pattern / 执行模式）都必须在 commit **之前**调用。
 ///    历史实现把 `resolve_execution_providers` 放在最后，只够用来传 EP 链，不够用来分支构建。
 /// 2. 再施加形状 override 与线程：它们与 provider 无关，顺序只要求"在 commit 之前"。
 /// 3. commit 之后做 DirectML 的 **opset 后置条件**：opset 只有在会话存在之后才读得到
 ///    （[`Session::opset_for_domain`] 是会话方法），而"读不到"按放行处理。
+///
+/// 模型一律从内存字节装载（`commit_from_memory`）：`model_path` 只用于错误文案，
+/// 真正交给 ORT 的是 `model_bytes` —— 这样凭证路径（[`OrtSession::open_verified`]）能
+/// 保证“校验的内容”与“加载的内容”是同一份字节。
 fn open_session(
     model_path: &Path,
+    model_bytes: &[u8],
     runtime_cfg: &RuntimeConfig,
     dimension_overrides: &[DimensionOverride],
 ) -> Result<OpenedSession> {
@@ -534,7 +573,7 @@ fn open_session(
     builder = builder
         .with_execution_providers(provider_chain.providers)
         .map_err(ort_error)?;
-    let session = builder.commit_from_file(model_path).map_err(ort_error)?;
+    let session = builder.commit_from_memory(model_bytes).map_err(ort_error)?;
 
     let onnx_opset = session.opset_for_domain(ort::editor::ONNX_DOMAIN);
     if provider_chain.resolution.selected_ep == ResolvedExecutionProvider::DirectMl {

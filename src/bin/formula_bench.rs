@@ -283,8 +283,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let session_start = Instant::now();
     // 会话只收凭证：`--expected-sha256` 现在真正生效（之前它被定义却从未参与加载）。
-    let model = VerifiedModel::verify(&cli.model, cli.expected_sha256.as_deref())?;
-    let mut session = FormulaSession::new(&model, &runtime)?;
+    // 凭证在构造语句结束时释放：566 MB 模型的内容快照只活在“交给 ORT”那一刻，
+    // 不在整个 bench 运行期驻留内存。
+    let mut session = FormulaSession::new(
+        &VerifiedModel::verify(&cli.model, cli.expected_sha256.as_deref())?,
+        &runtime,
+    )?;
     let session_create_ms = ms(session_start);
     // 会话**实际**拿到的线程数（`RuntimeConfig::effective_session_threads()` 的输出），
     // 而不是 CLI/YAML 里写了什么：默认配置会推导出 intra = 预算、inter = 1。

@@ -861,8 +861,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let model = cli.model.clone().ok_or("--model is required")?;
     let runtime = runtime_config(&cli);
     let loaded_start = Instant::now();
-    let model_credential = VerifiedModel::verify(&model, cli.expected_sha256.as_deref())?;
-    let mut recognizer = FormulaRecognizer::from_model(&model_credential, &runtime)?;
+    // 凭证在构造语句结束时释放：566 MB 模型的内容快照只活在“交给 ORT”那一刻，
+    // 不在整个评测运行期驻留内存。
+    let mut recognizer = FormulaRecognizer::from_model(
+        &VerifiedModel::verify(&model, cli.expected_sha256.as_deref())?,
+        &runtime,
+    )?;
     let load_ms = loaded_start.elapsed().as_secs_f64() * 1000.0;
     let resolution = recognizer.provider_resolution();
     // 会话**实际**拿到的线程数（`RuntimeConfig::effective_session_threads()` 的输出），

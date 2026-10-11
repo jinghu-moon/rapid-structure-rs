@@ -31,12 +31,16 @@ impl FormulaModelInfo {
     ///
     /// IO 契约校验复用 [`validate_formula_contract`]，与 `FormulaSession::new`
     /// 使用同一份实现，因此探针结论与运行时可接受性一致。
+    ///
+    /// 会话从凭证的**内容快照**打开（审核点 1）：探针没有期望摘要可传，构造“无期望”
+    /// 凭证（存在性照查、内容照绑定），哈希期望由持有部署声明的调用方自己把关。
     pub fn probe(model_path: &Path, runtime_cfg: &RuntimeConfig) -> Result<Self> {
         if !model_path.is_file() {
             return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
         }
 
-        let session = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
+        let model = crate::model_verify::VerifiedModel::verify(model_path, None)?;
+        let session = OrtSession::open_verified(&model, runtime_cfg, &[])?;
         let io = session.probe_io()?;
         validate_formula_contract(&io, model_path)?;
         let input = &io.inputs[0];

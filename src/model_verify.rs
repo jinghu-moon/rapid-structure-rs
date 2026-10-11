@@ -67,7 +67,7 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime};
 
 use sha2::{Digest, Sha256};
@@ -416,29 +416,59 @@ pub fn verify_sha256(path: &Path, expected: Option<&str>) -> Result<Option<Strin
     Ok(Some(outcome.sha256))
 }
 
-/// 模型文件的完整性**凭证**（P0-3 / I-3）。
+/// 模型文件的完整性**凭证**（P0-3 / I-3；审核点 1：内容绑定）。
 ///
 /// 校验强度由“调用方是否持有可信摘要”决定，而不是由调用路径决定：任何模型文件进入
 /// ONNX 会话之前都必须先经 [`VerifiedModel::verify`]，于是“忘记校验”在结构上不成立。
-/// 校验本身仍只有 [`verify_sha256`] 一个实现——本类型只是把它的输入（期望）与输出
-/// （实际）连同路径一起钉成一个可传递的凭证。
-#[derive(Debug, Clone)]
+///
+/// # 凭证绑定的是**内容**，不是路径
+///
+/// 凭证把校验那一刻读到的全部字节存为快照（[`Self::content`]），会话必须用
+/// [`crate::runtime::session::OrtSession::open_verified`] 从这份字节打开 ——
+/// “被校验的”与“被交给 ONNX Runtime 的”因此是同一份字节。如果会话仍然按路径二次开卷，
+/// 校验与打开之间文件被替换时，凭证证明的是旧内容而会话加载的是新内容（TOCTOU）；
+/// 快照绑定把这扇时间窗从设计上关死。
+///
+/// # 与读盘缓存的关系（如实）
+///
+/// [`verify_file`] 的“同一身份只哈希一次”缓存不适用于凭证路径：凭证**本来就必须**读完
+/// 全部字节才能绑定内容，读都读了，不重算摘要才是说谎。代价是每次构造凭证一次全量读 +
+/// 一次哈希（每会话构造至多一次）；换来的是摘要结论与内容快照出自同一次读取，
+/// 而不是两次可能不一致的观察。
+#[derive(Clone)]
 pub struct VerifiedModel {
     path: PathBuf,
     /// 期望摘要：来自清单 / 模型集 / CLI 的部署声明；`None` = 没有可信期望。
     expected_sha256: Option<String>,
-    /// 实际摘要：[`verify_sha256`] 的返回值；`None` = 未校验（无期望）。
+    /// 实际摘要：对内容快照计算的结果；`None` = 未校验（无期望）。
     actual_sha256: Option<String>,
+    /// 校验那一刻的文件内容快照。会话从这份字节打开，而不是重新按 [`Self::path`] 开卷。
+    content: Arc<[u8]>,
+}
+
+/// `content` 是模型体积量级的字节，**绝不**进 `Debug`（否则 566 MB 的公式模型会把一次
+/// 调试输出变成一场灾难）；只报告长度，足以定位“哪一份文件、多大”。
+impl core::fmt::Debug for VerifiedModel {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("VerifiedModel")
+            .field("path", &self.path)
+            .field("expected_sha256", &self.expected_sha256)
+            .field("actual_sha256", &self.actual_sha256)
+            .field("content_bytes", &self.content.len())
+            .finish()
+    }
 }
 
 impl VerifiedModel {
     /// 唯一的构造入口：**任何模型文件进入 ONNX 会话之前都经过它**。
     ///
-    /// - `expected = Some(_)`：读盘算摘要并与期望比对，不匹配返回可定位的
+    /// - `expected = Some(_)`：对**内存快照**计算摘要并与期望比对，不匹配返回可定位的
     ///   [`RapidOcrError::HashMismatch`]（路径 + 期望 + 实际），凭证**不会**被构造出来，
     ///   因此会话也不会被创建。
     /// - `expected = None`：调用方没有可信摘要——**不报错**，但如实记录为“未校验”
-    ///   （[`Self::is_verified`] 返回 `false`），不产生任何读盘哈希。
+    ///   （[`Self::is_verified`] 返回 `false`）。注意这只豁免**摘要比对**：存在性照查、
+    ///   内容照绑定，“文件内容已被验证完整性”**不是**这种凭证可以说出口的话。
     ///
     /// 无论有没有期望，**存在性都是第一个判定**：缺失的文件必须先返回可定位的
     /// [`RapidOcrError::FileNotFound`]，不能因为“摘要也算不出来”而退化成一个含混错误。
@@ -447,17 +477,39 @@ impl VerifiedModel {
         if !path.is_file() {
             return Err(RapidOcrError::FileNotFound(path.to_path_buf()));
         }
-        let actual_sha256 = verify_sha256(path, expected)?;
+        // 先读**全部**内容再做任何判定：哈希与加载必须消费同一份字节，
+        // “先哈希、后按路径二次开卷”会把校验与打开之间的替换留在盲区里。
+        let content: Arc<[u8]> = std::fs::read(path)?.into();
+        let actual_sha256 = expected
+            .map(|expected| {
+                let actual = format!("{:x}", Sha256::digest(&content));
+                if !actual.eq_ignore_ascii_case(expected) {
+                    return Err(RapidOcrError::HashMismatch {
+                        path: path.to_path_buf(),
+                        expected: expected.to_string(),
+                        actual,
+                    });
+                }
+                Ok(actual)
+            })
+            .transpose()?;
         Ok(Self {
             path: path.to_path_buf(),
             expected_sha256: expected.map(|value| value.to_string()),
             actual_sha256,
+            content,
         })
     }
 
-    /// 凭证指向的模型文件路径。
+    /// 凭证指向的模型文件路径（诊断与报告用；**加载路径不经过它**，见 [`Self::content`]）。
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// 校验那一刻绑定的模型内容。会话构造器必须把这份字节交给 ONNX Runtime，
+    /// 而不是重新打开 [`Self::path`] —— 这是“校验对象 = 加载对象”的唯一保证。
+    pub fn content(&self) -> &[u8] {
+        &self.content
     }
 
     /// 部署声明的期望摘要；`None` = 调用方没有可信期望。
@@ -470,8 +522,8 @@ impl VerifiedModel {
         self.actual_sha256.as_deref()
     }
 
-    /// `true` = 实际摘要已算出并与期望对上（即 `expected` 在场且匹配）；
-    /// `false` = 无期望、按“未校验”如实记录。
+    /// `true` = 实际摘要已对内容快照算出并与期望对上（即 `expected` 在场且匹配）；
+    /// `false` = 无期望，按“未校验”如实记录（存在性与内容绑定仍然成立）。
     pub fn is_verified(&self) -> bool {
         self.actual_sha256.is_some()
     }
@@ -839,6 +891,34 @@ mod tests {
         assert_eq!(credential.expected_sha256(), None);
         assert_eq!(credential.actual_sha256(), None);
         assert_eq!(credential.path(), path);
+        // 无期望也不豁免内容绑定：会话仍从这份快照打开，“加载的就是读到的”。
+        assert_eq!(credential.content(), b"hello");
+    }
+
+    /// 凭证绑定的是**校验那一刻的内容**（审核点 1 的回归守卫）：构造之后文件被替换，
+    /// 凭证携带的字节不变；而重新走一次凭证构造必须被摘要不匹配拦住。两者合起来说明
+    /// “校验对象 = 加载对象”不依赖路径的稳定性。
+    #[test]
+    fn the_credential_snapshots_the_content_it_verified() {
+        let dir = TempDir::new("credential-snapshot");
+        dir.write("model.onnx", b"hello");
+        let path = dir.path().join("model.onnx");
+        let credential = VerifiedModel::verify(&path, Some(HELLO_SHA256)).expect("match");
+        assert_eq!(credential.content(), b"hello");
+
+        std::fs::write(&path, b"totally different bytes").expect("replace after construction");
+        assert_eq!(
+            credential.content(),
+            b"hello",
+            "the bound content must be the bytes that were verified, not whatever the path holds now"
+        );
+
+        let error = VerifiedModel::verify(&path, Some(HELLO_SHA256))
+            .expect_err("a re-verification after replacement must refuse");
+        assert!(
+            matches!(error, RapidOcrError::HashMismatch { .. }),
+            "{error}"
+        );
     }
 
     /// 存在性优先：即使带期望摘要，缺失的文件也必须先返回 `FileNotFound`（而不是

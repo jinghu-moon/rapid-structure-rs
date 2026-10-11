@@ -113,7 +113,8 @@ impl FormulaDetector {
     /// CPU 回退时必须失败，不能静默降级。
     pub fn from_model(model: &VerifiedModel, runtime_cfg: &RuntimeConfig) -> Result<Self> {
         let model_path = model.path();
-        let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
+        // 会话从凭证的**内容快照**打开：校验过的字节就是交给 ORT 的字节（审核点 1）。
+        let inner = OrtSession::open_verified(model, runtime_cfg, &[])?;
         // 公式域契约：请求了加速器却只拿到 CPU 回退时必须失败，不能静默降级。
         require_requested_provider(inner.provider_resolution())?;
         let probe = inner.probe_io()?;

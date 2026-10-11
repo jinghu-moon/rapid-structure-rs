@@ -28,7 +28,8 @@ pub struct FormulaSession {
 impl FormulaSession {
     pub fn new(model: &VerifiedModel, runtime_cfg: &RuntimeConfig) -> Result<Self> {
         let model_path = model.path();
-        let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
+        // 会话从凭证的**内容快照**打开：校验过的字节就是交给 ORT 的字节（审核点 1）。
+        let inner = OrtSession::open_verified(model, runtime_cfg, &[])?;
         // 公式域契约：请求了加速器却只拿到 CPU 回退时必须失败，不能静默降级。
         // 这里不依赖 `RuntimeConfig::fail_if_provider_unavailable`，因为那是进程级
         // 默认策略，而调用方无法从 API 返回值观察到发生了回退。

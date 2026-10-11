@@ -342,11 +342,11 @@ impl TableStructureSession {
         }
 
         // 完整性校验是**第一步**：被替换或损坏的模型必须在打开任何 ONNX Runtime 会话之前
-        // 就被拒掉，否则"校验过"这句话覆盖的只是探针之后的路径，而探针本身已经执行过
-        // 一次 ORT 会话创建。期望哈希的“从哪来”（显式优先、否则取登记）仍留在
-        // registration 分层里，而 registration 把校验动作委派给统一的 [`VerifiedModel`] 凭证
-        //（P0-3 / I-5）：三域共用同一个完整性原语。
-        crate::table::registration::verify_registered_model(
+        // 就被拒掉。凭证不只做一次哈希——它把校验那一刻的内容绑定为快照，探针会话与
+        // 正式会话都从这份字节打开（`open_verified`）：同一次读取、同一个对象，
+        // “两次开卷之间被替换”的窗口在表格路径（本来最长）上也不存在了（审核点 1）。
+        // 期望哈希的“从哪来”（显式优先、否则取登记）仍留在 registration 分层里（I-5）。
+        let model = crate::table::registration::verified_registered_model(
             model_path,
             config.expected_sha256.as_deref(),
         )?;
@@ -357,7 +357,8 @@ impl TableStructureSession {
 
         // 先开一个"什么都不固定"的会话：override 只能按符号名寻址，而符号名只有模型自己知道，
         // 所以必须先探一次。这一次会话在拿到符号名之后立即释放。
-        let probe_session = OrtSession::open_unchecked(model_path, &runtime_cfg, &[])?;
+        // 两次会话消费同一份凭证字节，不再第二次开卷路径。
+        let probe_session = OrtSession::open_verified(&model, &runtime_cfg, &[])?;
         let probe = probe_session.probe_io()?;
         let contract = validate_table_structure_contract(&probe, model_path)?;
         // 词表与契约在**同一次**探针会话里取出：解码需要 `character` 词表，而它和
@@ -383,7 +384,7 @@ impl TableStructureSession {
         let overrides = config.dimension_overrides(&probe, model_path)?;
         drop(probe_session);
 
-        let session = OrtSession::open_unchecked(model_path, &runtime_cfg, &overrides)?;
+        let session = OrtSession::open_verified(&model, &runtime_cfg, &overrides)?;
         let actual = session.probe_io()?;
         config.require_applied(&actual, model_path)?;
         let input_dims = actual.inputs[0].dims.clone();
@@ -501,16 +502,17 @@ impl TableStructureModelInfo {
     /// metadata 校验复用 [`parse_character_metadata`]，并把词表宽度与计算图末维
     /// **交叉校验** —— 两个数字来源独立（metadata vs 计算图），因此能互相证伪。
     ///
-    /// 与 [`TableStructureSession::open`] 一样在打开会话**之前**做完整性校验。这里没有
-    /// 配置可以传，所以用登记里的期望哈希（见 [`crate::table::registration`]）；
-    /// 模型旁边没有清单时这一步是 no-op，而不是"跳过校验"。
+    /// 与 [`TableStructureSession::open`] 一样在打开会话**之前**做完整性校验，并把会话
+    /// 从凭证的**内容快照**打开（审核点 1）。这里没有配置可以传，所以用登记里的期望
+    /// 哈希（见 [`crate::table::registration`]）；模型旁边没有清单时校验退化为
+    /// “无期望凭证”（存在性照查、内容照绑定），而不是"跳过校验"。
     pub fn probe(model_path: &Path, runtime_cfg: &RuntimeConfig) -> Result<Self> {
         if !model_path.is_file() {
             return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
         }
-        crate::table::registration::verify_registered_model(model_path, None)?;
+        let model = crate::table::registration::verified_registered_model(model_path, None)?;
 
-        let session = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
+        let session = OrtSession::open_verified(&model, runtime_cfg, &[])?;
         let io = session.probe_io()?;
         let contract = validate_table_structure_contract(&io, model_path)?;
         let input = &io.inputs[0];
@@ -900,8 +902,8 @@ mod tests {
         );
     }
 
-    /// 没有清单时登记查找是 no-op，而不是"跳过校验"：这是手工放置模型的路径，
-    /// 也是全部合成 fixture 走的路径。
+    /// 没有清单时登记查找退化为“无期望凭证”（存在性照查、内容照绑定），而不是
+    /// "跳过校验"：这是手工放置模型的路径，也是全部合成 fixture 走的路径。
     #[test]
     fn a_model_without_a_manifest_is_loaded_without_a_hash() {
         let scratch = ScratchModelDir::new("no-manifest");
@@ -909,6 +911,31 @@ mod tests {
 
         TableStructureSession::open(&path, &rt(), &TableStructureConfig::default())
             .expect("a model with no registration has nothing to verify against");
+    }
+
+    /// 审核点 1 的端到端回归：凭证把**校验那一刻的内容**交给 ORT，而不是重新开卷路径。
+    ///
+    /// 构造凭证之后把文件替换成非 ONNX 字节：从凭证打开的会话必须仍然成功（内容是
+    /// 校验时那份），而同一时刻按路径再开必须失败。两者合起来证明“ORT 不可能载入
+    /// 校验之外的内容”不依赖校验与打开之间路径的稳定性。
+    #[test]
+    fn open_verified_loads_the_bound_bytes_and_not_the_replaced_path() {
+        let scratch = ScratchModelDir::new("replaced-after-verify");
+        let path = scratch.with_ok_model();
+        let credential =
+            crate::model_verify::VerifiedModel::verify(&path, None).expect("credential");
+
+        std::fs::write(&path, b"not an onnx model any more").expect("replace after verification");
+
+        let session = OrtSession::open_verified(&credential, &rt(), &[])
+            .expect("the verified bytes must load regardless of what the path holds now");
+        let io = session.probe_io().expect("probe");
+        validate_table_structure_contract(&io, &path)
+            .expect("the contract of the *verified* content still holds");
+
+        let error = OrtSession::open_unchecked(&path, &rt(), &[])
+            .expect_err("the replaced content must not load through a path-based open");
+        assert!(matches!(error, RapidOcrError::Decode(_)), "{error}");
     }
 
     /// ORT 对**无法解析**的 override 名字不报错，只是不生效。
@@ -1094,9 +1121,9 @@ mod real_model_tests {
 
     /// 出厂清单必须真的登记了出厂模型。
     ///
-    /// 这条不能省：`verify_registered_model` 在没有清单时是 no-op，因此"加载路径会校验"
-    /// 与"这个模型**被**校验了"是两句不同的话 —— 只有这条测试把后者钉住。
-    /// 它同时是 `models/table/manifest.json` 里那个哈希的回归守卫。
+    /// 这条不能省：`verified_registered_model` 在没有清单时退化为“无期望凭证”，因此
+    /// "加载路径会校验"与"这个模型**被**校验了"是两句不同的话 —— 只有这条测试把
+    /// 后者钉住。它同时是 `models/table/manifest.json` 里那个哈希的回归守卫。
     #[test]
     fn real_model_is_registered_in_the_shipped_manifest() {
         let Some(path) = real_model() else {
@@ -1115,11 +1142,16 @@ mod real_model_tests {
             registration.sha256,
             "the shipped manifest must record the hash of the shipped model"
         );
-        // 有效期望哈希与登记一致时，加载期校验必须**真的跑过**并返回实际摘要。
+        // 有效期望哈希与登记一致时，加载期校验必须**真的跑过**并留下已校验凭证。
+        let credential = crate::table::registration::verified_registered_model(&path, None)
+            .expect("the registered hash must match the file");
         assert_eq!(
-            crate::table::registration::verify_registered_model(&path, None)
-                .expect("the registered hash must match the file"),
-            Some(registration.sha256)
+            credential.actual_sha256(),
+            Some(registration.sha256.as_str())
+        );
+        assert!(
+            credential.is_verified(),
+            "the shipped manifest must carry a real expectation"
         );
     }
 

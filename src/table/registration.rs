@@ -142,7 +142,7 @@ pub fn require_registered_model_hash(model_path: &Path) -> Result<String> {
 
 /// 解析**有效期望哈希**：调用方给的非空值优先，否则取模型同目录清单里的登记。
 ///
-/// 这是 [`verify_registered_model`] 与 [`crate::table::structure`] 共用的“期望从哪来”
+/// 这是 [`verified_registered_model`] 与 [`crate::table::structure`] 共用的“期望从哪来”
 /// 单点：分层（清单/登记属于部署事实）留在这里，校验动作本身交给
 /// [`crate::model_verify::VerifiedModel`]，避免“表格自己维护一条第二套校验”。
 pub fn resolve_registered_expected(
@@ -156,24 +156,21 @@ pub fn resolve_registered_expected(
 }
 
 /// 加载期校验：把**有效期望哈希**（调用方给的优先，否则取登记）交给统一的
-/// [`model_verify::VerifiedModel`] 凭证，返回实际摘要。
+/// [`model_verify::VerifiedModel`] 凭证，返回**可传递的凭证**。
 ///
 /// 分层保留：清单/登记属于“期望从哪来”（I-5），而校验动作本身不再由表格自己实现，
 /// 与公式/文本走同一个凭证原语（P0-3 / I-3）：存在性优先、不匹配是可定位的
 /// `HashMismatch`，都发生在打开任何 ORT 会话之前。
 ///
-/// 返回值是**实际**算出的摘要（校验通过时等于期望值），调用方可以把它写进报告，
-/// 让"这个结果出自哪个模型"可追溯，而不只是"某个哈希校验过"。
-pub fn verify_registered_model(
+/// 凭证而非摘要字符串是必须的返回形态（审核点 1/2）：会话构造器拿它从**内容快照**
+/// 打开，"校验对象 = 加载对象"不经过第二次读盘；需要把“实际摘要”写进报告的调用方
+/// 读 [`model_verify::VerifiedModel::actual_sha256`] 即可。
+pub fn verified_registered_model(
     model_path: &Path,
     expected_sha256: Option<&str>,
-) -> Result<Option<String>> {
+) -> Result<model_verify::VerifiedModel> {
     let expected = resolve_registered_expected(model_path, expected_sha256)?;
-    Ok(
-        model_verify::VerifiedModel::verify(model_path, expected.as_deref())?
-            .actual_sha256()
-            .map(str::to_string),
-    )
+    model_verify::VerifiedModel::verify(model_path, expected.as_deref())
 }
 
 #[cfg(test)]
@@ -344,10 +341,13 @@ mod tests {
             Some(5),
         ));
 
-        let actual = verify_registered_model(&model, None)
-            .expect("a matching hash should verify")
-            .expect("the registration supplies an expected hash");
-        assert_eq!(actual, HELLO_SHA256);
+        let credential =
+            verified_registered_model(&model, None).expect("a matching hash should verify");
+        assert!(
+            credential.is_verified(),
+            "the registration supplies an expected hash"
+        );
+        assert_eq!(credential.actual_sha256(), Some(HELLO_SHA256));
     }
 
     #[test]
@@ -363,7 +363,7 @@ mod tests {
         // 同一个路径，内容换了 —— 下载期校验看不出来，只有加载期校验能。
         scratch.model("slanet-plus.onnx", b"HELLO");
 
-        let error = verify_registered_model(&model, None).expect_err("tampering must be refused");
+        let error = verified_registered_model(&model, None).expect_err("tampering must be refused");
         assert!(
             matches!(error, RapidOcrError::HashMismatch { .. }),
             "the error must be locatable, got {error:?}"
@@ -382,10 +382,10 @@ mod tests {
         ));
 
         // 显式哈希正确 → 通过（登记里的错误哈希被忽略）。
-        verify_registered_model(&model, Some(HELLO_SHA256)).expect("the explicit hash is right");
+        verified_registered_model(&model, Some(HELLO_SHA256)).expect("the explicit hash is right");
 
         // 显式哈希错误 → 拒绝，且错误里带的是**显式**那个期望值。
-        let error = verify_registered_model(&model, Some("deadbeef"))
+        let error = verified_registered_model(&model, Some("deadbeef"))
             .expect_err("an explicit mismatch must be refused");
         match error {
             RapidOcrError::HashMismatch { expected, .. } => assert_eq!(expected, "deadbeef"),
@@ -439,7 +439,7 @@ mod tests {
             .expect("manifest should parse")
             .expect("registered");
         assert_eq!(registration.sha256, HELLO_SHA256);
-        verify_registered_model(&model, None).expect("case must not matter");
+        verified_registered_model(&model, None).expect("case must not matter");
     }
 
     #[test]
@@ -484,10 +484,11 @@ mod tests {
         );
     }
 
-    fn _assert_signature(_: fn(&Path, Option<&str>) -> Result<Option<String>>) {}
+    fn _assert_signature(_: fn(&Path, Option<&str>) -> Result<crate::model_verify::VerifiedModel>) {
+    }
 
     #[test]
     fn the_public_surface_is_the_one_the_loader_calls() {
-        _assert_signature(verify_registered_model);
+        _assert_signature(verified_registered_model);
     }
 }

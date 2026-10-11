@@ -298,6 +298,32 @@
   `formula/preprocess` 的 golden 哈希比对同理。`bin/formula_eval` 参考文件摘要（审计未列入
   P1-8 的第四处生产拷贝）本批不动，已在 docs/12 §9 登记为后续候选。
 
+## 凭证绑定实际加载内容（审核点 1，未发布）
+
+对应外部审核结论第 1 条（高危：TOCTOU）：`VerifiedModel` 此前只存**路径 + 摘要**，
+会话随后仍按路径 `open_unchecked` → 校验与打开之间文件被替换时，凭证证明的是旧内容、
+ORT 加载的可能是新内容。本批把“校验对象 = 加载对象”从约定改成结构：
+
+- `VerifiedModel::verify` 先读**全部字节**，对内存快照算摘要、比对期望，并把内容作为
+  `Arc<[u8]>` 快照钉进凭证；`Debug` 手写字节不进输出（只报长度）。读盘缓存（`verify_file`）
+  不再参与凭证路径：凭证本来就必须读完全量，摘要与快照出自同一次观察。
+- `OrtSession::open_verified(&VerifiedModel, …)` 新增：模型一律 `commit_from_memory` 从凭证
+  字节装载；`open_unchecked(path)` 保留给测试夹具/探针，内部也改为读字节后同一条装载链，
+  不存在“按路径二次开卷”的第二种加载语义。
+- 切换的消费方：`OcrSession::new`（det/rec/cls）、`FormulaSession::new`、
+  `FormulaDetector::from_model`、`TableStructureSession::open`（探针会话与正式会话共用同一
+  份凭证字节，表格路径上最长的“两次开卷”窗口随之消失）、`TableStructureModelInfo::probe`、
+  `FormulaModelInfo::probe`（无期望凭证：存在性照查、内容照绑定）。
+- registration 层的 `verify_registered_model`（返回摘要字符串）失去全部生产调用点，删除；
+  唯一入口改为凭证形态 `verified_registered_model`（分层不变：显式期望优先、否则取登记）。
+- `verify(path, None)` 的语义如实改写：它只豁免**摘要比对**，不能被描述成“模型内容已验证
+  完整性”；存在性与内容绑定仍然成立（`is_verified()` 继续如实回答）。
+- 内存口径（如实）：凭证构造峰值多一份模型体积的瞬态字节；会话建好后凭证即释放。
+  `formula_bench`/`formula_eval` 把凭证收进构造语句作用域，566 MB 快照不随运行期驻留。
+- 新增用例：凭证内容快照在替换后不变（`model_verify`）；`open_verified` 端到端——构造凭证后
+  把文件换成非 ONNX 字节，从凭证打开仍成功且契约成立，按路径再开必须失败
+  （`table::structure`）；`registration` 既有 14 条迁入凭证形态，断言只增不减。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、
