@@ -5,5 +5,6 @@
 //! 数值一致性要求（与 OpenCV/Pillow 的行为对齐）改为写在各自的注释里并由测试守护。
 pub(crate) mod geometry;
 pub(crate) mod image_backend;
+pub(crate) mod normalize;
 pub(crate) mod resize;
 pub(crate) mod rotate_crop;

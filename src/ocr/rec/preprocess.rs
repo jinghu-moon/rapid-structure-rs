@@ -1,12 +1,12 @@
 #[cfg(test)]
 use ndarray::{Array3, Array4, s};
-use std::sync::OnceLock;
 
 use crate::{
     config::RecImage,
     error::{RapidOcrError, Result},
     vision::{
         image_backend::resize_image,
+        normalize::normalize_to_signed_unit,
         resize::{LinearResizeScratch, resize_bgr_inter_linear_into_with_scratch},
     },
 };
@@ -222,28 +222,6 @@ fn write_resize_norm_img_into_slice_impl(
     }
 
     Ok(())
-}
-
-#[inline]
-fn normalize_to_signed_unit(v: u8) -> f32 {
-    signed_unit_lut()[v as usize]
-}
-
-fn signed_unit_lut() -> &'static [f32; 256] {
-    static LUT: OnceLock<[f32; 256]> = OnceLock::new();
-    LUT.get_or_init(|| {
-        let mut out = [0.0_f32; 256];
-        let mut i = 0usize;
-        while i < 256 {
-            let mut v = i as f32 * (2.0 / 255.0) - 1.0;
-            if v == -0.0 {
-                v = 0.0;
-            }
-            out[i] = v;
-            i += 1;
-        }
-        out
-    })
 }
 
 fn validate_common(
