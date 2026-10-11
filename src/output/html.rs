@@ -640,6 +640,92 @@ mod tests {
         );
     }
 
+    /// 一个供公式分支用例复用的 `OcrJsonItem`（`txt` 与 `latex` 同源）。
+    fn formula_item(latex: &str, truncated: bool) -> OcrJsonItem {
+        OcrJsonItem {
+            box_: Some([[1.0, 40.0], [80.0, 40.0], [80.0, 70.0], [1.0, 70.0]]),
+            txt: latex.into(),
+            score: 0.71,
+            kind: "formula",
+            latex: Some(latex.into()),
+            eos_index: if truncated { None } else { Some(2) },
+            truncated: Some(truncated),
+            table: None,
+        }
+    }
+
+    /// 迁移自被删除的 `to_formula_html`：报告公式分支必须把 `" ' < > &` 与换行/制表符
+    /// 按属性口径全部编码，且属性里不留未转义的引号。
+    #[test]
+    fn report_formula_escapes_every_attribute_sensitive_character() {
+        let html = render_report(
+            "转义",
+            "source.png",
+            640,
+            480,
+            &[formula_item("a\"b'c<d>&e\nf\tg", false)],
+            "total 1.0 ms",
+            ReportMode::Full,
+        )
+        .expect("report should render");
+        // `data-latex` 属性把 `" ' < > &` 与换行/制表符全部按属性口径编码。
+        assert!(
+            html.contains("data-latex=\"a&quot;b&#39;c&lt;d&gt;&amp;e&#10;f&#9;g\""),
+            "html: {html}"
+        );
+        // 文本节点用文本口径转义（换行/制表符保持字面量）。
+        assert!(
+            html.contains("<code class=\"latex\">a&quot;b&#39;c&lt;d&gt;&amp;e\nf\tg</code>"),
+            "html: {html}"
+        );
+        // 属性里不能出现未转义的引号。
+        assert!(!html.contains("data-latex=\"a\"b"), "html: {html}");
+    }
+
+    /// 迁移自被删除的 `to_formula_html` 的截断与空 LaTeX 两态：生产报告只在截断时给出
+    /// `data-truncated`（非截断不产出该属性），空 LaTeX 仍渲染出空的 `<code>` 与 `data-latex=""`。
+    /// 旧函数的 `data-eos` 属于死代码独有的行为，生产 HTML 从不产出，故不迁移。
+    #[test]
+    fn report_formula_marks_truncated_and_renders_empty_latex() {
+        let complete = render_report(
+            "完整",
+            "source.png",
+            640,
+            480,
+            &[formula_item("x", false)],
+            "total 1.0 ms",
+            ReportMode::Full,
+        )
+        .expect("report should render");
+        assert!(!complete.contains("data-truncated="), "{complete}");
+        assert!(!complete.contains("data-eos"), "{complete}");
+
+        let truncated = render_report(
+            "截断",
+            "source.png",
+            640,
+            480,
+            &[formula_item("\\frac{1}{", true)],
+            "total 1.0 ms",
+            ReportMode::Full,
+        )
+        .expect("report should render");
+        assert!(truncated.contains("data-truncated=\"true\""), "{truncated}");
+
+        let empty = render_report(
+            "空",
+            "source.png",
+            640,
+            480,
+            &[formula_item("", false)],
+            "total 1.0 ms",
+            ReportMode::Full,
+        )
+        .expect("report should render");
+        assert!(empty.contains("data-latex=\"\""), "{empty}");
+        assert!(empty.contains("<code class=\"latex\"></code>"), "{empty}");
+    }
+
     /// §9.5 第 1 条：`Static` 正文**不含任何 `<script`**，且样式、多边形、列表、公式全部保留。
     #[test]
     fn static_mode_emits_no_script_at_all() {

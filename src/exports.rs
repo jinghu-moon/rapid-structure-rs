@@ -38,9 +38,10 @@ pub use crate::formula::detect::{
 };
 pub use crate::formula::ftfy::{NOT_APPLICABLE_STEPS, UNIMPLEMENTED_STEPS, fix_text};
 pub use crate::formula::model_info::FormulaModelInfo;
-pub use crate::formula::output::{
-    order_formula_results, to_formula_html, to_formula_json, to_formula_markdown,
-};
+// P0-1：三个公式输出转码函数（JSON / Markdown / HTML 三个 `to_formula_*` 变体）生产零调用，
+// 已从公开面删除（语义测试迁移到 `to_output_json` / `to_markdown_block` / `render_report`）。
+// `order_formula_results` 仍被导出；`to_markdown_block` 由 crate 内部全路径调用，不占公开根面。
+pub use crate::formula::output::order_formula_results;
 pub use crate::formula::preprocess::{
     FORMULA_INPUT_SIZE, FORMULA_MEAN, FORMULA_STD, FormulaPreprocessor, FormulaTensor,
 };

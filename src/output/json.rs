@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::{OcrOutput, Quad, error::Result};
+use crate::{OcrOutput, error::Result};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -47,55 +47,6 @@ pub struct OcrTableItem {
     /// **只有 `<table>` 外壳**的 HTML（`TableOutcome::table_html`）；带
     /// `<html><body>` 包装的完整变体在 `regions[i].table.html`。
     pub table_html: String,
-}
-
-#[allow(dead_code)]
-pub fn to_json_items(
-    boxes: Option<&[Quad]>,
-    txts: &[String],
-    scores: &[f32],
-) -> Result<Vec<OcrJsonItem>> {
-    if txts.len() != scores.len() {
-        return Err(crate::error::RapidOcrError::InvalidInput(format!(
-            "json output length mismatch: txts={}, scores={}",
-            txts.len(),
-            scores.len()
-        )));
-    }
-
-    if let Some(boxes) = boxes
-        && boxes.len() != txts.len()
-    {
-        return Err(crate::error::RapidOcrError::InvalidInput(format!(
-            "json output length mismatch: boxes={}, txts={}",
-            boxes.len(),
-            txts.len()
-        )));
-    }
-
-    let mut out = Vec::with_capacity(txts.len());
-    for i in 0..txts.len() {
-        let out_box = boxes.map(|all| {
-            let src_box = all[i];
-            let mut out_box = [[0.0_f64; 2]; 4];
-            for (dst, src) in out_box.iter_mut().zip(src_box.iter()) {
-                dst[0] = src[0] as f64;
-                dst[1] = src[1] as f64;
-            }
-            out_box
-        });
-        out.push(OcrJsonItem {
-            box_: out_box,
-            txt: txts[i].clone(),
-            score: scores[i] as f64,
-            kind: "text",
-            latex: None,
-            eos_index: None,
-            truncated: None,
-            table: None,
-        });
-    }
-    Ok(out)
 }
 
 fn polygon_box(region: &crate::OcrRegion) -> Option<[[f64; 2]; 4]> {
@@ -231,7 +182,7 @@ pub fn to_output_json(output: &OcrOutput) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{to_json_items, to_output_items, to_output_json};
+    use super::{to_output_items, to_output_json};
     use crate::{
         CoordinateSpace, EngineInfo, FormulaOutcome,
         GenericProviderPreference as ProviderPreference, ImageInfo, InputTimings, OcrOutput,
@@ -241,10 +192,50 @@ mod tests {
     };
 
     #[test]
-    fn json_items_none_for_empty_inputs() {
+    fn output_items_empty_for_a_page_with_no_regions() {
+        assert_eq!(to_output_items(&output_with(Vec::new())), Vec::new());
+    }
+
+    /// 迁移自被删除的 `to_formula_json`（`include_token_ids` 两态）：改挂生产入口 `to_output_json`。
+    ///
+    /// 与旧实现的区别是**如实**的：`FormulaOutcome.token_ids` 没有 `skip_serializing_if`，所以在
+    /// 真实序列化里两态表现为"数组"与"null"（而非键缺失）；`eos_index`/`truncated`/`model_id`
+    /// 一并钉在 `regions[i].formula` 上 —— 这正是被删函数当年从未接入的那条真实路径。
+    #[test]
+    fn formula_json_token_ids_are_serialized_only_when_present() {
+        let formula_region = |token_ids: Option<Vec<i64>>| OcrRegion {
+            source: RegionSource::Detected { detector_index: 0 },
+            kind: RegionKind::Formula,
+            polygon: Some(Polygon {
+                points: [[1.0, 6.0], [5.0, 6.0], [5.0, 9.0], [1.0, 9.0]],
+            }),
+            detection: Some(crate::DetectionOutcome { score: 0.71 }),
+            classification: None,
+            recognition: None,
+            formula: Some(FormulaOutcome {
+                latex: "x < y & z".into(),
+                eos_index: Some(2),
+                truncated: false,
+                model_id: "test-model".into(),
+                token_ids,
+            }),
+            table: None,
+        };
+
+        let document =
+            to_output_json(&output_with(vec![formula_region(None)])).expect("json document");
+        let formula = &document["regions"][0]["formula"];
+        assert_eq!(formula["latex"], "x < y & z");
+        assert_eq!(formula["eos_index"], 2);
+        assert_eq!(formula["truncated"], false);
+        assert_eq!(formula["model_id"], "test-model");
+        assert_eq!(formula["token_ids"], serde_json::Value::Null);
+
+        let document = to_output_json(&output_with(vec![formula_region(Some(vec![0, 82, 2]))]))
+            .expect("json document");
         assert_eq!(
-            to_json_items(Some(&[]), &[], &[]).expect("empty should be valid"),
-            Vec::new()
+            document["regions"][0]["formula"]["token_ids"],
+            serde_json::json!([0, 82, 2])
         );
     }
 
@@ -696,6 +687,57 @@ mod tests {
             html.contains(&format!("{} 个单元格", cells.len())),
             "{html}"
         );
+    }
+
+    /// P0-1 / P1-7 共用：**三通道快照对拍**。
+    ///
+    /// 对报告者真实捕获的 `/result` 体（42 个区域，字节由 serve 侧的 SHA-256 钉死）反序列化出
+    /// `OcrOutput`，把 JSON / HTML / Markdown 三条通道的输出各自取 SHA-256 钉在这里。任何一次
+    /// "行为等价重构"若悄悄改了任一通道的字节，这条就会红 —— 它是死代码清理（P0-1）与后续
+    /// 编排重写（P1-7）共同的回归护栏。`OcrOutput` 同时是 `Serialize`/`Deserialize`，而
+    /// `to_output_json` 就是 `serde_json::to_value(output)` 加四个派生键，因此这份捕获体能无损往返。
+    #[test]
+    fn the_three_output_channels_are_frozen_for_the_captured_real_page() {
+        use sha2::{Digest as _, Sha256};
+
+        fn sha256_hex(bytes: &[u8]) -> String {
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/serve/result-real-42-regions.json");
+        let raw = std::fs::read(&path).unwrap_or_else(|error| {
+            panic!("captured body must exist at {}: {error}", path.display())
+        });
+        let output: OcrOutput = serde_json::from_slice(&raw)
+            .expect("the captured /result body round-trips back into OcrOutput");
+
+        let json = serde_json::to_string(&to_output_json(&output).expect("json channel"))
+            .expect("json channel serializes");
+        let html = crate::output::html::render_output_report(
+            "snapshot",
+            "source.png",
+            &output,
+            "total 0.0 ms",
+            crate::output::html::ReportMode::Full,
+        )
+        .expect("html channel renders");
+        let markdown = crate::output::markdown::to_output_markdown(&output);
+
+        let actual = format!(
+            "json={}\nhtml={}\nmarkdown={}",
+            sha256_hex(json.as_bytes()),
+            sha256_hex(html.as_bytes()),
+            sha256_hex(markdown.as_bytes()),
+        );
+        // 改前基线（P0-1 删除死代码之前生成）；删除后必须逐字节不变。
+        let expected = "json=63c1beb1a3e9140a911a69de29f981bdfd17ba546f10cf3dae1f56b9e53b6914\n\
+            html=d092c814a99e00dcc4f4890ce0bb2da1a0aaf258f3c5a8421b49c39e7eb64278\n\
+            markdown=3f99e617c337a90eb5cd27a41703ecede28352558f6922565ec9e4801183a0a2";
+        assert_eq!(actual, expected, "the three output channels changed bytes");
     }
 
     fn table_outcome() -> TableOutcome {
