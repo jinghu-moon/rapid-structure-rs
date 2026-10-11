@@ -245,6 +245,23 @@
 - 新增 `vision::normalize` 用例：0..=255 全域 LUT 与合并前闭式逐项（含符号位）对拍、端点
   0→-1.0 / 255→+1.0、无 `-0.0`、`OnceLock` 单例稳定。
 
+## 页文本行规范视图 `PageTextLine`（P1-4 第一批，未发布）
+
+对应 `docs/12-structure-refactor-plan.md` 的 P1-4（D-2，评审二.7 的"先转换、后合并"）。本批只做
+**第一批**：引入规范类型 + 单点转换，行为等价。旧结构 `table::detection::PageLine`（四边形）
+与 `table::cell_content_backfill::TextLine`（轴对齐 bbox）**原样保留**、下游消费者不变，只是
+两者的数据来源收敛到同一个 `PageTextLine`。删除其中一份属计划里的第二批迁移（需逐消费者推进、
+且以字段/裁剪/浮点精度三者对拍为前提），不在本批。
+
+- 新增 `src/table/page_line.rs`：`PageTextLine { index, text, polygon, bbox, score }`，`new()` 是
+  bbox 的唯一生成点（内部调 `vision::geometry::aabb_from_flat8`，与装配点此前 `axis_aligned_bbox(&flat)`
+  逐位一致），`to_page_line()` / `to_text_line()` 显式导出两个旧视图。
+- 放在 `table` 基础层而非 `ocr::types`（评审二.7）；`PageTextLine::new` 只吃几何 + 文本 + 分数，
+  不读 `api::OcrRegion`，避免 `table` 反向依赖输出类型（区域过滤仍留在装配点）。
+- 装配点 `rapid_structure::table_source_lines` 改为先构 `Vec<PageTextLine>` 再映射出 `lines` /
+  `text_lines` / `region_indices`；删除就地拼 bbox 的 `quad_to_flat8` 辅助函数。
+- 新增对拍用例：规范视图导出的两视图与合并前装配手拼结果逐字段相等（含倾斜/负坐标/退化四边形）。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

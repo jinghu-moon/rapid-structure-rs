@@ -1644,8 +1644,8 @@ fn rec_image_from_dynamic(image: &image::DynamicImage) -> Result<crate::config::
 ///
 /// 同一个文本区域在两条路径上出现：定位器（[`crate::table::detection::PageLine`]）需要
 /// 四边形，回填（[`crate::table::cell_content_backfill::TextLine`]）需要轴对齐盒。
-/// 从**同一处**构造两者是刻意的：如果各建一份，"定位看到的行"与"回填用的行"就可能因为
-/// 一次过滤规则的分叉而不再对应，而这种分叉只会表现为"某个单元格莫名其妙是空的"。
+/// 现在两者都由**同一个** [`crate::table::page_line::PageTextLine`] 显式导出：bbox 的裁剪规则
+/// 收敛到规范类型的一处，装配点不再各拼一份，"定位看到的行"与"回填用的行"因此结构上不可能分叉。
 struct TableSourceLines {
     lines: Vec<crate::table::detection::PageLine>,
     text_lines: Vec<crate::table::cell_content_backfill::TextLine>,
@@ -1654,11 +1654,7 @@ struct TableSourceLines {
 }
 
 fn table_source_lines(regions: &[crate::api::OcrRegion]) -> TableSourceLines {
-    let mut out = TableSourceLines {
-        lines: Vec::new(),
-        text_lines: Vec::new(),
-        region_indices: Vec::new(),
-    };
+    let mut canonical: Vec<crate::table::page_line::PageTextLine> = Vec::new();
     for (index, region) in regions.iter().enumerate() {
         // 只有**文本**区域参与：公式区域没有文本语义，表格区域更不可能（它是本函数的消费者）。
         if region.kind != crate::api::RegionKind::Text {
@@ -1668,28 +1664,18 @@ fn table_source_lines(regions: &[crate::api::OcrRegion]) -> TableSourceLines {
         else {
             continue;
         };
-        let flat = quad_to_flat8(&polygon.points);
-        out.lines.push(crate::table::detection::PageLine {
-            polygon: polygon.points,
-            text: recognition.text.clone(),
-            score: recognition.score,
-        });
-        out.text_lines
-            .push(crate::table::cell_content_backfill::TextLine {
-                bbox: crate::table::cell_content_backfill::axis_aligned_bbox(&flat),
-                text: recognition.text.clone(),
-                score: recognition.score,
-            });
-        out.region_indices.push(index);
+        canonical.push(crate::table::page_line::PageTextLine::new(
+            index,
+            polygon.points,
+            recognition.text.clone(),
+            recognition.score,
+        ));
     }
-    out
-}
-
-fn quad_to_flat8(quad: &[[f32; 2]; 4]) -> [f32; 8] {
-    [
-        quad[0][0], quad[0][1], quad[1][0], quad[1][1], quad[2][0], quad[2][1], quad[3][0],
-        quad[3][1],
-    ]
+    TableSourceLines {
+        lines: canonical.iter().map(|line| line.to_page_line()).collect(),
+        text_lines: canonical.iter().map(|line| line.to_text_line()).collect(),
+        region_indices: canonical.iter().map(|line| line.index).collect(),
+    }
 }
 
 /// 一次表格区域的解码 + 回填所需的全部输入。

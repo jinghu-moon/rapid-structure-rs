@@ -33,6 +33,7 @@ pub mod detection;
 pub mod emitter;
 pub mod metadata;
 pub mod ocr_resolution;
+pub mod page_line;
 pub mod preprocess;
 pub mod registration;
 pub mod structure;
