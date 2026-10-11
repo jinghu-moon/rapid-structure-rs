@@ -525,6 +525,18 @@ pub struct RapidOcrEngine {
         crate::model_verify::FileIdentity,
         crate::formula::detect::FormulaDetector,
     )>,
+    /// 懒加载的表格结构会话（键同上）。
+    ///
+    /// 会话创建含图优化，量级远大于一次推理，所以**每张图开一次**是不可接受的
+    /// （`docs/11-table-page-pipeline-execution.md` §2.1 E14.5）。用文件身份做键而不是
+    /// 路径，理由与公式识别器相同：同一路径被换成另一份内容时必须重建。
+    ///
+    /// 词表跟着会话走（[`crate::table::structure::TableStructureSession::vocabulary`]），
+    /// 因此"用这个会话解码"不需要第二个信息来源，也不需要第二次探针。
+    table_session: Option<(
+        crate::model_verify::FileIdentity,
+        crate::table::structure::TableStructureSession,
+    )>,
 }
 
 impl RapidOcrEngine {
@@ -544,6 +556,7 @@ impl RapidOcrEngine {
             base_max_side_len,
             formula_recognizer: None,
             formula_detector: None,
+            table_session: None,
         })
     }
 
@@ -602,6 +615,13 @@ impl crate::api::OcrEngine for RapidOcrEngine {
 
     fn recognize(&mut self, request: crate::api::OcrRequest) -> Result<crate::api::OcrOutput> {
         request.validate()?;
+        // 表格分支在公式**之前**：表格需要页级文本行（回填来源），而公式路由自己也会先跑
+        // 文本通道。把表格放在外层，`recognize_with_table` 才能同时决定"要不要先抹白公式"
+        // 并把两阶段的耗时如实累加，而不是让两条路由互相看不到对方。
+        if request.table.enabled {
+            let policy = request.table.clone();
+            return self.recognize_with_table(request, policy);
+        }
         if request.formula.enabled {
             let policy = request.formula.clone();
             return self.recognize_with_formula(request, policy);
@@ -809,6 +829,7 @@ impl RapidOcrEngine {
                     classification,
                     recognition,
                     formula: None,
+                    table: None,
                 });
             }
         } else if request.stages.recognize {
@@ -863,6 +884,7 @@ impl RapidOcrEngine {
                         }),
                     }),
                     formula: None,
+                    table: None,
                 });
             }
         } else if use_cls {
@@ -883,6 +905,7 @@ impl RapidOcrEngine {
                     }),
                     recognition: None,
                     formula: None,
+                    table: None,
                 });
             }
         }
@@ -913,6 +936,11 @@ impl RapidOcrEngine {
             recognizer_postprocess_ms: exec.rec_breakdown_ms.map(|v| v[2]).unwrap_or_default(),
             recognize_ms: exec.elapsed_ms[2].unwrap_or_default(),
             formula_ms: 0.0,
+            // 表格阶段尚未接入：三个命名分量先固定为 0，使它们出现在账本与 bench JSON 里，
+            // 从而让后续接入有可比的前后基线（09 文档 E1）。
+            table_detect_ms: 0.0,
+            table_structure_infer_ms: 0.0,
+            table_backfill_ms: 0.0,
             postprocess_ms: exec.postprocess_ms.unwrap_or_default(),
             total_ms: exec.e2e_ms.unwrap_or_default() + preprocess_ms,
         };
@@ -1004,6 +1032,7 @@ impl RapidOcrEngine {
                 classifier,
                 recognizer,
                 formula: crate::api::StageReport::default(),
+                table: crate::api::StageReport::default(),
             },
             regions,
             timings: timing,
@@ -1034,7 +1063,7 @@ impl RapidOcrEngine {
         use crate::api::{FormulaOutcome, ImageSize, OcrRegion, Polygon, RegionKind, RegionSource};
 
         let formula_start = Instant::now();
-        let original = self.decode_formula_source(&request)?;
+        let original = self.decode_source_image(&request)?;
         let size = ImageSize {
             width: original.width(),
             height: original.height(),
@@ -1119,6 +1148,7 @@ impl RapidOcrEngine {
                     model_id: recognition.model_id,
                     token_ids: policy.include_token_ids.then_some(recognition.token_ids),
                 }),
+                table: None,
             });
         }
 
@@ -1139,10 +1169,10 @@ impl RapidOcrEngine {
     }
 
     /// 解码请求输入为原图 `DynamicImage`，复用共享输入层的限制与错误语义。
-    fn decode_formula_source(
-        &self,
-        request: &crate::api::OcrRequest,
-    ) -> Result<image::DynamicImage> {
+    ///
+    /// 公式与表格两条路由都用它：两者都需要**未抹白的原始像素**（公式裁剪、表格结构推理），
+    /// 而共享输入层的像素上限与错误语义只能有一份。
+    fn decode_source_image(&self, request: &crate::api::OcrRequest) -> Result<image::DynamicImage> {
         use crate::api::ImageInput;
         let pixels = request.preprocess.max_decode_pixels;
         let encoded = request.preprocess.max_encoded_bytes;
@@ -1278,6 +1308,240 @@ impl RapidOcrEngine {
                 crate::error::RapidOcrError::Config("formula recognizer is not initialized".into())
             })
     }
+
+    /// 懒加载表格结构会话；模型**文件身份**（路径 + 体积 + mtime）变化时重建。
+    ///
+    /// 会话的设置全部来自策略与引擎的运行时档案：表格结构不是一条可以自己决定线程数、
+    /// 画布边长与形状固定策略的旁路。期望摘要同样由策略传入、由库在加载时校验。
+    fn table_session(
+        &mut self,
+        policy: &crate::api::TablePolicy,
+    ) -> Result<&mut crate::table::structure::TableStructureSession> {
+        let path = policy.model_path.clone().ok_or_else(|| {
+            crate::error::RapidOcrError::InvalidInput("table policy requires `model_path`".into())
+        })?;
+        let identity = crate::model_verify::FileIdentity::of(&path)?;
+        let rebuild = self
+            .table_session
+            .as_ref()
+            .is_none_or(|(current, _)| *current != identity);
+        if rebuild {
+            let runtime = self.inner.runtime_profile().session_runtime();
+            let config = crate::table::structure::TableStructureConfig {
+                input_side_len: policy.input_side_len,
+                fix_input_shape: policy.fix_input_shape,
+                intra_threads: policy.intra_threads,
+                expected_sha256: policy.expected_model_sha256.clone(),
+            };
+            let session =
+                crate::table::structure::TableStructureSession::open(&path, &runtime, &config)?;
+            self.table_session = Some((identity, session));
+        }
+        self.table_session
+            .as_mut()
+            .map(|(_, session)| session)
+            .ok_or_else(|| {
+                crate::error::RapidOcrError::Config("table session is not initialized".into())
+            })
+    }
+
+    /// 表格路由：页级文本识别 → 文本分布定位 → 结构推理 → 几何匹配回填 → 发射。
+    ///
+    /// 与 [`Self::recognize_with_formula`] 的关键差别：
+    ///
+    /// - **表格像素不抹白**。单元格文本正是要保留的页级识别结果，抹白会把它删掉。
+    /// - **不重新识别单元格**。文本通过几何匹配从页级结果里取（门禁 G2/G7 的结构不变量
+    ///   `BackfillOutcome::recognizer_calls == 0`），因此多一张表不会多一次 rec 调用。
+    /// - 定位零新增整页 CNN（门禁 G4）：输入是**已有文本框的分布**。
+    ///
+    /// 公式与表格同时启用时：公式抹白发生在**文本通道内部**（[`Self::recognize_with_formula`]
+    /// 自己会先跑文本），而表格的结构推理裁剪自**原图**。于是定位与回填用的是同一组
+    /// 抹白后的文本行（落在公式区域内的单元格因此表现为 `Unmatched`），而结构模型看到的是
+    /// 真实像素而不是被挖空的图。
+    fn recognize_with_table(
+        &mut self,
+        request: crate::api::OcrRequest,
+        policy: crate::api::TablePolicy,
+    ) -> Result<crate::api::OcrOutput> {
+        use crate::api::{
+            OcrRegion, Polygon, RegionKind, RegionSource, StageReport, StageState, StageTiming,
+            TableDegradation, TableOutcome, TableStructureConfidence,
+        };
+        use crate::table::detection::TableDetector;
+
+        let table_start = Instant::now();
+
+        // ① 页级文本通道（公式若启用则先抹白公式像素）。表格路由在文本通道里**必须关闭**，
+        //    否则子请求会再进一次这里。
+        let mut text_request = request.clone();
+        text_request.table = crate::api::TablePolicy::default();
+        let mut output = if text_request.formula.enabled {
+            let formula = text_request.formula.clone();
+            self.recognize_with_formula(text_request, formula)?
+        } else {
+            self.recognize_text(text_request)?
+        };
+
+        // ② 定位。输入是已有文本框的分布（零新增整页 CNN），像素来自**原图**。
+        let original = self.decode_source_image(&request)?;
+        let source = table_source_lines(&output.regions);
+        let image = rec_image_from_dynamic(&original)?;
+
+        let detect_start = Instant::now();
+        let mut detector = crate::table::detection::TextDistributionDetector::new(
+            crate::table::detection::TableDetectorConfig::default(),
+        )?;
+        let mut regions = detector.detect(&image, &source.lines)?;
+        // 低分与超量区域在这里被丢掉，而不是留给下游"少输出一点"。
+        regions.retain(|region| region.score >= policy.min_region_score);
+        regions.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        regions.truncate(policy.max_regions);
+        let detect_ms = detect_start.elapsed().as_secs_f32() * 1000.0;
+
+        if regions.is_empty() {
+            output.timings.table_detect_ms = detect_ms;
+            output.timings.total_ms += detect_ms;
+            output.stages.table = StageReport {
+                state: StageState::SkippedNoInput,
+                timing: Some(StageTiming {
+                    preprocess_ms: detect_ms,
+                    infer_ms: 0.0,
+                    postprocess_ms: 0.0,
+                }),
+            };
+            output.validate()?;
+            return Ok(output);
+        }
+
+        // 会话在整个请求里只取一次：`table_session` 每次都要按文件身份（路径 + 体积 +
+        // mtime）确认缓存是否仍然有效，那是每张表一次的 `stat`；更重要的是
+        // "一张表一次结构推理"（门禁 G3）应当由**结构**保证，而不是靠调用点自觉。
+        let session = self.table_session(&policy)?;
+        let vocabulary = session.vocabulary().clone();
+        let mut infer_ms = 0.0_f32;
+        let mut backfill_ms = 0.0_f32;
+        let mut table_regions: Vec<OcrRegion> = Vec::new();
+
+        for (index, region) in regions.iter().enumerate() {
+            let (tensor, _canvas) = crate::table::preprocess::table_structure_input(
+                &region.crop,
+                policy.input_side_len,
+            )?;
+
+            let infer_start = Instant::now();
+            let (boxes, logits) = session.run_with(tensor.view(), |outputs| {
+                Ok((outputs.boxes.to_owned(), outputs.tokens.to_owned()))
+            })?;
+            infer_ms += infer_start.elapsed().as_secs_f32() * 1000.0;
+
+            let backfill_start = Instant::now();
+            let decoded = table_decode_and_backfill(&TableDecodeInput {
+                vocabulary: &vocabulary,
+                boxes: &boxes,
+                logits: &logits,
+                side_len: policy.input_side_len,
+                region,
+                source: &source,
+            })?;
+            backfill_ms += backfill_start.elapsed().as_secs_f32() * 1000.0;
+
+            let text_policy = match policy.text_policy {
+                crate::api::TableTextPolicy::Escape => crate::table::emitter::TextPolicy::Escape,
+                crate::api::TableTextPolicy::Raw => crate::table::emitter::TextPolicy::Raw,
+            };
+            let rendered =
+                crate::table::emitter::emit_html(&decoded.result, &decoded.texts, text_policy)?;
+            let table_html = crate::table::emitter::emit_table_html(
+                &decoded.result,
+                &decoded.texts,
+                text_policy,
+            )?
+            .rendered;
+            let markdown =
+                crate::table::emitter::emit_markdown(&decoded.result, &decoded.texts)?.rendered;
+
+            // `docs/11` §3 E15.2 / §4 G8：面向用户的 HTML 必须**唯一**经过净化，
+            // 而且净化发生在引擎出口 —— 这样 `/api/ocr` 拿到的就已经是净化后的 HTML，
+            // 网页侧（E16.3）不需要第二份实现（两份实现必然漂移，白名单会失效）。
+            let (html, table_html) =
+                finalize_table_html(rendered.rendered, table_html, policy.text_policy);
+
+            table_regions.push(OcrRegion {
+                source: RegionSource::Detected {
+                    detector_index: index,
+                },
+                kind: RegionKind::Table,
+                // `Quad` 与 `Polygon::points` 是同一个类型，因此区域多边形**没有换算**：
+                // 定位器吃的是整页文本框，吐出的就是整页坐标。
+                polygon: Some(Polygon {
+                    points: region.polygon,
+                }),
+                detection: Some(crate::api::DetectionOutcome {
+                    score: region.score,
+                }),
+                classification: None,
+                recognition: None,
+                formula: None,
+                table: Some(TableOutcome {
+                    html,
+                    table_html,
+                    markdown,
+                    rows: decoded.result.grid.rows,
+                    cols: decoded.result.grid.cols,
+                    confidence: match rendered.confidence {
+                        crate::table::emitter::StructureConfidence::High => {
+                            TableStructureConfidence::High
+                        }
+                        crate::table::emitter::StructureConfidence::Low => {
+                            TableStructureConfidence::Low
+                        }
+                    },
+                    holes: decoded.result.coverage.holes(),
+                    degradations: rendered
+                        .degradations
+                        .iter()
+                        .map(|degradation| match degradation {
+                            crate::table::emitter::StructureDegradation::GridHoles { holes } => {
+                                TableDegradation::GridHoles { holes: *holes }
+                            }
+                            crate::table::emitter::StructureDegradation::Truncated => {
+                                TableDegradation::Truncated
+                            }
+                        })
+                        .collect(),
+                    cells: decoded.cells,
+                    source_line_indices: decoded.source_line_indices,
+                    model_id: policy
+                        .model_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default(),
+                }),
+            });
+        }
+
+        output.timings.table_detect_ms = detect_ms;
+        output.timings.table_structure_infer_ms = infer_ms;
+        output.timings.table_backfill_ms = backfill_ms;
+        output.timings.total_ms += detect_ms + infer_ms + backfill_ms;
+        let items = table_regions.len();
+        output.regions.extend(table_regions);
+        output.stages.table = StageReport {
+            state: StageState::Completed { items },
+            timing: Some(StageTiming {
+                preprocess_ms: detect_ms,
+                infer_ms,
+                postprocess_ms: backfill_ms,
+            }),
+        };
+        let _ = table_start.elapsed();
+        output.validate()?;
+        Ok(output)
+    }
 }
 
 /// 以多边形包围盒裁剪原图；旋转四边形同样使用轴对齐包围盒。
@@ -1339,6 +1603,253 @@ fn rec_image_to_dynamic(image: &crate::config::RecImage) -> Result<image::Dynami
         crate::error::RapidOcrError::InvalidImage("invalid RGB buffer for formula routing".into())
     })?;
     Ok(image::DynamicImage::ImageRgb8(buffer))
+}
+
+/// 把已解码的 `DynamicImage` 转回共享输入层的 `RecImage`（BGR 序）。
+///
+/// 表格定位器与结构预处理的输入类型都是 [`crate::config::RecImage`]，而输入层交出来的是
+/// `DynamicImage`。这一层转换刻意走**公开构造器**而不是重新解码字节：像素只解码一次，
+/// 上限与 EXIF 语义只有一份。
+fn rec_image_from_dynamic(image: &image::DynamicImage) -> Result<crate::config::RecImage> {
+    let rgb = image.to_rgb8();
+    let (width, height) = (rgb.width() as usize, rgb.height() as usize);
+    let bgr: Vec<u8> = rgb
+        .as_raw()
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .flat_map(|pixel| [pixel[2], pixel[1], pixel[0]])
+        .collect();
+    crate::config::RecImage::from_bgr_u8(width, height, bgr)
+}
+
+/// 页级文本区域 → 表格定位与回填所需的两种行表示。
+///
+/// 同一个文本区域在两条路径上出现：定位器（[`crate::table::detection::PageLine`]）需要
+/// 四边形，回填（[`crate::table::cell_content_backfill::TextLine`]）需要轴对齐盒。
+/// 从**同一处**构造两者是刻意的：如果各建一份，"定位看到的行"与"回填用的行"就可能因为
+/// 一次过滤规则的分叉而不再对应，而这种分叉只会表现为"某个单元格莫名其妙是空的"。
+struct TableSourceLines {
+    lines: Vec<crate::table::detection::PageLine>,
+    text_lines: Vec<crate::table::cell_content_backfill::TextLine>,
+    /// `lines[i]` / `text_lines[i]` 对应的区域在 `OcrOutput::regions` 中的下标。
+    region_indices: Vec<usize>,
+}
+
+fn table_source_lines(regions: &[crate::api::OcrRegion]) -> TableSourceLines {
+    let mut out = TableSourceLines {
+        lines: Vec::new(),
+        text_lines: Vec::new(),
+        region_indices: Vec::new(),
+    };
+    for (index, region) in regions.iter().enumerate() {
+        // 只有**文本**区域参与：公式区域没有文本语义，表格区域更不可能（它是本函数的消费者）。
+        if region.kind != crate::api::RegionKind::Text {
+            continue;
+        }
+        let (Some(polygon), Some(recognition)) = (region.polygon, region.recognition.as_ref())
+        else {
+            continue;
+        };
+        let flat = quad_to_flat8(&polygon.points);
+        out.lines.push(crate::table::detection::PageLine {
+            polygon: polygon.points,
+            text: recognition.text.clone(),
+            score: recognition.score,
+        });
+        out.text_lines
+            .push(crate::table::cell_content_backfill::TextLine {
+                bbox: crate::table::cell_content_backfill::axis_aligned_bbox(&flat),
+                text: recognition.text.clone(),
+                score: recognition.score,
+            });
+        out.region_indices.push(index);
+    }
+    out
+}
+
+fn quad_to_flat8(quad: &[[f32; 2]; 4]) -> [f32; 8] {
+    [
+        quad[0][0], quad[0][1], quad[1][0], quad[1][1], quad[2][0], quad[2][1], quad[3][0],
+        quad[3][1],
+    ]
+}
+
+/// 一次表格区域的解码 + 回填所需的全部输入。
+///
+/// 打包成结构体而不是八个位置参数：这些量**必须来自同一张裁剪图**（框、logits、裁剪尺寸、
+/// 区域原点），位置参数会让"传错了那张图的尺寸"变成一次静默的坐标错位。
+struct TableDecodeInput<'a> {
+    vocabulary: &'a crate::table::decode::StructureVocabulary,
+    boxes: &'a ndarray::Array3<f32>,
+    logits: &'a ndarray::Array3<f32>,
+    side_len: usize,
+    region: &'a crate::table::detection::TableRegion,
+    source: &'a TableSourceLines,
+}
+
+struct TableDecoded {
+    result: crate::table::decode::StructureResult,
+    texts: Vec<String>,
+    cells: Vec<crate::api::TableCellOutcome>,
+    source_line_indices: Vec<usize>,
+}
+
+/// 把发射器产出的表格 HTML 变成 API 出口形态（`docs/11` §3 E15.2 / §4 G8）。
+///
+/// 返回 `(html, table_html)`：`html` 是评测口径需要的整页外壳，
+/// `table_html` 是 `OcrTableItem` 里给页面渲染用的那一份。
+///
+/// **净化的唯一落点就在这里**。引擎出口净化一次，网页侧就没有第二份白名单，
+/// 也就不存在"两份实现漂移后其中一份放行了 `<script>`"的窗口。
+///
+/// 评测口径（`TableTextPolicy::Raw`）**刻意不净化**：消费者是 lxml + 官方
+/// `metric.py`，改一个字节都会破坏与 PubTabNet 真值的可比性。这就是
+/// [`crate::api::TableTextPolicy`] 存在的理由 —— 它不是"更严格/更宽松"的开关，
+/// 而是"面向用户 / 面向评测"的开关。
+///
+/// 生产上两条路径目前**产出相同字节**：`TextPolicy::Escape`（用户默认）已经让
+/// 单元格文本里的 `<` 变成 `&lt;`，而发射器只会写出白名单内的标签与
+/// `rowspan`/`colspan`/`align`/`valign` 四种属性，因此净化是空操作。净化在这里是
+/// **纵深防御**：它约束的是未来任何新的发射路径，而不是今天的输出。
+fn finalize_table_html(
+    html: String,
+    table_html: String,
+    policy: crate::api::TableTextPolicy,
+) -> (String, String) {
+    match policy {
+        crate::api::TableTextPolicy::Escape => {
+            // 发射器的两条输出必须满足这个恒等式（`emit_html` 就是
+            // `<html><body>` + `emit_table_html` + `</body></html>`）。在这里钉住它，
+            // 是为了让"净化后的 `html` 重新拼外壳"这件事有依据 —— 否则哪天发射器换了
+            // 外壳，`html` 与 `table_html` 会静默分叉。
+            debug_assert_eq!(html, format!("<html><body>{table_html}</body></html>"));
+            let cleaned = crate::output::html::sanitize_table_html(&table_html);
+            let shell = format!("<html><body>{cleaned}</body></html>");
+            (shell, cleaned)
+        }
+        crate::api::TableTextPolicy::Raw => (html, table_html),
+    }
+}
+
+fn table_decode_and_backfill(input: &TableDecodeInput<'_>) -> Result<TableDecoded> {
+    use crate::api::{Polygon, TableCellMatch, TableCellOutcome};
+    use crate::table::cell_content_backfill::CellMatchKind;
+
+    if input.logits.shape()[0] != 1 || input.boxes.shape()[0] != 1 {
+        return Err(crate::error::RapidOcrError::Decode(format!(
+            "the table structure model returned a batch of {} box(es) / {} structure(s), but the page \
+             pipeline runs one region at a time",
+            input.boxes.shape()[0],
+            input.logits.shape()[0]
+        )));
+    }
+    let steps_count = input.logits.shape()[1];
+    let classes = input.logits.shape()[2];
+    // 先查类别数再解码：类别数不符时 `decode_token_steps` 报的是"某个 class index 越界"，
+    // 那是症状而不是原因。这里报的是"模型与词表不配套"。
+    if classes != input.vocabulary.class_count() {
+        return Err(crate::error::RapidOcrError::Decode(format!(
+            "the table structure model's logits have {classes} classes but the vocabulary has {}",
+            input.vocabulary.class_count()
+        )));
+    }
+    let argmaxed = crate::table::decode::argmax_structure(
+        input.logits.as_slice().expect("contiguous"),
+        steps_count,
+    )?;
+    let (steps, termination) =
+        crate::table::decode::decode_token_steps(input.vocabulary, &argmaxed)?;
+
+    // 单元格几何从**归一化**坐标回到**裁剪图**像素：`denormalize` 与 `rescale` 两步复合后
+    // 等价于统一乘 `max(h, w)`（E4 的代数不变量），量纲是裁剪图像素而不是 488 画布。
+    let height = input.region.crop.height() as f32;
+    let width = input.region.crop.width() as f32;
+    let side = input.side_len as f32;
+    let shape = crate::table::decode::TableShape::new(height, width, side)?;
+    let ratios = crate::table::decode::rescale_ratios(width, height, side);
+    let box_flat = input.boxes.as_slice().expect("contiguous");
+    let cell_polygons: Vec<[f32; 8]> = steps
+        .iter()
+        .filter(|step| step.is_cell_start)
+        .map(|step| {
+            let offset = step.step_index * 8;
+            let mut raw = [0.0_f32; 8];
+            raw.copy_from_slice(&box_flat[offset..offset + 8]);
+            crate::table::decode::rescale_polygon(&shape.denormalize_polygon(&raw), ratios)
+        })
+        .collect();
+    let result = crate::table::decode::tokens_to_structure(
+        input.vocabulary,
+        &steps,
+        termination,
+        &cell_polygons,
+    )?;
+
+    // 回填：单元格几何在**裁剪图**坐标系里，页级文本行在**整页**坐标系里，因此偏移必须
+    // 加上区域原点。参考实现喂的是同一张整图（没有 crop），所以那里 offset 是零；
+    // 本仓库走"整页里的小表"路线，这一项正是 E11 §12.4.7 登记的待办。
+    let outcome = crate::table::cell_content_backfill::backfill(
+        &result.cells,
+        crate::table::cell_content_backfill::BackfillSource::Reuse {
+            lines: &input.source.text_lines,
+            offset: input.region.origin,
+        },
+    )?;
+    // 复用路径恒为 0，是门禁 G2/G7 的结构不变量。这里断言而不是"记得不要调"：
+    // 将来有人把 `Reuse` 换成 `Crop`，这一行会在页面路径上立刻失败。
+    debug_assert_eq!(outcome.recognizer_calls, 0);
+
+    let mut cells = Vec::with_capacity(result.cells.len());
+    let mut consumed: Vec<usize> = Vec::new();
+    for (index, slot) in result.cells.iter().enumerate() {
+        if let Some(matched) = outcome.matched_lines.get(index) {
+            for line_index in matched {
+                if let Some(region_index) = input.source.region_indices.get(*line_index) {
+                    consumed.push(*region_index);
+                }
+            }
+        }
+        cells.push(TableCellOutcome {
+            row: slot.logic.row_start,
+            col: slot.logic.col_start,
+            rowspan: slot.rowspan,
+            colspan: slot.colspan,
+            text: outcome.texts.get(index).cloned().unwrap_or_default(),
+            score: outcome.text_scores.get(index).copied().flatten(),
+            match_kind: match outcome.kinds.get(index) {
+                Some(CellMatchKind::BlankBox) => TableCellMatch::BlankBox,
+                Some(CellMatchKind::Unmatched) => TableCellMatch::Unmatched,
+                Some(CellMatchKind::Single) => TableCellMatch::Single,
+                Some(CellMatchKind::Multiple) => TableCellMatch::Multiple,
+                // 回填契约是"与 cells 等长同序"，缺项说明契约被破坏了。
+                None => {
+                    return Err(crate::error::RapidOcrError::Decode(format!(
+                        "the backfill returned {} cell kind(s) for {} slot(s)",
+                        outcome.kinds.len(),
+                        result.cells.len()
+                    )));
+                }
+            },
+            polygon: slot.bbox.map(|bbox| {
+                let mut quad = crate::table::cell_content_backfill::bbox_to_quad(bbox);
+                for point in &mut quad {
+                    point[0] += input.region.origin[0];
+                    point[1] += input.region.origin[1];
+                }
+                Polygon { points: quad }
+            }),
+        });
+    }
+    consumed.sort_unstable();
+    consumed.dedup();
+
+    Ok(TableDecoded {
+        result,
+        texts: outcome.texts,
+        cells,
+        source_line_indices: consumed,
+    })
 }
 
 impl RapidOcrEngine {
@@ -1489,6 +2000,8 @@ impl RapidOcrEngine {
                     output: request.output,
                     // tiling 与公式路由互斥（`request.validate()` 已拒绝同时启用）。
                     formula: crate::api::FormulaPolicy::default(),
+                    // 表格路由只在顶层跑：分块子请求必须显式关闭，否则会逐块重复定位。
+                    table: crate::api::TablePolicy::default(),
                 };
                 let mut out = self.recognize(sub)?;
                 let region_offset = regions.len();
@@ -1631,6 +2144,7 @@ impl RapidOcrEngine {
                 },
                 // 分块路径与公式路由互斥（`request.validate()` 已拒绝同时启用）。
                 formula: crate::api::StageReport::default(),
+                table: crate::api::StageReport::default(),
             },
             regions,
             timings,
@@ -1715,7 +2229,7 @@ mod formula_integration_tests {
         StagePlan, StageState, TextOrder, WordOutputMode,
     };
     use crate::ocr::pipeline::config::EngineConfig;
-    use crate::ocr::pipeline::rapid_ocr::RapidOcrEngine;
+    use crate::ocr::pipeline::rapid_structure::RapidOcrEngine;
 
     fn engine_config(model_root: &std::path::Path) -> EngineConfig {
         let yaml = format!(
@@ -1797,6 +2311,7 @@ rec:
             },
             output: OutputPolicy::default(),
             formula,
+            table: crate::api::TablePolicy::default(),
         }
     }
 
@@ -2399,5 +2914,495 @@ rec:
         assert_eq!(session.inter_threads, None);
         assert_eq!(session.rayon_threads, None);
         assert!(!session.auto_tune_threads);
+    }
+}
+
+/// 表格 HTML 出口策略的纯函数测试（`docs/11` §3 E15.2 / §4 G8）。
+///
+/// 刻意不依赖任何模型或图片：这一层要钉死的是"哪条路径会被净化"，
+/// 与表格内容无关。
+#[cfg(test)]
+mod table_html_policy_tests {
+    use crate::api::TableTextPolicy;
+
+    /// 面向用户的路径（默认 `Escape`）：主动标记必须被剥掉，白名单结构必须留着。
+    #[test]
+    fn the_user_facing_path_strips_active_markup() {
+        let table_html = "<table><tr><td>ok</td></tr></table><script>alert(1)</script>";
+        let (html, cleaned) = super::finalize_table_html(
+            format!("<html><body>{table_html}</body></html>"),
+            table_html.to_string(),
+            TableTextPolicy::Escape,
+        );
+        assert!(!cleaned.contains("<script"), "table_html: {cleaned}");
+        assert!(cleaned.contains("<table>"), "table_html: {cleaned}");
+        assert!(!html.contains("<script"), "html: {html}");
+        // 外壳是**重新**按净化后的内容拼的，不是复用发射器给的那一串。
+        assert_eq!(html, format!("<html><body>{cleaned}</body></html>"));
+    }
+
+    /// 评测路径（`Raw`）：一个字节都不动 —— 官方 `metric.py` 的可比性依赖这个承诺。
+    #[test]
+    fn the_evaluation_path_is_byte_identical() {
+        let raw =
+            "<html><body><table><tr><td><script>alert(1)</script></td></tr></table></body></html>";
+        let (html, table_html) =
+            super::finalize_table_html(raw.to_string(), raw.to_string(), TableTextPolicy::Raw);
+        assert_eq!(table_html, raw);
+        assert_eq!(html, raw);
+    }
+
+    /// 发射器的真实输出在两条路径下**逐字节相同** —— 这是"净化是纵深防御而不是
+    /// 当下的行为变更"的可执行证据。若哪天发射器开始写出白名单外的标记，这条会红，
+    /// 而那正是需要知道的时候。
+    #[test]
+    fn sanitizing_is_a_no_op_on_whitelisted_emitter_output() {
+        let table_html = "<table><thead><tr><td rowspan=\"2\" colspan=\"3\">a</td></tr></thead><tbody><tr><td align=\"center\">b</td></tr></tbody></table>";
+        let shell = format!("<html><body>{table_html}</body></html>");
+        let (escaped_html, escaped_table) = super::finalize_table_html(
+            shell.clone(),
+            table_html.to_string(),
+            TableTextPolicy::Escape,
+        );
+        let (raw_html, raw_table) =
+            super::finalize_table_html(shell, table_html.to_string(), TableTextPolicy::Raw);
+        assert_eq!(
+            escaped_table, raw_table,
+            "sanitizing changed emitter output"
+        );
+        assert_eq!(escaped_table, table_html);
+        assert_eq!(escaped_html, raw_html);
+    }
+}
+
+/// 页面级表格路由的集成测试（`docs/11` §2.1 E14.3–E14.6）。
+///
+/// 与 `formula_integration_tests` 同一条规矩：真实模型与真实页面图片全部通过
+/// 环境变量定位，缺失时**显式 skip**，绝不 panic、绝不回落到开发机绝对路径。
+#[cfg(test)]
+mod table_pipeline_tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::api::{
+        ClassifierPlan, ClassifierPolicy, DetectionPolicy, ImageInput, OcrEngine, OcrRequest,
+        OutputPolicy, PreprocessPolicy, RecognitionPolicy, RegionKind, StagePlan, StageState,
+        TablePolicy, TableTextPolicy, WordOutputMode,
+    };
+    use crate::ocr::pipeline::config::EngineConfig;
+    use crate::ocr::pipeline::rapid_structure::RapidOcrEngine;
+
+    /// 与 `formula_integration_tests::engine_config` 同一份模板：表格路径必须先跑
+    /// 页级文本通道（回填的文本来源），所以必须真的启用 det + rec。
+    fn engine_config(model_root: &std::path::Path) -> EngineConfig {
+        let yaml = format!(
+            r#"
+global:
+  use_det: true
+  use_cls: false
+  use_rec: true
+  max_side_len: 2000
+  min_side_len: 30
+det:
+  lang: multi
+  ocr_version: PP-OCRv6
+  model_type: small
+  model_path: {root}/small/PP-OCRv6_det_small.onnx
+  allow_download: false
+cls:
+  lang: ch
+rec:
+  model:
+    lang: ch
+    ocr_version: PP-OCRv6
+    model_type: small
+    model_path: {root}/small/PP-OCRv6_rec_small.onnx
+    rec_keys_path: {root}/small/ppocrv6_dict.txt
+    allow_download: false
+"#,
+            root = model_root.display().to_string().replace('\\', "/")
+        );
+        EngineConfig::from_yaml_str(&yaml).expect("engine config template must parse")
+    }
+
+    struct Assets {
+        engine: RapidOcrEngine,
+        table_model: PathBuf,
+        /// `datasets/text/04表格与键值对.png`：页面上有一个 5 列统计表 + 两个并排结构。
+        page_with_table: PathBuf,
+    }
+
+    fn assets() -> Option<Assets> {
+        let model_root = crate::test_support::ocr_model_root()?;
+        let table_model = crate::test_support::table_structure_model_path()?;
+        let page_with_table = crate::test_support::page_fixture("04表格与键值对.png")?;
+        let engine = RapidOcrEngine::new(engine_config(&model_root)).expect("engine should load");
+        Some(Assets {
+            engine,
+            table_model,
+            page_with_table,
+        })
+    }
+
+    fn request(bytes: Vec<u8>, table: TablePolicy) -> OcrRequest {
+        OcrRequest {
+            input: ImageInput::Encoded(Arc::from(bytes)),
+            roi: None,
+            scale_hint: None,
+            stages: StagePlan {
+                detect: true,
+                classify: ClassifierPlan {
+                    policy: ClassifierPolicy::Off,
+                    apply_rotation: false,
+                },
+                recognize: true,
+            },
+            preprocess: PreprocessPolicy::default(),
+            detection: DetectionPolicy::default(),
+            recognition: RecognitionPolicy {
+                words: WordOutputMode::Off,
+            },
+            output: OutputPolicy::default(),
+            formula: crate::api::FormulaPolicy::default(),
+            table,
+        }
+    }
+
+    fn table_policy(assets: &Assets) -> TablePolicy {
+        TablePolicy {
+            enabled: true,
+            model_path: Some(assets.table_model.clone()),
+            text_policy: TableTextPolicy::Escape,
+            ..TablePolicy::default()
+        }
+    }
+
+    /// 页级输出里所有 `RegionKind::Table` 区域。
+    fn table_regions(output: &crate::api::OcrOutput) -> Vec<&crate::api::OcrRegion> {
+        output
+            .regions
+            .iter()
+            .filter(|region| region.kind == RegionKind::Table)
+            .collect()
+    }
+
+    fn bounds(points: &[[f32; 2]; 4]) -> [f32; 4] {
+        let mut out = [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        for point in points {
+            out[0] = out[0].min(point[0]);
+            out[1] = out[1].min(point[1]);
+            out[2] = out[2].max(point[0]);
+            out[3] = out[3].max(point[1]);
+        }
+        out
+    }
+
+    /// E14.3 + E14.4 + E14.6：整页路径真的产出了表格区域，且三处计时/阶段账目都有值。
+    ///
+    /// 这里同时覆盖 G3 的可观测面：`stages.table.items` 必须等于表格区域数，而每个表格
+    /// 区域恰好携带一份 `TableOutcome` —— 结构模型每张表只被调用一次，不随单元格数增长。
+    #[test]
+    fn the_page_pipeline_produces_a_table_region_with_timings() {
+        let Some(mut assets) = assets() else {
+            return;
+        };
+        let bytes = std::fs::read(&assets.page_with_table).expect("the page must be readable");
+        let output = assets
+            .engine
+            .recognize(request(bytes, table_policy(&assets)))
+            .expect("the table route must not fail");
+
+        let regions = table_regions(&output);
+        assert!(
+            !regions.is_empty(),
+            "the fixture page contains a table; the locator found none"
+        );
+
+        // 记录实测值（不是断言）：docs/11 §2.5 的完成记录要用它，而"表格路径在
+        // 整页预算里占多少"只能由真实页面回答。
+        for (index, region) in regions.iter().enumerate() {
+            let outcome = region.table.as_ref().expect("table outcome");
+            println!(
+                "TABLE_REGION[{index}] rows={} cols={} cells={} confidence={:?} holes={} \
+                 consumed_lines={}",
+                outcome.rows,
+                outcome.cols,
+                outcome.cells.len(),
+                outcome.confidence,
+                outcome.holes,
+                outcome.source_line_indices.len(),
+            );
+        }
+        println!(
+            "TABLE_TIMING detect_ms={:.3} infer_ms={:.3} backfill_ms={:.3} page_total_ms={:.3} \
+             regions={}",
+            output.timings.table_detect_ms,
+            output.timings.table_structure_infer_ms,
+            output.timings.table_backfill_ms,
+            output.timings.total_ms,
+            output.regions.len(),
+        );
+
+        // E14.4：阶段账目如实报告表格数量。
+        match output.stages.table.state {
+            StageState::Completed { items } => assert_eq!(
+                items,
+                regions.len(),
+                "the table stage must report exactly the table regions it produced"
+            ),
+            other => panic!("the table stage must be Completed, got {other:?}"),
+        }
+        let timing = output
+            .stages
+            .table
+            .timing
+            .expect("a completed table stage must carry a timing");
+        assert_eq!(
+            timing.infer_ms, output.timings.table_structure_infer_ms,
+            "the stage timing and the ledger must report the same structure inference time"
+        );
+
+        // E14.6：三分量在页面路径上都有值（结构推理与定位必须真的花过时间）。
+        assert!(
+            output.timings.table_detect_ms > 0.0,
+            "the locator must report a non-zero cost"
+        );
+        assert!(
+            output.timings.table_structure_infer_ms > 0.0,
+            "the structure model must report a non-zero cost"
+        );
+        assert!(
+            output.timings.table_backfill_ms >= 0.0,
+            "the backfill window cannot be negative"
+        );
+        // 三个分量是 `total_ms` 的一部分，不能超过它。
+        let table_total = output.timings.table_detect_ms
+            + output.timings.table_structure_infer_ms
+            + output.timings.table_backfill_ms;
+        assert!(
+            table_total <= output.timings.total_ms + 1e-3,
+            "table stages ({table_total} ms) must fit inside total_ms ({})",
+            output.timings.total_ms
+        );
+
+        // 每个表格区域必须携带完整结果，且几何与逻辑网格自洽。
+        for region in &regions {
+            let outcome = region
+                .table
+                .as_ref()
+                .expect("a table region must carry a table outcome");
+            assert!(
+                outcome.html.starts_with("<html><body><table>"),
+                "the full HTML must carry the page shell: {}",
+                outcome.html
+            );
+            assert!(
+                outcome.table_html.starts_with("<table>"),
+                "the table-only variant must start at the table element: {}",
+                outcome.table_html
+            );
+            assert!(!outcome.cells.is_empty(), "a located table has cells");
+            assert!(
+                outcome.rows >= 1 && outcome.cols >= 1,
+                "a decoded table must have at least one row and column, got {}x{}",
+                outcome.rows,
+                outcome.cols
+            );
+            for cell in &outcome.cells {
+                assert!(
+                    cell.row < outcome.rows && cell.col < outcome.cols,
+                    "cell ({}, {}) falls outside the {}x{} grid",
+                    cell.row,
+                    cell.col,
+                    outcome.rows,
+                    outcome.cols
+                );
+                assert!(cell.rowspan >= 1 && cell.colspan >= 1);
+            }
+            // 被消费的页级文本行下标必须指向真实存在的区域。
+            for index in &outcome.source_line_indices {
+                assert!(
+                    *index < output.regions.len(),
+                    "consumed line index {index} is out of range"
+                );
+            }
+            assert!(
+                outcome
+                    .source_line_indices
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1]),
+                "consumed line indices must be sorted and deduplicated: {:?}",
+                outcome.source_line_indices
+            );
+        }
+    }
+
+    /// 坐标一致性：表格区域的 polygon 必须**覆盖**它自己的单元格 polygon 的并集。
+    ///
+    /// 这条断言钉住的是 E11 §12.4.7 登记的那个偏移：单元格几何在裁剪图坐标系里，
+    /// 必须加上区域原点才能回到整页坐标系。少加偏移时单元格会整体平移到表格左上角
+    /// 附近，本断言立刻失败。
+    #[test]
+    fn the_table_polygon_covers_its_cells_in_page_coordinates() {
+        let Some(mut assets) = assets() else {
+            return;
+        };
+        let bytes = std::fs::read(&assets.page_with_table).expect("the page must be readable");
+        let output = assets
+            .engine
+            .recognize(request(bytes, table_policy(&assets)))
+            .expect("the table route must not fail");
+
+        let mut checked = 0;
+        for region in table_regions(&output) {
+            let outcome = region.table.as_ref().expect("table outcome");
+            let Some(table_polygon) = region.polygon else {
+                panic!("a table region must carry a polygon");
+            };
+            let table_box = bounds(&table_polygon.points);
+            let mut union: Option<[f32; 4]> = None;
+            for cell in &outcome.cells {
+                let Some(polygon) = cell.polygon else {
+                    continue;
+                };
+                let cell_box = bounds(&polygon.points);
+                union = Some(match union {
+                    None => cell_box,
+                    Some(current) => [
+                        current[0].min(cell_box[0]),
+                        current[1].min(cell_box[1]),
+                        current[2].max(cell_box[2]),
+                        current[3].max(cell_box[3]),
+                    ],
+                });
+            }
+            let Some(union) = union else {
+                continue;
+            };
+            checked += 1;
+            // 容差取 1 px 的浮点松弛：两端都来自 `floor`/`ceil` 过的整数裁剪框。
+            let tolerance = 1.0;
+            assert!(
+                union[0] >= table_box[0] - tolerance
+                    && union[1] >= table_box[1] - tolerance
+                    && union[2] <= table_box[2] + tolerance
+                    && union[3] <= table_box[3] + tolerance,
+                "cell union {union:?} escapes the table polygon {table_box:?}"
+            );
+        }
+        assert!(
+            checked > 0,
+            "no table region carried cell geometry, so this test proved nothing"
+        );
+    }
+
+    /// 门禁 G2/G7 的**静态面**：整页路径只能走"复用页级文本行"的回填来源。
+    ///
+    /// 行为面由 `table_decode_and_backfill` 里的 `debug_assert_eq!(recognizer_calls, 0)`
+    /// 保证（测试跑在 debug 构建下，任何一次走 crop 自识别的改动都会立刻失败）；
+    /// 这里补一条静态守卫，让"有人把 `Reuse` 换成 `Crop`"在**不跑到那条路径**时也能被发现。
+    #[test]
+    fn the_page_path_never_asks_the_backfill_to_recognize() {
+        let source = include_str!("rapid_structure.rs");
+        let test_marker = ["#[cfg", "(test)]"].concat();
+        let production = source
+            .split(&test_marker)
+            .next()
+            .expect("the production section must come first");
+        assert!(
+            production.len() < source.len(),
+            "the split must actually cut the test modules away"
+        );
+        // 探针由碎片拼出，否则本函数自己的字面量会被 `include_str!` 读进来。
+        let crop_probe = ["Backfill", "Source::", "Crop"].concat();
+        assert_eq!(
+            production.matches(&crop_probe).count(),
+            0,
+            "the page pipeline must reuse page-level lines (G2/G7); crop self-recognition \
+             belongs to the offline evaluator, not the page path"
+        );
+        let reuse_probe = ["Backfill", "Source::", "Reuse"].concat();
+        assert_eq!(
+            production.matches(&reuse_probe).count(),
+            1,
+            "the page pipeline must build exactly one reuse backfill source"
+        );
+        // G3：结构模型每张表恰好调用一次 `run_with`，不随单元格数增长。
+        let run_probe = ["table_session", "(&policy)?"].concat();
+        assert_eq!(
+            production.matches(&run_probe).count(),
+            1,
+            "the structure session must be obtained once per request, not per cell"
+        );
+    }
+
+    /// 关闭表格路由时**不得**触碰表格模型，且输出与不带表格功能的引擎逐位一致。
+    ///
+    /// 这是门禁 G6 在单元层面的对应物（整页 12 图口径由 `tools/run_windows_baseline.ps1` 覆盖）：
+    /// 关闭时连模型路径都不需要存在。
+    #[test]
+    fn a_disabled_table_route_ignores_the_model_path_entirely() {
+        let Some(mut assets) = assets() else {
+            return;
+        };
+        let bytes = std::fs::read(&assets.page_with_table).expect("the page must be readable");
+        let policy = TablePolicy {
+            enabled: false,
+            model_path: Some(PathBuf::from("does/not/exist/slanet-plus.onnx")),
+            ..TablePolicy::default()
+        };
+        let output = assets
+            .engine
+            .recognize(request(bytes, policy))
+            .expect("a disabled table route must not try to load the model");
+        assert!(
+            table_regions(&output).is_empty(),
+            "a disabled table route must not produce table regions"
+        );
+        assert_eq!(
+            output.stages.table.state,
+            StageState::Disabled,
+            "the table stage must be reported as disabled"
+        );
+        assert_eq!(output.timings.table_detect_ms, 0.0);
+        assert_eq!(output.timings.table_structure_infer_ms, 0.0);
+        assert_eq!(output.timings.table_backfill_ms, 0.0);
+    }
+
+    /// 表格路由与 `roi`/`tile` 互斥，必须在进入管线前结构化拒绝（与公式路由同形）。
+    ///
+    /// 坐标**恰好**仍能对上（页级文本区域的 polygon 会被 `+ offset` 映射回原图），所以
+    /// 这不是一次会崩的错，而是一次会静默返回调用方没问过的结果的错：`roi` 只裁了输入，
+    /// 而定位器读的是整页文本框分布。
+    #[test]
+    fn table_routing_rejects_roi_and_tile() {
+        let base = TablePolicy {
+            enabled: true,
+            model_path: Some(PathBuf::from("model.onnx")),
+            ..TablePolicy::default()
+        };
+        let mut with_roi = request(Vec::new(), base.clone());
+        with_roi.roi = Some(crate::api::RectU32 {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        });
+        let error = with_roi.validate().expect_err("roi must be rejected");
+        assert!(error.to_string().contains("roi"), "error: {error}");
+
+        let mut with_tile = request(Vec::new(), base);
+        with_tile.preprocess.tile = Some(crate::api::TilePolicy {
+            max_width: 100,
+            max_height: 100,
+            overlap: 10,
+        });
+        let error = with_tile.validate().expect_err("tile must be rejected");
+        assert!(error.to_string().contains("tiled"), "error: {error}");
     }
 }

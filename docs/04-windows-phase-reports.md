@@ -1,4 +1,4 @@
-# rapid-ocr-rs Windows x64（MSVC ABI）阶段执行记录
+# rapid-structure-rs Windows x64（MSVC ABI）阶段执行记录
 
 > 本文件按 `docs/03-windows-only-optimization-tasks.md` §13 的模板，逐阶段追加
 > 执行记录。原始数据保存在 `tests/baseline/windows-baseline/`（随仓库提交）。
@@ -19,7 +19,7 @@
 - `bench_warm_e2e` 增加 `meta.init_ms`、`meta.provider_resolution` 与
   `memory.peak_working_set_bytes`（口径与库内 `runtime::memory` 一致，
   都是 `GetProcessMemoryInfo.PeakWorkingSetSize`）。
-- `rapidocr evaluate` 在报告中附加 `peak_working_set_bytes` / `memory_source`
+- `rapidstruct evaluate` 在报告中附加 `peak_working_set_bytes` / `memory_source`
   （由 CLI 附加，纯算法报告类型保持不变）。
 
 ### 环境
@@ -65,8 +65,8 @@
 
 | 项目 | 值 |
 | --- | --- |
-| crate 自身 release 重编译（`cargo clean -p rapid-ocr-rs --release` 后 `build --bins`） | 18.1 s |
-| `rapidocr.exe` | 34,607,616 B |
+| crate 自身 release 重编译（`cargo clean -p rapid-structure-rs --release` 后 `build --bins`） | 18.1 s |
+| `rapidstruct.exe` | 34,607,616 B |
 | `bench_warm_e2e.exe` | 34,359,808 B |
 | `formula_eval.exe` | 29,712,384 B |
 | `formula_bench.exe` | 29,022,208 B |
@@ -208,7 +208,7 @@ pwsh -NoProfile -File tools/check_platform_gate.ps1
 - **删除 CANN**：`cann-provider` feature、`config::ProviderPreference::Cann`、
   `api::ProviderPreference::Cann`、`api::ResolvedProvider::Cann`、provider 解析分支、
   pipeline 映射与全部 CANN 测试。`cargo check --features cann-provider` 现在给出
-  `the package 'rapid-ocr-rs' does not contain this feature: cann-provider`。
+  `the package 'rapid-structure-rs' does not contain this feature: cann-provider`。
 - **删除 `RuntimeBackend`**：单变体枚举（只有 `OnnxCpu`）连同 `RuntimeConfig.backend`
   字段与 `runtime/session.rs` 里的检查一起删除 —— 它承载不了任何选择，却要序列化、
   要出现在 YAML 里。provider 选择只由 `provider_preference` 表达。
@@ -218,7 +218,7 @@ pwsh -NoProfile -File tools/check_platform_gate.ps1
   “DirectML is only available on Windows”。
 - **新增 `ort_runtime_version()`**（查询 `OrtGetApiBase()->GetVersionString()`），并写入
   benchmark 报告：本 crate 链接导入库，运行时实际加载哪个 ONNX Runtime 决定了哪些 EP 可用。
-- 移除外部配置文件 `OCR-Model/test-config{,-small,-tiny}.yaml` 中已删除的 `backend:` 行
+- 移除外部配置文件 `models/configs/test-config{,-small,-tiny}.yaml` 中已删除的 `backend:` 行
   （否则引擎构造会被新校验拒绝）。
 
 **执行命令**：
@@ -358,7 +358,7 @@ turbojpeg **在所有配置下都更慢**（7%–33%），12 个文件中只赢 
   `rotate_crop::rotate_crop_image`、`image_ops::{resize_image_within_bounds,
   crop_text_regions, map_img_to_original, resize_with_bound}`、
   `cls/rec::preprocess::write_resize_norm_img_into_slice*`、`word_boxes::compute_word_boxes`、
-  `rapid_ocr::prepare_image`。`DetPreProcess` / `DbPostProcess` / `Classifier` / `Recognizer`
+  `rapid_structure::prepare_image`。`DetPreProcess` / `DbPostProcess` / `Classifier` / `Recognizer`
   去掉 backend 字段。热路径上不再有“每个 crop/resize 动态匹配 enum”。
 - 删除 `resolve_backend_or_pure_rust` 这条宽松回退：核心路径只有纯 Rust，没有“静默回退”概念。
 - turbojpeg：`image_loader.rs` 删除 import、`decode_bytes_with_turbojpeg`、`looks_like_jpeg`
@@ -370,7 +370,7 @@ turbojpeg **在所有配置下都更慢**（7%–33%），12 个文件中只赢 
 - `Cargo.toml`：删除 `opencv`、`turbojpeg` 依赖与 `opencv-backend` feature；
   `[lints.rust]` 的原因说明收窄为只涉及 `ort`。
 - `Cargo.lock` 减少 322 行，`opencv`/`turbojpeg`/`cmake`/`clang` 条目全部消失。
-- 外部配置 `OCR-Model/test-config{,-small,-tiny}.yaml` 删除 9 行 `vision_backend: pure_rust`
+- 外部配置 `models/configs/test-config{,-small,-tiny}.yaml` 删除 9 行 `vision_backend: pure_rust`
   （现在会被 `deny_unknown_fields` 拒绝）。
 
 **执行命令与关键结果**：
@@ -394,7 +394,7 @@ turbojpeg **在所有配置下都更慢**（7%–33%），12 个文件中只赢 
 | OCR p90 (ms) | 1153.6 | 1109.5 | 未退化 |
 | init (ms) | 143.6 | 127.0 | 略优 |
 | 峰值工作集 (MB) | 1284.0 | 1283.0 | 未退化 |
-| `rapidocr.exe` | 34.6 MB | 33.3 MB | −3.7% |
+| `rapidstruct.exe` | 34.6 MB | 33.3 MB | −3.7% |
 | `bench_warm_e2e.exe` | 34.4 MB | 33.1 MB | −3.7% |
 
 **未覆盖风险**：
@@ -516,7 +516,7 @@ tokenizer、postprocess、batch/EOS 或指标实现；普通 OCR 的预处理数
 **变更摘要**：
 
 - **crate metadata**（`Cargo.toml`）：`repository` 改为实际仓库
-  `https://github.com/jinghu-moon/rapid-ocr-rs`；补 `rust-version = "1.88"`（当时写的 1.85 是错的，见终审修复）、
+  `https://github.com/jinghu-moon/rapid-structure-rs`；补 `rust-version = "1.88"`（当时写的 1.85 是错的，见终审修复）、
   `categories`（computer-vision / multimedia::images / api-bindings）、
   keywords 与 description 改为反映 Windows x64 + MSVC ABI + PP-OCRv6/PP-FormulaNet；
   新增 `exclude = ["tests/baseline/**"]`。
@@ -537,7 +537,7 @@ tokenizer、postprocess、batch/EOS 或指标实现；普通 OCR 的预处理数
 | `cargo test --all-targets` | lib 272 + bin 18 passed / 0 failed |
 | `cargo package --list --allow-dirty` | 154 个文件（排除 baseline 前为 171） |
 | `cargo package --allow-dirty --no-verify` | `Packaged 154 files, 12.0MiB (2.6MiB compressed)` → 压缩后 2.6 MB，远低于 crates.io 10 MB 上限 |
-| 包内容检查 | 包内**没有任何**开发机绝对路径（`[A-Z]:\100_Projects` / `[A-Z]:\Users` 命中 0），没有模型权重，没有 `Formula-TestSet`/`OCR-Model`，没有生成报告 |
+| 包内容检查 | 包内**没有任何**开发机绝对路径（`[A-Z]:\100_Projects` / `[A-Z]:\Users` 命中 0），没有模型权重，没有 `datasets/formula`/`models`，没有生成报告 |
 
 **静态清理门槛**（`rg -n "linux|macOS|macos|CANN|cann-provider|unsupported platform|OpenCV|turbojpeg|RuntimeBackend"`）：
 
@@ -633,7 +633,7 @@ crop 1.66 ms（0.17%），输入 resize 6.85 ms（0.70%）。
 > 而 “86.03%” 本身量级正确（换口径后为 85.63%）。
 >
 > **残差必须一起读**：这个账本**不是**严格划分。`total_ms` 是“外层 `preprocess_ms` 窗口
-> （`rapid_ocr.rs:619-719`）+ 内层 `inner.run()` 窗口（`rapid_ocr.rs:106-130`）”的总窗口，
+> （`rapid_structure.rs:619-719`）+ 内层 `inner.run()` 窗口（`rapid_structure.rs:106-130`）”的总窗口，
 > 而命名分量只是这些窗口里的若干子窗口（内层窗口里的 resize / padding / crop / 批次装配不属于
 > 任何阶段计时），**两个窗口首尾相接、串行，不是重叠**，因此 `conserved = false` —— 这是
 > **口径差异**（测量仪器的精度边界），不是 `total_ms` 算错了，也**不能**作为任何性能声明的
@@ -706,9 +706,9 @@ crop 0.17%、resize 0.70%、detector/recognizer preprocess 0.23%/0.35%，每项�
 | 干净 clone 默认测试（无外部资产） | `cargo test --all-targets` | lib 280 + bin 18 passed / 0 failed |
 | 干净 clone fmt / clippy | `cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings` | 均通过（0 warning） |
 | 干净 clone release 构建 | `cargo build --release --bins` | 通过 |
-| 真实资产测试（`RAPID_OCR_REQUIRE_EXTERNAL_ASSETS=1`，禁止静默跳过） | `cargo test --all-targets` | lib 280 passed / 32.3 s |
-| 打包内容 | `cargo package --list --allow-dirty` / `cargo package --allow-dirty --no-verify` | 154 文件，`12.0MiB (2.6MiB compressed)`；**包内没有模型权重、没有 `Formula-TestSet`/`OCR-Model`、没有开发机绝对路径、没有生成报告** |
-| default features | 上表测试与 `rapidocr` CLI 运行 | CPU 可运行；不下载隐式模型（`allow_download: false`）；不需要 OpenCV（已删除） |
+| 真实资产测试（`RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS=1`，禁止静默跳过） | `cargo test --all-targets` | lib 280 passed / 32.3 s |
+| 打包内容 | `cargo package --list --allow-dirty` / `cargo package --allow-dirty --no-verify` | 154 文件，`12.0MiB (2.6MiB compressed)`；**包内没有模型权重、没有 `datasets/formula`/`models`、没有开发机绝对路径、没有生成报告** |
+| default features | 上表测试与 `rapidstruct` CLI 运行 | CPU 可运行；不下载隐式模型（`allow_download: false`）；不需要 OpenCV（已删除） |
 | `cli-default` | `cargo check --features cli-default` | 通过（该 feature 现在只影响 ORT dylib 下载/复制与 DirectML） |
 | `cuda-provider` | 阶段 0/2 的 provider 矩阵 + `tools/check_provider_claims.ps1` | **本机无 CUDA 加速能力（缺 cuDNN），记为未验证**；不出现“伪成功” |
 | `cann-provider` | `cargo check --features cann-provider` | 明确失败：`does not contain this feature` |
@@ -752,7 +752,7 @@ crop 0.17%、resize 0.70%、detector/recognizer preprocess 0.23%/0.35%，每项�
 | 12 图 P90 | 1153.6 ms | 1109–1230 ms | 同上 |
 | 启动时间 | 143.6 ms | 127–140 ms | 未退化 |
 | 12 图峰值工作集 | 1284 MB | 1283–1342 MB | 未退化 |
-| `rapidocr.exe` | 34.6 MB | 33.3 MB | −3.7% |
+| `rapidstruct.exe` | 34.6 MB | 33.3 MB | −3.7% |
 | `bench_warm_e2e.exe` | 34.4 MB | 33.1 MB | −3.7% |
 | `target/` 体积 | 18.6 GB | （见下） | 非发布指标 |
 | 公式 smoke（im2latex-100） | exact 24.00% / CER 0.0863 / 失败 0 | **完全相同** | 阶段 5 改了批处理，故重跑 |
@@ -809,11 +809,15 @@ tokenizer、postprocess、EOS 语义与指标实现未改动，故未重跑 val-
 | --- | --- |
 | `api_version` | `1.28.0` |
 | `runtime_source` | `static_link` |
-| `runtime_module.path` | `C:\Users\seeyuer\AppData\Local\ort.pyke.io\dfbin\x86_64-pc-windows-msvc\f7c654b3729cb9e5ad2a36a0c38e5b48e63bf4eed22968931aed33a0ad0b527d\onnxruntime.lib` |
+| `runtime_module.path` | `<user>\AppData\Local\ort.pyke.io\dfbin\x86_64-pc-windows-msvc\f7c654b3729cb9e5ad2a36a0c38e5b48e63bf4eed22968931aed33a0ad0b527d\onnxruntime.lib` |
 | `runtime_module.size_bytes` | `341152186` |
 | `runtime_module.sha256` | `c3f5bb800fd19c05d3bd13614654f0c37ea3db1fbfba4d10963fa678cdb6cdd0` |
 | `link.base_dir` | `…\ort.pyke.io\dfbin\x86_64-pc-windows-msvc`（编译期由 `build.rs` 记录） |
 | `provider_dlls` | `DirectML.dll`（18,527,776 B，`loaded=true`）；CUDA 构建下另有 `onnxruntime_providers_cuda.dll`（62,276,096 B） |
+
+> 上表的 `runtime_module.path` 已把用户目录前缀脱敏为 `<user>`（其余部分逐字保留）：
+> 这一项记录的是**采集机上的缓存位置**，写死用户目录会让文档绑定到一台机器，
+> 也会把机器路径带进发布产物（`docs/09` §14.2③）。大小与 SHA-256 未改动。
 
 `runtime_source = static_link` 是因为构建输出是
 `cargo:rustc-link-lib=static=onnxruntime`：**ORT 被静态链接进 exe**，
@@ -882,24 +886,24 @@ conserved: false, interpretation: "…" }`。账本**没有**把差额藏起来�
   "tolerance_ms": 0.0009857866990831163,
   "conserved": false,
   "excess_ms": 6.7537993832957,
-  "interpretation": "NOT a strict partition, and NOT a wrong total either: this is a SCOPE difference between total_ms and the sum of its named parts. residual_ms = -6.753799, i.e. the named components sum to 6.753799 ms (0.69% of total_ms) LESS than total_ms. The two timing windows are SEQUENTIAL and do not overlap: the outer OcrTimings::preprocess_ms window runs from rapid_ocr.rs:619 to :719 and inner.run() is only entered at :720, whose own end-to-end window runs from rapid_ocr.rs:106 to :130; total_ms is their sum (total_ms = exec.e2e_ms + preprocess_ms, rapid_ocr.rs:910). No wall-clock interval is therefore counted twice. What the residual measures is the part of inner.run()'s own window that falls outside every named stage window and therefore has no component in this ledger: the resize inside prepare_image (rapid_ocr.rs:156-162), apply_vertical_padding (rapid_ocr.rs:189-195), crop_text_regions (rapid_ocr.rs:210-212), and the recognizer's batch assembly (rec/recognizer.rs:89-98, 222-231). total_ms is a single wall-clock measurement and is unaffected by how the parts are named; conversely, because the parts were measured independently, this ledger alone cannot decide which side is closer to the real elapsed time, so it does NOT claim that total_ms overstates. This ledger is a DIAGNOSTIC instrument, not acceptance evidence: every share is valid only to within 6.753799 ms (0.69% of total_ms), and the stage-6 conclusion (ONNX Runtime inference is an order of magnitude larger than every Rust component) is not affected by a residual of this size."
+  "interpretation": "NOT a strict partition, and NOT a wrong total either: this is a SCOPE difference between total_ms and the sum of its named parts. residual_ms = -6.753799, i.e. the named components sum to 6.753799 ms (0.69% of total_ms) LESS than total_ms. The two timing windows are SEQUENTIAL and do not overlap: the outer OcrTimings::preprocess_ms window runs from rapid_structure.rs:619 to :719 and inner.run() is only entered at :720, whose own end-to-end window runs from rapid_structure.rs:106 to :130; total_ms is their sum (total_ms = exec.e2e_ms + preprocess_ms, rapid_structure.rs:910). No wall-clock interval is therefore counted twice. What the residual measures is the part of inner.run()'s own window that falls outside every named stage window and therefore has no component in this ledger: the resize inside prepare_image (rapid_structure.rs:156-162), apply_vertical_padding (rapid_structure.rs:189-195), crop_text_regions (rapid_structure.rs:210-212), and the recognizer's batch assembly (rec/recognizer.rs:89-98, 222-231). total_ms is a single wall-clock measurement and is unaffected by how the parts are named; conversely, because the parts were measured independently, this ledger alone cannot decide which side is closer to the real elapsed time, so it does NOT claim that total_ms overstates. This ledger is a DIAGNOSTIC instrument, not acceptance evidence: every share is valid only to within 6.753799 ms (0.69% of total_ms), and the stage-6 conclusion (ONNX Runtime inference is an order of magnitude larger than every Rust component) is not affected by a residual of this size."
 }
 ```
 
 **残差是口径差异，不是计时窗口重叠**（本节曾在终审时把它写成“两个窗口重叠、同一段墙钟被算了
-两次”，那是与实现矛盾的因果说法，已按代码更正）：外层窗口在 `rapid_ocr.rs:619` 开始、
+两次”，那是与实现矛盾的因果说法，已按代码更正）：外层窗口在 `rapid_structure.rs:619` 开始、
 `:719` 结束，`inner.run()` 在 `:720` 才进入，其 e2e 窗口在 `:106` 开始、`:130` 结束，
-`total_ms = exec.e2e_ms + preprocess_ms`（`rapid_ocr.rs:910`）——**两段墙钟首尾相接，没有任何
+`total_ms = exec.e2e_ms + preprocess_ms`（`rapid_structure.rs:910`）——**两段墙钟首尾相接，没有任何
 区间被计两次**。残差的真实来源是 `inner.run()` 自己的窗口里有墙钟不属于任何被命名的阶段计时
 （临时探针在 12 图上量到的量级）：
 
 | `inner.run()` 里未被命名的部分 | 代码位置 | 实测量级 |
 | --- | --- | --- |
-| `prepare_image` 内的 `resize_image_within_bounds`（记在 `resize_ms`，但不参与任何阶段计时） | `rapid_ocr.rs:156-162` | ≈ 4.7 ms/页 |
-| `apply_vertical_padding`（`proc_img.clone()` + 填充，在检测阶段但不在 `detect_ms` 里） | `rapid_ocr.rs:189-195` | 0.8–3.5 ms/页 |
-| `crop_text_regions`（记在 `crop_ms`，同样不属于任何阶段计时） | `rapid_ocr.rs:210-212` | 1.5–2.5 ms/页 |
+| `prepare_image` 内的 `resize_image_within_bounds`（记在 `resize_ms`，但不参与任何阶段计时） | `rapid_structure.rs:156-162` | ≈ 4.7 ms/页 |
+| `apply_vertical_padding`（`proc_img.clone()` + 填充，在检测阶段但不在 `detect_ms` 里） | `rapid_structure.rs:189-195` | 0.8–3.5 ms/页 |
+| `crop_text_regions`（记在 `crop_ms`，同样不属于任何阶段计时） | `rapid_structure.rs:210-212` | 1.5–2.5 ms/页 |
 | recognizer 在三次求和之外的批次装配 / 排序 / bidi | `rec/recognizer.rs:89-98, 222-231` | 0.2–2.1 ms/页 |
-| `run()` 内阶段之间的零头 | `rapid_ocr.rs:106-132` | ≈ 0.2 ms/页 |
+| `run()` 内阶段之间的零头 | `rapid_structure.rs:106-132` | ≈ 0.2 ms/页 |
 
 各项之和（约 8–13 ms/页）覆盖了实测残差（5.28–9.74 ms/页）。因此：
 
@@ -983,11 +987,11 @@ FAIL: bench-cuda.json - claims Cuda but p50 (1,042.33 ms) is within +/-10% of th
 **命令**：
 
 ```powershell
-target\release\bench_warm_e2e.exe --config <OCR-Model>\test-config-small.yaml `
-    --images-dir <OCR-test-image> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
+target\release\bench_warm_e2e.exe --config <models>\test-config-small.yaml `
+    --images-dir <datasets/text> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
     --intra-threads 16 --output tests\baseline\windows-baseline\bench-cpu.json
-target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest.json `
-    --config <OCR-Model>\test-config-small.yaml `
+target\release\rapidstruct.exe evaluate --manifest <datasets/text>\golden-manifest.json `
+    --config <models>\test-config-small.yaml `
     --output tests\baseline\windows-baseline\evaluation-cpu-ortfp.json
 ```
 
@@ -1006,8 +1010,8 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 ### 终审仍然存在的限制
 
 - **时间账本是诊断工具，不是性能验收依据**（本机 release 下残差 −6.75 ms／页，0.69%）：
-  `total_ms` 是“外层 `preprocess_ms` 窗口（`rapid_ocr.rs:619-719`）+ 内层 `inner.run()` 窗口
-  （`rapid_ocr.rs:106-130`）”的总窗口，而命名分量只是其中的若干子窗口——**两个窗口串行，
+  `total_ms` 是“外层 `preprocess_ms` 窗口（`rapid_structure.rs:619-719`）+ 内层 `inner.run()` 窗口
+  （`rapid_structure.rs:106-130`）”的总窗口，而命名分量只是其中的若干子窗口——**两个窗口串行，
   不是重叠**；内层窗口里有一部分墙钟（`prepare_image` 的 resize、`apply_vertical_padding`、
   `crop_text_regions`、recognizer 的批次装配）不属于任何阶段计时。本 crate 没有在不改动
   计时语义的前提下消除这一口径差。账本把该残差作为一等公民报出
@@ -1080,7 +1084,7 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
   “DIAGNOSTIC instrument, not acceptance evidence”“valid only to within”）。
   **注**：当时的 `excess_ms` 还叫 `overlap_ms`，文案还把残差写成“窗口重叠”；
   那是与实现矛盾的因果说法，已在「复审第三轮」更正，本节其余内容保持不变。
-- 12 图硬门槛（`bench_warm_e2e` + `rapidocr evaluate`）与终审一致，
+- 12 图硬门槛（`bench_warm_e2e` + `rapidstruct evaluate`）与终审一致，
   mean CER `0.44765135645866394`、区域数均值 `34.833333333333336` 逐位相同
   （输出写到 `target/gate-verify/`，未覆盖 `tests/baseline/` 里已提交的基线）。
 - `formula_bench`（**不带** `--threads`，用仓库内 fixture）实测报告：
@@ -1124,9 +1128,9 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 
 | 事实 | 代码位置 |
 | --- | --- |
-| 外层 `preprocess_ms` 窗口 = `preprocess_start…elapsed()`，在 `inner.run()` 之前**结束** | `rapid_ocr.rs:619`（start）→ `:719`（end） |
-| `inner.run()` 在**之后**才被调用，其 e2e 窗口自 `e2e_start` 起 | `rapid_ocr.rs:720` 调用；`:106`（start）→ `:130`（end） |
-| `total_ms` 就是这两个串行窗口之和 | `rapid_ocr.rs:910`：`total_ms = exec.e2e_ms + preprocess_ms` |
+| 外层 `preprocess_ms` 窗口 = `preprocess_start…elapsed()`，在 `inner.run()` 之前**结束** | `rapid_structure.rs:619`（start）→ `:719`（end） |
+| `inner.run()` 在**之后**才被调用，其 e2e 窗口自 `e2e_start` 起 | `rapid_structure.rs:720` 调用；`:106`（start）→ `:130`（end） |
+| `total_ms` 就是这两个串行窗口之和 | `rapid_structure.rs:910`：`total_ms = exec.e2e_ms + preprocess_ms` |
 
 → 两个窗口**首尾相接、串行**。旧文案“同一段墙钟时间在 `total_ms` 的两项里各算了一次”与实现
 矛盾。残差的真实来源是 `inner.run()` 自己的窗口里有墙钟不属于任何被命名的阶段计时；逐项量级
@@ -1136,7 +1140,7 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 
 - `src/runtime/timing.rs`：`LedgerConservation::overlap_ms` → `excess_ms`（语义是“占比成立的
   上界 = `max(0, -residual)`”，不是“重叠量级”）；`conservation_interpretation` 按正/负残差
-  两向重写，明确写出“**SCOPE difference**”“两个窗口**串行**（附 `rapid_ocr.rs:619-719` 与
+  两向重写，明确写出“**SCOPE difference**”“两个窗口**串行**（附 `rapid_structure.rs:619-719` 与
   `:106-130`）”“没有任何墙钟被计两次”“未命名部分是哪几处（附行号）”“账本是诊断工具、不是
   验收证据”“占比只在残差量级内成立”；
 - `src/bin/bench_warm_e2e.rs`：文档注释与 `totals` 同步（新增 `input_preprocess_ms` /
@@ -1223,7 +1227,7 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
   `interpretation_states_sequential_windows_...`）+ bin 18 passed / 0 failed。
 - `cargo fmt --all` / `cargo fmt --all -- --check` / `cargo clippy --all-targets -- -D warnings`：
   干净；`cargo build --release --bins` 通过。
-- 12 图硬门槛（`bench_warm_e2e` + `rapidocr evaluate`，输出写 `target/gate-verify/`）：
+- 12 图硬门槛（`bench_warm_e2e` + `rapidstruct evaluate`，输出写 `target/gate-verify/`）：
   mean CER `0.44765135645866394`、区域数均值 `34.833333333333336`，与终审**逐位相同**。
 - 端到端 Python 验证：对 `target/formula-eval`（旧 schema）现在给出
   `error: … expected field 'provider_selected_ep' but this report does not contain it; available
@@ -1313,7 +1317,7 @@ therefore counted twice”）；(b) `docs/04` 里**显式标注为历史**的更
   + bin **20**（原 18 + 2 条 `timing_split` 恒等式测试），0 failed。
 - `cargo fmt --all` / `cargo fmt --all -- --check` / `cargo clippy --all-targets -- -D warnings`：
   干净；`cargo build --release --bins` 通过。
-- 12 图硬门槛（`bench_warm_e2e` + `rapidocr evaluate`，输出写 `target/gate-verify/`，**未覆盖**
+- 12 图硬门槛（`bench_warm_e2e` + `rapidstruct evaluate`，输出写 `target/gate-verify/`，**未覆盖**
   `tests/baseline/` 里已提交的基线）：mean CER `0.44765135645866394`、区域数均值
   `34.833333333333336`，与上一轮**逐位相同**。本次 `target/gate-verify/bench-cpu.json` 的
   `timing_split`：`ort_inference_ms = 859.8794653150769`、`rust_ms = 134.18974405276177`、

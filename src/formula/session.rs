@@ -29,7 +29,7 @@ impl FormulaSession {
         if !model_path.is_file() {
             return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
         }
-        let inner = OrtSession::open_unchecked(model_path, runtime_cfg)?;
+        let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
         // 公式域契约：请求了加速器却只拿到 CPU 回退时必须失败，不能静默降级。
         // 这里不依赖 `RuntimeConfig::fail_if_provider_unavailable`，因为那是进程级
         // 默认策略，而调用方无法从 API 返回值观察到发生了回退。

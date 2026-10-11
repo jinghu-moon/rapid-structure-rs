@@ -95,7 +95,7 @@ use crate::{
 pub fn default_model_store_dir() -> PathBuf {
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         return PathBuf::from(local_app_data)
-            .join("rapid-ocr-rs")
+            .join("rapid-structure-rs")
             .join("models");
     }
 
@@ -747,7 +747,7 @@ fn send_request(
         .get(url)
         .header(
             reqwest::header::USER_AGENT,
-            "Mozilla/5.0 (compatible; rapid-ocr-rs model downloader)",
+            "Mozilla/5.0 (compatible; rapid-structure-rs model downloader)",
         )
         .header(reqwest::header::REFERER, "https://www.modelscope.cn/")
         .send()
@@ -1394,7 +1394,7 @@ mod tests {
             .expect("system clock should be after unix epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "rapid-ocr-rs-sha256-{}-{suffix}.tmp",
+            "rapid-structure-rs-sha256-{}-{suffix}.tmp",
             std::process::id()
         ));
         fs::write(&path, b"hello").expect("test fixture should be writable");
@@ -1605,7 +1605,7 @@ mod tests {
 
     #[test]
     fn a_verified_download_writes_the_file_and_leaves_no_temp_file() {
-        let body = b"rapid-ocr-rs model bytes".to_vec();
+        let body = b"rapid-structure-rs model bytes".to_vec();
         let expected = sha256_hex(&body);
         let server = HttpFixture::start(move |_| FixtureResponse::ok(body.clone()));
         let dir = TempDir::new("download-ok");
@@ -1621,7 +1621,7 @@ mod tests {
         assert_eq!(path, dir.path().join("model.onnx"));
         assert_eq!(
             fs::read(&path).expect("the downloaded file must be readable"),
-            b"rapid-ocr-rs model bytes"
+            b"rapid-structure-rs model bytes"
         );
         assert_eq!(
             entries(dir.path()),
@@ -1666,7 +1666,7 @@ mod tests {
             recorded[0]
                 .3
                 .as_deref()
-                .is_some_and(|value| value.contains("rapid-ocr-rs")),
+                .is_some_and(|value| value.contains("rapid-structure-rs")),
             "the downloader must identify itself: {:?}",
             recorded[0].3
         );
@@ -1728,7 +1728,7 @@ mod tests {
     /// 它解析成"当前服务器上的那个路径"，而不是当成绝对 URL 或失败。
     #[test]
     fn a_redirect_to_an_allowed_host_is_followed_and_verified() {
-        let body = b"rapid-ocr-rs weight bytes behind a 302".to_vec();
+        let body = b"rapid-structure-rs weight bytes behind a 302".to_vec();
         let expected = sha256_hex(&body);
         // 第二台服务器：`/cdn/model.onnx` 回一个**相对**引用（RFC 9110 允许），
         // `/mirror/model.onnx`（或任何别的路径）才给内容。相对引用只能解析成
@@ -1951,7 +1951,7 @@ mod tests {
                 "authorization",
                 "proxy-authorization",
                 "cookie",
-                "x-rapidocr-token",
+                "x-rapidstructure-token",
                 "x-auth-token",
             ] {
                 assert_ne!(

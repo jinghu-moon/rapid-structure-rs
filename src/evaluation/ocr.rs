@@ -276,6 +276,7 @@ mod tests {
             latex: None,
             eos_index: None,
             truncated: None,
+            table: None,
         }];
         let metrics = evaluate_case("ok", &[polygon], &predicted, 0.5);
         assert_eq!(metrics.cer, 0.0);

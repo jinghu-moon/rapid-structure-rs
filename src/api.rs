@@ -308,11 +308,14 @@ pub struct OcrRequest {
     pub output: OutputPolicy,
     /// 页面级公式路由；默认关闭，关闭时行为与不含公式功能时一致。
     pub formula: FormulaPolicy,
+    /// 页面级表格路由；默认关闭，关闭时行为与不含表格功能时一致。
+    pub table: TablePolicy,
 }
 impl OcrRequest {
     pub fn validate(&self) -> Result<()> {
         self.stages.validate(self.recognition.words)?;
         self.formula.validate()?;
+        self.table.validate()?;
         if self.formula.enabled {
             if self.roi.is_some() {
                 return Err(RapidOcrError::InvalidInput(
@@ -324,6 +327,26 @@ impl OcrRequest {
             if self.preprocess.tile.is_some() {
                 return Err(RapidOcrError::InvalidInput(
                     "formula routing does not support tiled preprocessing".into(),
+                ));
+            }
+        }
+        // 表格路由与公式路由共享同一条坐标前提，因此共享同一条约束。表格的定位器吃的是
+        // **整页文本框分布**（行高一致性、x 坐标成列），结构模型吃的是整页坐标下的裁剪；
+        // `roi` 把输入裁成子矩形、`tile` 把输入切成多块分别识别，两者都会让"定位器看到的
+        // 那一页"与"调用方要的那一页"不是同一页。坐标**恰好**仍能对上（页级文本区域的
+        // polygon 会被 `+ offset` 映射回原图），所以这不是一次会崩的错，而是一次会静默
+        // 返回调用方没问过的结果的错 —— 正是结构化拒绝存在的理由。
+        if self.table.enabled {
+            if self.roi.is_some() {
+                return Err(RapidOcrError::InvalidInput(
+                    "table routing does not support `roi`: the table locator reads the whole \
+                     page's text layout"
+                        .into(),
+                ));
+            }
+            if self.preprocess.tile.is_some() {
+                return Err(RapidOcrError::InvalidInput(
+                    "table routing does not support tiled preprocessing".into(),
                 ));
             }
         }
@@ -457,16 +480,117 @@ pub struct RecognitionOutcome {
     pub words: Option<Vec<OcrWord>>,
 }
 
-/// 区域语义：普通文本区域，或由公式模型识别的公式区域。
+/// 区域语义：普通文本区域、由公式模型识别的公式区域，或由表格结构模型识别的表格区域。
 ///
 /// 公式区域**不携带** CTC 文本识别结果：公式模型没有可与 CTC 平行解释的
 /// per-character 置信度，强行塞进 `RecognitionOutcome` 会伪造置信度语义。
+///
+/// 表格区域同样不携带 `RecognitionOutcome`：它的单元格文本来自**页级**识别结果，
+/// 通过几何匹配回填（见 [`TableOutcome::cells`]）。给表格区域再挂一份 CTC 结果
+/// 会让"这份文本到底是被识别出来的还是被匹配进来的"变成不可分辨的问题。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RegionKind {
     #[default]
     Text,
     Formula,
+    Table,
+}
+
+/// 表格结构置信档。
+///
+/// `Low` **不是**错误：它表示逻辑网格有空洞或被截断（见 [`TableDegradation`]），
+/// 而表格仍然被完整产出。调用方必须显式区分"良构"与"降级"，不允许把两者都当"成功"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TableStructureConfidence {
+    #[default]
+    High,
+    Low,
+}
+
+impl TableStructureConfidence {
+    /// 线契约里的拼写，与 `#[serde(rename_all = "snake_case")]` 一致。
+    ///
+    /// 存在的理由：`src/output/` 的 JSON/HTML 渲染需要把置信档写进**非 serde** 的结构
+    /// （`OcrJsonItem` 的 `kind` 就是 `&'static str`）。有了这个方法，拼写只有一处定义，
+    /// `the_confidence_name_agrees_with_serde` 断言它与 serde 输出一致。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Low => "low",
+        }
+    }
+}
+
+/// 表格结构降级的原因；非空即 [`TableStructureConfidence::Low`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum TableDegradation {
+    /// 声明的跨行/跨列没有铺满逻辑网格：某处 span 与网格不一致。
+    ///
+    /// 典型成因是 span **超出模型词表**（SLANet-plus 的 `rowspan`/`colspan` 只到 20，
+    /// 而 TabRecSet 验证集里存在 `colspan="24"`），模型只能声明一个更小的值。
+    GridHoles { holes: usize },
+    /// 解码在见到 `eos` 之前就用尽了步数上限，token 流被截断。
+    Truncated,
+}
+
+/// 一个单元格的匹配拓扑（不是"文本是否为空"）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableCellMatch {
+    /// 结构模型给了全零占位框，没有可用几何。
+    BlankBox,
+    /// 有几何，但没有文本行落进这个单元格。
+    Unmatched,
+    /// 恰好一行落进这个单元格。
+    Single,
+    /// 多行落进这个单元格（跨行单元格，或检测把一个单元格切成了多行）。
+    Multiple,
+}
+
+/// 表格区域识别结果（页面级输出）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableOutcome {
+    /// 结构树发射出的完整 HTML（含 `<html><body>` 外壳）。
+    pub html: String,
+    /// 只有 `<table>` 外壳的变体，供只想嵌一段表格的消费者使用。
+    pub table_html: String,
+    /// Markdown 呈现。`rowspan`/`colspan` 在 Markdown 里无法表达，跨行跨列的格子
+    /// 表现为空位；调用方不应把 Markdown 当成无损表示。
+    pub markdown: String,
+    pub rows: usize,
+    pub cols: usize,
+    pub confidence: TableStructureConfidence,
+    pub degradations: Vec<TableDegradation>,
+    /// 逻辑网格里没有被任何单元格覆盖的格子数（`confidence == Low` 的一个成因）。
+    pub holes: usize,
+    /// 单元格槽位，与 [`Self::html`] 里的 `<td>` **同序**。
+    pub cells: Vec<TableCellOutcome>,
+    /// 被本表格消费的页级文本行在 [`OcrOutput::regions`] 中的下标（按行序，升序去重）。
+    ///
+    /// 这些区域**仍然留在** `regions` 里（不删除、不改写）：删掉它们会破坏阅读顺序与
+    /// polygon 语义。给出下标是为了让消费者能自己决定怎么呈现（网页默认把它们折叠进表格）。
+    pub source_line_indices: Vec<usize>,
+    pub model_id: String,
+}
+
+/// 一个单元格的槽位信息（几何 + 回填结果）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableCellOutcome {
+    pub row: usize,
+    pub col: usize,
+    pub rowspan: usize,
+    pub colspan: usize,
+    pub text: String,
+    /// 匹配到的文本行分数的算术平均；未匹配为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
+    pub match_kind: TableCellMatch,
+    /// 单元格在**整页像素坐标系**里的四边形；占位（全零）框为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Polygon>,
 }
 
 /// 公式区域识别结果（页面级输出）。
@@ -585,6 +709,121 @@ impl FormulaPolicy {
     }
 }
 
+/// 页面级表格路由的文本编码策略。
+///
+/// **没有隐式默认的"随便一个"**：两个取值服务于两个互斥的目的。
+///
+/// - [`Self::Escape`]（默认）：面向用户可见的输出。单元格文本是**模型产物**，
+///   原样拼进 HTML 再交给浏览器渲染就是一个注入面。
+/// - [`Self::Raw`]：评测口径。PubTabNet 真值里的单元格文本本身是 HTML 片段
+///   （`<` / `>` 在 128,667 个非空单元格里各出现 4,171 次且**成对**），转义会改变
+///   与真值的可比性，因此评测必须显式选择 `Raw`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TableTextPolicy {
+    #[default]
+    Escape,
+    Raw,
+}
+
+/// 页面级表格路由策略。
+///
+/// `enabled = false` 时页面 OCR 行为与不含表格功能时**完全一致**（门禁 G6）；
+/// 启用后的实际流程：
+///
+/// 1. 在**原始图**上用 `TextDistributionDetector` 从**已有 det 文本框的分布**推断表格区域
+///    （零新增整页 CNN，门禁 G4）；
+/// 2. 每个区域裁剪后交给结构模型（`model_path`）推理，得到 bbox 与 token 两路输出；
+/// 3. 解码出结构树与逻辑网格，并把单元格几何**平移回整页坐标系**（加上区域原点）；
+/// 4. 单元格文本**不重新识别**：用几何匹配从页级识别结果里取（门禁 G2/G7，
+///    结构不变量 `recognizer_calls == 0`）；
+/// 5. 每个表格是一个独立的 [`RegionKind::Table`] 区域，携带 HTML / Markdown / 单元格槽位。
+///
+/// **表格像素不抹白**（与公式相反）：表格的单元格文本正是要保留的页级识别结果。
+/// 公式与表格同时启用时，公式抹白只作用于文本通道，而表格定位与结构推理都在原始图上进行。
+/// 因此**落在公式区域内的表格单元格会匹配不到文本**（那些像素已被抹白）——这是已知的
+/// 交互边界，会在 [`TableOutcome::cells`] 的 `match_kind` 上表现为 `Unmatched`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TablePolicy {
+    pub enabled: bool,
+    /// 结构模型（`slanet-plus.onnx`）；`enabled` 时必填。
+    pub model_path: Option<PathBuf>,
+    /// 可选模型 SHA-256 校验。
+    ///
+    /// **与 [`FormulaPolicy::expected_model_sha256`] 是同一条规则**（而不是第二套机制）：
+    /// 给出即校验，不匹配就是 [`crate::RapidOcrError::HashMismatch`]。
+    /// 为 `None` 时回落到**模型同目录清单**里登记的摘要（`models/table/manifest.json`），
+    /// 两者都没有时如实记录"无法校验"。
+    pub expected_model_sha256: Option<String>,
+    /// 结构模型输入画布的边长（方形）。默认 488。
+    pub input_side_len: usize,
+    /// 是否用 free-dimension override 把输入 H/W 固定为 `input_side_len`。
+    /// **绝不影响解码步数上限**（L 始终动态）。默认 `true`。
+    pub fix_input_shape: bool,
+    /// 结构会话的 intra 线程数；`None` 表示继承运行时推导值。
+    ///
+    /// 保留这个旋钮是因为"多会话自旋争抢"的怀疑需要可被实测证伪的入口；
+    /// 默认值**不**改（E12 实测：4/8/继承 三者最大偏差 −6.89 %，小于继承值自身的
+    /// 9.30 % 重复间离散度，落在噪声带内 → 按判据回退）。
+    pub intra_threads: Option<usize>,
+    /// 保留一个表格区域所需的最低定位分数（`[0,1]`）。默认 0.0（不过滤）。
+    pub min_region_score: f32,
+    /// 每页最多保留的表格区域数。默认 8。
+    pub max_regions: usize,
+    /// 发射到 [`TableOutcome::html`] 时的文本编码策略。
+    pub text_policy: TableTextPolicy,
+}
+
+impl Default for TablePolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model_path: None,
+            expected_model_sha256: None,
+            input_side_len: crate::table::structure::TABLE_STRUCTURE_SIDE_LEN,
+            fix_input_shape: true,
+            intra_threads: None,
+            min_region_score: 0.0,
+            max_regions: 8,
+            text_policy: TableTextPolicy::Escape,
+        }
+    }
+}
+
+impl TablePolicy {
+    pub fn validate(&self) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.model_path.is_none() {
+            return Err(RapidOcrError::InvalidInput(
+                "table policy requires `model_path` when enabled".into(),
+            ));
+        }
+        if self.input_side_len == 0 {
+            return Err(RapidOcrError::InvalidInput(
+                "table input_side_len must be greater than zero".into(),
+            ));
+        }
+        if !self.min_region_score.is_finite() || !(0.0..=1.0).contains(&self.min_region_score) {
+            return Err(RapidOcrError::InvalidInput(
+                "table min_region_score must be finite and in [0,1]".into(),
+            ));
+        }
+        if self.max_regions == 0 {
+            return Err(RapidOcrError::InvalidInput(
+                "table max_regions must be greater than zero".into(),
+            ));
+        }
+        if self.intra_threads == Some(0) {
+            return Err(RapidOcrError::InvalidInput(
+                "table intra_threads must be greater than zero when set".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrRegion {
     pub source: RegionSource,
@@ -598,10 +837,13 @@ pub struct OcrRegion {
     /// 公式区域结果；仅当 `kind == RegionKind::Formula` 时为 `Some`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formula: Option<FormulaOutcome>,
+    /// 表格区域结果；仅当 `kind == RegionKind::Table` 时为 `Some`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableOutcome>,
 }
 
 impl OcrRegion {
-    /// 构造普通文本区域（公式字段为空）。
+    /// 构造普通文本区域（公式与表格字段为空）。
     pub fn text(
         source: RegionSource,
         polygon: Option<Polygon>,
@@ -617,6 +859,26 @@ impl OcrRegion {
             classification,
             recognition,
             formula: None,
+            table: None,
+        }
+    }
+
+    /// 构造表格区域（不携带 CTC 识别结果，见 [`RegionKind`] 的文档）。
+    pub fn table(
+        source: RegionSource,
+        polygon: Option<Polygon>,
+        detection: Option<DetectionOutcome>,
+        outcome: TableOutcome,
+    ) -> Self {
+        Self {
+            source,
+            kind: RegionKind::Table,
+            polygon,
+            detection,
+            classification: None,
+            recognition: None,
+            formula: None,
+            table: Some(outcome),
         }
     }
 }
@@ -661,6 +923,14 @@ pub struct StageReports {
     /// 页面级公式路由阶段；未启用时为 `Disabled`。
     #[serde(default)]
     pub formula: StageReport,
+    /// 页面级表格阶段；未启用时为 `Disabled`。
+    ///
+    /// 三段口径与 [`OcrTimings`] 的表格字段一一对应：
+    /// `timing.preprocess_ms` = [`OcrTimings::table_detect_ms`]（表格定位）、
+    /// `timing.infer_ms` = [`OcrTimings::table_structure_infer_ms`]（结构识别 ONNX 推理）、
+    /// `timing.postprocess_ms` = [`OcrTimings::table_backfill_ms`]（单元格内容回填）。
+    #[serde(default)]
+    pub table: StageReport,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OcrTimings {
@@ -683,6 +953,15 @@ pub struct OcrTimings {
     /// 页面级公式路由耗时（检测 + 裁剪 + 公式识别）；未启用时为 0。
     #[serde(default)]
     pub formula_ms: f32,
+    /// 页面级表格定位耗时（表格区域检测）；未启用时为 0。
+    #[serde(default)]
+    pub table_detect_ms: f32,
+    /// 表格结构识别的 ONNX Runtime 推理耗时；未启用时为 0。
+    #[serde(default)]
+    pub table_structure_infer_ms: f32,
+    /// 表格单元格内容回填耗时（整页检测复用 + 几何匹配）；未启用时为 0。
+    #[serde(default)]
+    pub table_backfill_ms: f32,
     pub postprocess_ms: f32,
     pub total_ms: f32,
 }
@@ -789,6 +1068,31 @@ impl OcrOutput {
             .count()
     }
 
+    /// 表格区域数量。
+    pub fn table_count(&self) -> usize {
+        self.regions
+            .iter()
+            .filter(|region| region.kind == RegionKind::Table)
+            .count()
+    }
+
+    /// 按阅读顺序返回表格区域 (region id, 表格结果)。
+    ///
+    /// 与 [`OcrOutput::formula_latex`] 同形：表格区域的 `html` 就是它在文本通道里的
+    /// 唯一表示，所以两种"非文本区域"走同一套遍历规则。
+    pub fn tables(&self, order: TextOrder) -> Vec<(usize, &TableOutcome)> {
+        let ids = match order {
+            TextOrder::Reading => self.reading_order(),
+            TextOrder::Detection => (0..self.regions.len()).collect(),
+        };
+        ids.into_iter()
+            .filter_map(|id| {
+                let region = self.regions.get(id)?;
+                Some((id, region.table.as_ref()?))
+            })
+            .collect()
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != 1 {
             return Err(RapidOcrError::InvalidInput(format!(
@@ -814,6 +1118,31 @@ impl OcrOutput {
                     if region.formula.is_some() {
                         return Err(RapidOcrError::InvalidInput(
                             "text region must not carry a formula outcome".into(),
+                        ));
+                    }
+                    if region.table.is_some() {
+                        return Err(RapidOcrError::InvalidInput(
+                            "text region must not carry a table outcome".into(),
+                        ));
+                    }
+                }
+                RegionKind::Table => {
+                    if region.table.is_none() {
+                        return Err(RapidOcrError::InvalidInput(
+                            "table region must carry a table outcome".into(),
+                        ));
+                    }
+                    if region.formula.is_some() {
+                        return Err(RapidOcrError::InvalidInput(
+                            "table region must not carry a formula outcome".into(),
+                        ));
+                    }
+                    // 与公式同一条理由：表格的单元格文本来自页级识别结果的几何匹配，
+                    // 不是对这个区域跑 CTC 得到的。挂一份 `RecognitionOutcome` 会让
+                    // "识别出来的"与"匹配进来的"不可分辨。
+                    if region.recognition.is_some() {
+                        return Err(RapidOcrError::InvalidInput(
+                            "table region must not carry a CTC recognition outcome".into(),
                         ));
                     }
                 }
@@ -1240,6 +1569,7 @@ mod tests {
             recognition: RecognitionPolicy::default(),
             output: OutputPolicy::default(),
             formula: FormulaPolicy::default(),
+            table: TablePolicy::default(),
         };
         assert!(request.validate().is_err());
     }
@@ -1351,7 +1681,7 @@ mod tests {
     /// −43 到 −73 ms/页，均值 −54.8 ms；release 下约 −6.75 ms/页），因此账本把差额显式
     /// 报告为 `unattributed_ms` + `conservation.conserved = false`，而不是在这里假装它恒为 0。
     /// 这个差额的含义是**口径差异**：`total_ms` 是“外层 `preprocess_ms` 窗口
-    /// （`rapid_ocr.rs:619-719`）+ 内层 `inner.run()` 窗口（`rapid_ocr.rs:106-130`）”的总窗口，
+    /// （`rapid_structure.rs:619-719`）+ 内层 `inner.run()` 窗口（`rapid_structure.rs:106-130`）”的总窗口，
     /// 而命名分量只是这些窗口里的若干子窗口（内层窗口里的 resize / padding / crop / 批次装配
     /// 不属于任何阶段计时）——**两个窗口串行，不是重叠，也没有重复计时**。账本明确写着它是
     /// **诊断**工具、不是验收证据；详见 `src/runtime/timing.rs` 的模块文档、
@@ -1377,6 +1707,9 @@ mod tests {
             recognizer_postprocess_ms: 30.0,
             recognize_ms: 234.0,
             formula_ms: 9.0,
+            table_detect_ms: 0.0,
+            table_structure_infer_ms: 0.0,
+            table_backfill_ms: 0.0,
             postprocess_ms: 6.0,
             total_ms: 12.0 + 420.0 + 4.0 + 234.0 + 6.0 + 9.0,
         };
@@ -1425,5 +1758,184 @@ mod tests {
             outer >= 0.0,
             "the outer preprocess window cannot be negative: {outer}"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // 表格线契约（docs/11 §2.1 E14.1 / §2.2 E14.2）
+    // ---------------------------------------------------------------------
+
+    /// `enabled = false` 时策略必须**完全不校验**：这是"关闭即无影响"（门禁 G6）的
+    /// 前提——默认策略里的 `model_path` 是 `None`，若关闭时也校验，每一个既有调用方
+    /// 都会在构造默认请求时失败。
+    #[test]
+    fn a_disabled_table_policy_is_valid_even_without_a_model() {
+        let policy = TablePolicy::default();
+        assert!(!policy.enabled);
+        assert!(policy.model_path.is_none());
+        policy.validate().expect("a disabled policy must validate");
+    }
+
+    /// 五种拒绝各自要有**可区分**的消息，否则调用方只能看到"配置无效"而不知道该改哪一项。
+    #[test]
+    fn the_table_policy_rejections_are_distinguishable() {
+        let model = PathBuf::from("slanet-plus.onnx");
+        let base = TablePolicy {
+            enabled: true,
+            model_path: Some(model),
+            ..TablePolicy::default()
+        };
+        base.validate().expect("the baseline must be valid");
+
+        let cases: [(&str, TablePolicy, &str); 5] = [
+            (
+                "no model path",
+                TablePolicy {
+                    model_path: None,
+                    ..base.clone()
+                },
+                "requires `model_path`",
+            ),
+            (
+                "zero side length",
+                TablePolicy {
+                    input_side_len: 0,
+                    ..base.clone()
+                },
+                "input_side_len must be greater than zero",
+            ),
+            (
+                "non-finite score",
+                TablePolicy {
+                    min_region_score: f32::NAN,
+                    ..base.clone()
+                },
+                "min_region_score must be finite and in [0,1]",
+            ),
+            (
+                "score above one",
+                TablePolicy {
+                    min_region_score: 1.5,
+                    ..base.clone()
+                },
+                "min_region_score must be finite and in [0,1]",
+            ),
+            (
+                "zero max regions",
+                TablePolicy {
+                    max_regions: 0,
+                    ..base.clone()
+                },
+                "max_regions must be greater than zero",
+            ),
+        ];
+        for (name, policy, expected) in cases {
+            let error = policy
+                .validate()
+                .expect_err(&format!("{name} must be refused"));
+            assert!(
+                error.to_string().contains(expected),
+                "{name}: expected {expected:?}, got {error}"
+            );
+        }
+
+        // `intra_threads` 是独立的第六条拒绝，单独列在这里以免上面那张表太长。
+        let error = TablePolicy {
+            intra_threads: Some(0),
+            ..base
+        }
+        .validate()
+        .expect_err("intra_threads = 0 must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("intra_threads must be greater than zero"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn the_table_wire_names_are_snake_case() {
+        let json = serde_json::to_value(RegionKind::Table).expect("must serialize");
+        assert_eq!(json, serde_json::json!("table"));
+        let json = serde_json::to_value(TableStructureConfidence::Low).expect("must serialize");
+        assert_eq!(json, serde_json::json!("low"));
+        let json = serde_json::to_value(TableCellMatch::BlankBox).expect("must serialize");
+        assert_eq!(json, serde_json::json!("blank_box"));
+        let json =
+            serde_json::to_value(TableDegradation::GridHoles { holes: 3 }).expect("must serialize");
+        assert_eq!(json, serde_json::json!({"kind": "grid_holes", "holes": 3}));
+        let json = serde_json::to_value(TableDegradation::Truncated).expect("must serialize");
+        assert_eq!(json, serde_json::json!({"kind": "truncated"}));
+        let json = serde_json::to_value(TableTextPolicy::Escape).expect("must serialize");
+        assert_eq!(json, serde_json::json!("escape"));
+    }
+
+    /// `as_str()` 与 serde 的拼写**必须**一致：它是 `&'static str`，编译器不会替我们
+    /// 检查两者是否同步。改一处忘另一处会让 JSON 的 `confidence` 与 `regions[].table.confidence`
+    /// 说两套话，而两边都能通过各自的单元测试。
+    #[test]
+    fn the_confidence_name_agrees_with_serde() {
+        for confidence in [
+            TableStructureConfidence::High,
+            TableStructureConfidence::Low,
+        ] {
+            let serde_name = serde_json::to_value(confidence).expect("confidence must serialize");
+            assert_eq!(
+                serde_name,
+                serde_json::json!(confidence.as_str()),
+                "as_str() and serde disagree for {confidence:?}"
+            );
+        }
+        // 反向对照：两个变体不得给出同一个名字，否则上面的循环对拼写错误不敏感。
+        assert_ne!(
+            TableStructureConfidence::High.as_str(),
+            TableStructureConfidence::Low.as_str()
+        );
+    }
+
+    /// 策略是**可反序列化**的：服务端要能从请求体里读出来（E16.2 会用到）。
+    #[test]
+    fn the_table_policy_round_trips_through_json() {
+        let policy = TablePolicy {
+            enabled: true,
+            model_path: Some(PathBuf::from("models/table/slanet-plus.onnx")),
+            expected_model_sha256: Some("a".repeat(64)),
+            input_side_len: 512,
+            fix_input_shape: false,
+            intra_threads: Some(4),
+            min_region_score: 0.25,
+            max_regions: 3,
+            text_policy: TableTextPolicy::Raw,
+        };
+        let json = serde_json::to_string(&policy).expect("must serialize");
+        let back: TablePolicy = serde_json::from_str(&json).expect("must deserialize");
+        assert_eq!(back.input_side_len, 512);
+        assert_eq!(back.intra_threads, Some(4));
+        assert_eq!(back.max_regions, 3);
+        assert_eq!(back.text_policy, TableTextPolicy::Raw);
+        assert!(!back.fix_input_shape);
+    }
+
+    /// `OcrRegion.table` 为 `None` 时**不得**出现在 JSON 里：否则每一个文本区域的
+    /// 输出都会多一个恒为 `null` 的字段，所有既有快照与体积统计都会变。
+    #[test]
+    fn an_absent_table_outcome_is_omitted_from_json() {
+        let region = OcrRegion::text(
+            RegionSource::Input,
+            None,
+            None,
+            None,
+            Some(RecognitionOutcome {
+                text: "ok".into(),
+                score: 0.5,
+                words: None,
+            }),
+        );
+        let json = serde_json::to_value(&region).expect("must serialize");
+        assert!(
+            json.get("table").is_none(),
+            "an absent table outcome must not be serialized: {json}"
+        );
+        assert_eq!(json["kind"], serde_json::json!("text"));
     }
 }

@@ -1,19 +1,19 @@
 use clap::{Parser, Subcommand};
-use rapid_ocr_rs::evaluation::ocr::{
+use rapid_structure_rs::evaluation::ocr::{
     EvaluationCase, EvaluationReport, EvaluationSummary, evaluate_case,
 };
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     ClassifierPlan, ClassifierPolicy, DetectionPolicy, EngineConfig, FormulaPolicy, ImageInput,
     OcrEngine, OcrRequest, OutputPolicy, PreprocessPolicy, RapidOcrEngine, RecognitionPolicy,
-    ReportMode, StagePlan, TextOrder, WordOutputMode, render_output_report, to_output_items,
-    to_output_json,
+    ReportMode, StagePlan, TablePolicy, TextOrder, WordOutputMode, render_output_report,
+    to_output_items, to_output_json, to_output_markdown,
 };
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-/// `rapidocr serve` 的服务端（M1：HTTP 层 + 静态页 + 双队列 + 有界结果存储）。
+/// `rapidstruct serve` 的服务端（M1：HTTP 层 + 静态页 + 双队列 + 有界结果存储）。
 ///
 /// 只在启用 `serve` feature 时参与编译；`serve` **不在** `default` 里，
 /// 因此默认构建的依赖图与代码路径都不受影响（§2.1 的硬性约束）。
@@ -62,8 +62,47 @@ impl FormulaArgs {
     }
 }
 
+/// `recognize` 的输出通道（`docs/11` §3 E15.3 的人工比对入口）。
+///
+/// 三条通道共用同一份 `OcrOutput`，所以这个开关只影响**渲染**，不影响识别：
+/// 需要对比表格语义一致性时，同一张图分别用 `--format json|html|markdown` 跑三次即可。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum OutputFormat {
+    /// 纯文本：按阅读顺序的行（表格区域不贡献文本，见 `docs/11` §3 E15.4）。
+    Plain,
+    /// 完整 JSON：`items[]` + `tables[]`。
+    Json,
+    /// 自包含 HTML 报告（表格渲染为**真的** `<table>`，已净化）。
+    Html,
+    /// Markdown：表格渲染为逻辑网格，跨度损失有显式说明行。
+    Markdown,
+}
+
+/// 表格路由参数。给 `--table-model` 才启用；不给时页面 OCR 行为与无表格功能完全一致。
+#[derive(Debug, clap::Args)]
+struct TableArgs {
+    #[arg(long, value_name = "MODEL")]
+    table_model: Option<PathBuf>,
+    #[arg(long, value_name = "N")]
+    table_intra_threads: Option<usize>,
+}
+
+impl TableArgs {
+    fn policy(&self) -> TablePolicy {
+        match &self.table_model {
+            Some(model_path) => TablePolicy {
+                enabled: true,
+                model_path: Some(model_path.clone()),
+                intra_threads: self.table_intra_threads,
+                ..TablePolicy::default()
+            },
+            None => TablePolicy::default(),
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
-#[command(name = "rapidocr", about = "Run PaddleOCR ONNX models")]
+#[command(name = "rapidstruct", about = "Run PaddleOCR ONNX models")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -79,10 +118,15 @@ enum Command {
         words: bool,
         #[arg(long)]
         chars: bool,
-        #[arg(long)]
+        /// 等价于 `--format json`（保留旧写法）。
+        #[arg(long, conflicts_with = "format")]
         json: bool,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Plain)]
+        format: OutputFormat,
         #[command(flatten)]
         formula: FormulaArgs,
+        #[command(flatten)]
+        table: TableArgs,
     },
     Report {
         #[arg(long = "input-dir")]
@@ -93,6 +137,8 @@ enum Command {
         config: Option<PathBuf>,
         #[command(flatten)]
         formula: FormulaArgs,
+        #[command(flatten)]
+        table: TableArgs,
     },
     Evaluate {
         #[arg(long)]
@@ -136,7 +182,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             words,
             chars,
             json,
+            format,
             formula,
+            table,
         } => {
             let cfg = match config {
                 Some(path) => EngineConfig::from_yaml_file(path)?,
@@ -151,34 +199,82 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 WordOutputMode::Off
             };
-            let mut request = make_request(bytes, word_mode);
+            let format = if json { OutputFormat::Json } else { format };
+            let mut request = make_request(bytes, word_mode, table.policy());
             request.formula = formula.policy();
             let output = engine.recognize(request)?;
-            if json {
-                println!(
+            match format {
+                OutputFormat::Json => println!(
                     "{}",
                     serde_json::to_string_pretty(&to_output_json(&output)?)?
-                );
-            } else {
-                println!("{}", output.plain_text(TextOrder::Reading));
-                for (index, latex) in output.formula_latex(TextOrder::Reading) {
-                    println!("formula[{index}] = {latex}");
+                ),
+                OutputFormat::Html => {
+                    let source_name = img_path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("source.png");
+                    let timing = format!("total {:.1} ms", output.timings.total_ms);
+                    print!(
+                        "{}",
+                        render_output_report(
+                            source_name,
+                            source_name,
+                            &output,
+                            &timing,
+                            ReportMode::Static,
+                        )?
+                    );
                 }
-                println!(
-                    "regions={} formulas={} total_ms={:.1}",
-                    output.regions.len(),
-                    output.formula_count(),
-                    output.timings.total_ms
-                );
+                OutputFormat::Markdown => {
+                    println!("{}", to_output_markdown(&output));
+                    for (index, table) in output.tables(TextOrder::Reading) {
+                        println!(
+                            "table[{index}] rows={} cols={} cells={} confidence={}",
+                            table.rows,
+                            table.cols,
+                            table.cells.len(),
+                            table.confidence.as_str()
+                        );
+                    }
+                }
+                OutputFormat::Plain => {
+                    println!("{}", output.plain_text(TextOrder::Reading));
+                    for (index, latex) in output.formula_latex(TextOrder::Reading) {
+                        println!("formula[{index}] = {latex}");
+                    }
+                    for (index, table) in output.tables(TextOrder::Reading) {
+                        println!(
+                            "table[{index}] rows={} cols={} cells={} confidence={}",
+                            table.rows,
+                            table.cols,
+                            table.cells.len(),
+                            table.confidence.as_str()
+                        );
+                    }
+                    println!(
+                        "regions={} formulas={} tables={} total_ms={:.1}",
+                        output.regions.len(),
+                        output.formula_count(),
+                        output.table_count(),
+                        output.timings.total_ms
+                    );
+                }
             }
         }
-        Command::Check => println!("rapid-ocr-rs ready"),
+        Command::Check => println!("rapid-structure-rs ready"),
         Command::Report {
             input_dir,
             output_dir,
             config,
             formula,
-        } => report_cmd(input_dir, output_dir, config, formula.policy())?,
+            table,
+        } => report_cmd(
+            input_dir,
+            output_dir,
+            config,
+            formula.policy(),
+            table.policy(),
+        )?,
         Command::Evaluate {
             manifest,
             config,
@@ -190,7 +286,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(not(feature = "serve"))]
         Command::Serve(_) => {
             return Err(
-                "`rapidocr serve` is not compiled into this binary: rebuild with \
+                "`rapidstruct serve` is not compiled into this binary: rebuild with \
                  `cargo build --features serve` (docs/05 §2.1: the HTTP layer is an optional \
                  feature and is deliberately not part of the default build)"
                     .into(),
@@ -200,7 +296,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn make_request(bytes: Vec<u8>, words: WordOutputMode) -> OcrRequest {
+fn make_request(bytes: Vec<u8>, words: WordOutputMode, table: TablePolicy) -> OcrRequest {
     OcrRequest {
         input: ImageInput::Encoded(Arc::from(bytes)),
         roi: None,
@@ -218,6 +314,7 @@ fn make_request(bytes: Vec<u8>, words: WordOutputMode) -> OcrRequest {
         recognition: RecognitionPolicy { words },
         output: OutputPolicy::default(),
         formula: FormulaPolicy::default(),
+        table,
     }
 }
 
@@ -226,6 +323,7 @@ fn report_cmd(
     output_dir: PathBuf,
     config: Option<PathBuf>,
     formula: FormulaPolicy,
+    table: TablePolicy,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = match config {
         Some(path) => EngineConfig::from_yaml_file(path)?,
@@ -247,7 +345,7 @@ fn report_cmd(
         ) {
             continue;
         }
-        let mut request = make_request(std::fs::read(&path)?, WordOutputMode::Off);
+        let mut request = make_request(std::fs::read(&path)?, WordOutputMode::Off, table.clone());
         request.formula = formula.clone();
         let output = engine.recognize(request)?;
         let source_name = path
@@ -279,7 +377,14 @@ fn evaluate_cmd(
     iou_threshold: f32,
     output: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let cases: Vec<EvaluationCase> = serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+    let raw = std::fs::read_to_string(&manifest)?;
+    let manifest_value: serde_json::Value = serde_json::from_str(&raw)?;
+    // 域判别：裸数组 = OCR 域（现状）；对象且 `domain == "table"` = 表格域。
+    // OCR 报告的形状因此**一个字节都不改**，既有 baseline 与 serve 契约不受影响。
+    if rapid_structure_rs::evaluation::table::TableEvalManifest::matches(&manifest_value) {
+        return evaluate_table_cmd(manifest, config, output);
+    }
+    let cases: Vec<EvaluationCase> = serde_json::from_value(manifest_value)?;
     let manifest_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
     let cfg = match config {
         Some(path) => EngineConfig::from_yaml_file(path)?,
@@ -297,6 +402,10 @@ fn evaluate_cmd(
         let result = engine.recognize(make_request(
             std::fs::read(&resolved_image)?,
             WordOutputMode::Off,
+            // 评测口径**不启用表格路由**：`--manifest` 量的是纯文本 CER 与 polygon IoU，
+            // 表格会额外产出一个没有 `recognition` 的区域，从而改变区域数与 IoU 口径，
+            // 与 `tests/baseline/windows-baseline/evaluation-cpu.json` 不可比（门禁 G6）。
+            TablePolicy::default(),
         ))?;
         let metrics = evaluate_case(
             &case.text,
@@ -316,7 +425,7 @@ fn evaluate_cmd(
     // ORT 指纹必须随质量报告一起落地：没有它就无法证明两份评估跑在同一份运行库上，
     // 而阶段 0 的报告正是因为没有版本/路径/哈希而无法被严格比较。
     //
-    // M4：`rapidocr serve` 的 `POST /api/evaluate` 复用**同一个**函数，因此两个入口的
+    // M4：`rapidstruct serve` 的 `POST /api/evaluate` 复用**同一个**函数，因此两个入口的
     // 报告字段（含运行时四字段）逐字段相同，而不是两处各拼一遍。
     let report = evaluation_report_value(&summary)?;
     let text = serde_json::to_string_pretty(&report)?;
@@ -327,31 +436,55 @@ fn evaluate_cmd(
     Ok(())
 }
 
-/// 质量指标（库）+ 进程级运行时字段 → 评估报告 JSON（**唯一**实现）。
+/// 表格域评测（`docs/09-table-recognition-execution.md` §9.2）。
 ///
-/// 两个消费者：CLI 的 `rapidocr evaluate`（`--output` 与 stdout）与 serve 的
-/// `POST /api/evaluate`（HTTP 响应体）。字段名与顺序由这份实现决定。
-pub(crate) fn evaluation_report_value(
-    summary: &EvaluationSummary,
-) -> Result<serde_json::Value, serde_json::Error> {
-    let mut report = serde_json::to_value(summary)?;
-    if let Some(object) = report.as_object_mut() {
-        object.insert(
-            "peak_working_set_bytes".to_string(),
-            serde_json::json!(rapid_ocr_rs::peak_working_set_bytes()),
-        );
-        object.insert(
-            "memory_source".to_string(),
-            serde_json::json!(rapid_ocr_rs::peak_memory_source()),
-        );
-        object.insert(
-            "ort_runtime".to_string(),
-            serde_json::to_value(rapid_ocr_rs::ort_runtime_fingerprint())?,
-        );
-        object.insert(
-            "ort_runtime_version".to_string(),
-            serde_json::json!(rapid_ocr_rs::ort_runtime_version()),
+/// 链路在库里（`evaluation::table::run`），与 `src/bin/table_eval.rs` 是**同一份**
+/// 实现。这里只做两件事：把 manifest 合成 [`TableEvalConfig`]、把报告打出来。
+///
+/// `--config`（OCR 引擎配置）与 `--iou-threshold` 在表格域**不适用**：表格域不跑
+/// 页级 OCR 引擎，也没有多边形 IoU 指标。给了它们说明调用方拿错了 manifest，
+/// 因此明确报错而不是忽略 —— 静默忽略会让人以为阈值生效了。
+fn evaluate_table_cmd(
+    manifest: PathBuf,
+    config: Option<PathBuf>,
+    output: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use rapid_structure_rs::evaluation::table::run::{TableEvalEvent, run_table_evaluation};
+
+    if config.is_some() {
+        return Err(
+            "--config selects the page-level OCR engine, which the table domain does not \
+                    run; remove it (or use the OCR manifest)"
+                .into(),
         );
     }
+    let parsed: rapid_structure_rs::evaluation::table::TableEvalManifest =
+        serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+    let eval_config = parsed.into_config()?;
+    let outcome = run_table_evaluation(&eval_config, &mut |event| match event {
+        TableEvalEvent::Message(text) => eprintln!("{text}"),
+        TableEvalEvent::Progress { done, total } => eprintln!("  {done}/{total}"),
+    })?;
+    let text = serde_json::to_string_pretty(&outcome.report)?;
+    if let Some(path) = output {
+        std::fs::write(path, &text)?;
+    }
+    println!("{text}");
+    Ok(())
+}
+
+/// 质量指标（库）+ 进程级运行时字段 → 评估报告 JSON（**唯一**实现）。
+///
+/// 两个消费者：CLI 的 `rapidstruct evaluate`（`--output` 与 stdout）与 serve 的
+/// `POST /api/evaluate`（HTTP 响应体）。字段名与顺序由这份实现决定。
+///
+/// 运行时那四个字段的实现已抽到 `evaluation::runtime_report`（域无关），表格域报告
+/// 走的是同一个函数；这里只负责把 OCR 域的汇总序列化出来。**输出逐字段不变。**
+pub(crate) fn evaluation_report_value(
+    summary: &EvaluationSummary,
+) -> Result<serde_json::Value, rapid_structure_rs::RapidOcrError> {
+    let mut report = serde_json::to_value(summary)
+        .map_err(|error| rapid_structure_rs::RapidOcrError::Decode(error.to_string()))?;
+    rapid_structure_rs::evaluation::runtime_report::attach_runtime_fields(&mut report)?;
     Ok(report)
 }

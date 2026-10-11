@@ -6,16 +6,16 @@
 用法：
 
 ```powershell
-$env:RAPID_OCR_MODEL_ROOT = "<workspace>/OCR-Model"
-cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <Formula-TestSet> `
+$env:RAPID_STRUCTURE_MODEL_ROOT = "<workspace>/models"
+cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <datasets/formula> `
   --dataset latexocr --split validate `
   --manifest-output target/manifest-val.json --output target/rust-val.json --no-records
 
-python tools/formula_reference.py --model <onnx> --dataset-root <Formula-TestSet> `
+python tools/formula_reference.py --model <onnx> --dataset-root <datasets/formula> `
   --dataset latexocr --manifest target/manifest-val.json `
   --output target/python-val.json
 
-cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <Formula-TestSet> `
+cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <datasets/formula> `
   --dataset latexocr --split validate --expect-manifest target/manifest-val.json `
   --python-reference target/python-val.json --output target/rust-val-compared.json
 ```

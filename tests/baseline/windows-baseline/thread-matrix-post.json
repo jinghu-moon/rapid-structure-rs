@@ -2,7 +2,7 @@
   "collected_at_utc": "2026-10-03T04:52:05.5473357Z",
   "stage": "post-refactor",
   "conditions": {
-    "images_dir": "D:\\100_Projects\\110_Daily\\SnapClip\\OCR-test-image",
+    "images_dir": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\datasets/text",
     "max_side_len": 2000,
     "rounds": 3,
     "warmup_rounds": 1,

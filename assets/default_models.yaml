@@ -258,7 +258,13 @@ onnxruntime:
 
 # 公式模型：与 ocr_version / 语言选择无关的固定集合。
 # 这里只登记**公式管线必需**的文件：页面公式检测模型（pix2text-mfd-1.5.onnx）在
-# FormulaPolicy 里是可选的，且没有可信的公开下载来源，因此不是集合成员。
+# FormulaPolicy 里是可选的，因此不是集合成员。它的官方来源是 Pix2Text 的 Hugging Face
+# 仓库 `breezedeus/pix2text-mfd-1.5`（1.5 版，YOLO11m 检测头；SHA256
+# 40d4fc852d99bcbf25a9478897d2f49fbbb8f7fdd6569c088cd1c31386293bd7，80,311,115 B，
+# 与本机 models/serve/pix2text-mfd-1.5.onnx 逐字节一致）。它不登记在本表里的原因是
+# **本表只描述 RapidStructure 那一套托管**，而这个模型属于 Pix2Text；需要它的档位在
+# models/serve/manifest.json 里以 `formula_detector` role 登记（那里声明了 source_url，
+# 因此 serve.ps1 能自动下载并校验）。
 formula:
   id: PP-FormulaNet_plus-M
   family: RapidDoc

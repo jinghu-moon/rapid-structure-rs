@@ -47,7 +47,7 @@ impl OcrSession {
         runtime_cfg: &RuntimeConfig,
         kind: OcrSessionKind,
     ) -> Result<Self> {
-        let inner = OrtSession::open_unchecked(model_path, runtime_cfg)?;
+        let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
         let probe = inner.probe_io()?;
         let input = require_single_input(&probe, model_path, "OCR")?;
         require_tensor(input, "input", 4, TensorElementType::Float32, model_path)?;

@@ -1,0 +1,58 @@
+global:
+  text_score: 0.5
+  use_det: true
+  use_cls: false
+  use_rec: true
+  min_height: 30
+  width_height_ratio: 8.0
+  max_side_len: 2000
+  min_side_len: 30
+  return_word_box: false
+  return_single_char_box: false
+runtime:
+  intra_threads: null
+  inter_threads: null
+  auto_tune_threads: true
+  rayon_threads: null
+  enable_cpu_mem_arena: true
+  fail_if_provider_unavailable: false
+  provider_preference: cpu
+  formula_batch: 16
+det:
+  lang: multi
+  ocr_version: PP-OCRv6
+  model_type: tiny
+  model_path: D:/100_Projects/110_Daily/Rapid-OCR-RS/models/text/tiny/PP-OCRv6_det_tiny.onnx
+  allow_download: false
+  limit_side_len: 736
+  limit_type: min
+  std: [0.5, 0.5, 0.5]
+  mean: [0.5, 0.5, 0.5]
+  thresh: 0.3
+  box_thresh: 0.5
+  max_candidates: 1000
+  unclip_ratio: 1.6
+  use_dilation: true
+  score_mode: fast
+  model_store_dir: null
+cls:
+  lang: ch
+  ocr_version: PP-OCRv4
+  model_type: mobile
+  model_path: null
+  allow_download: false
+  cls_image_shape: [3, 48, 192]
+  cls_batch_num: 6
+  cls_thresh: 0.9
+  label_list: ['0', '180']
+  model_store_dir: null
+rec:
+  model:
+    lang: ch
+    ocr_version: PP-OCRv6
+    model_type: tiny
+    model_path: D:/100_Projects/110_Daily/Rapid-OCR-RS/models/text/tiny/PP-OCRv6_rec_tiny.onnx
+    rec_keys_path: D:/100_Projects/110_Daily/Rapid-OCR-RS/models/text/tiny/ppocrv6_tiny_dict.txt
+    allow_download: false
+  rec_batch_num: 6
+  rec_img_shape: [3, 48, 320]

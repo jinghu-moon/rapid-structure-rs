@@ -103,5 +103,37 @@
   "mean_detection_recall": null,
   "mean_polygon_iou": null,
   "memory_source": "windows:GetProcessMemoryInfo.PeakWorkingSetSize",
-  "peak_working_set_bytes": 1219309568
+  "ort_runtime": {
+    "api_version": "1.28.0",
+    "link": {
+      "base_dir": "C:\\Users\\seeyuer\\AppData\\Local\\ort.pyke.io\\dfbin\\x86_64-pc-windows-msvc",
+      "file_name": "onnxruntime.lib",
+      "size_bytes": 341152186
+    },
+    "link_reason": null,
+    "provider_dlls": [
+      {
+        "loaded": true,
+        "name": "DirectML.dll",
+        "path": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\target\\release\\DirectML.dll",
+        "size_bytes": 18527776
+      },
+      {
+        "loaded": false,
+        "name": "onnxruntime_providers_cuda.dll",
+        "path": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\target\\release\\onnxruntime_providers_cuda.dll",
+        "size_bytes": 62276096
+      }
+    ],
+    "provider_reason": null,
+    "runtime_module": {
+      "path": "C:\\Users\\seeyuer\\AppData\\Local\\ort.pyke.io\\dfbin\\x86_64-pc-windows-msvc\\f7c654b3729cb9e5ad2a36a0c38e5b48e63bf4eed22968931aed33a0ad0b527d\\onnxruntime.lib",
+      "reason": null,
+      "sha256": "c3f5bb800fd19c05d3bd13614654f0c37ea3db1fbfba4d10963fa678cdb6cdd0",
+      "size_bytes": 341152186
+    },
+    "runtime_source": "static_link"
+  },
+  "ort_runtime_version": "1.28.0",
+  "peak_working_set_bytes": 1219506176
 }

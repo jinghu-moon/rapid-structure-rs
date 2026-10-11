@@ -12,7 +12,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (-not $OutDir) { $OutDir = Join-Path $PSScriptRoot '..\target\flow-gate\cdp-flow' }
-if (-not $Image) { $Image = 'D:\100_Projects\110_Daily\SnapClip\OCR-test-image\01基础多位置文本.png' }
+if (-not $Image) { $Image = Join-Path (Split-Path -Parent $PSScriptRoot) 'datasets\text\01基础多位置文本.png' }
 $chrome = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 if (-not (Test-Path $chrome)) { throw "chrome not found: $chrome" }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

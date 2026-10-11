@@ -28,10 +28,13 @@
 //! `pin_engine_paths` / `FormulaPolicy` 这两条加载路径，全部读同一份清单。
 //!
 //! 计划 = 文本管线（detector + recognizer + dictionary，`global.use_cls` 时再加 classifier）
-//! **加上**（**仅当公式路由启用时**）公式管线的 formula_recognizer 与 formula_detector。
+//! **加上**（**仅当公式路由启用时**）公式管线的 formula_recognizer 与 formula_detector，
+//! **再加上**（**仅当表格路由启用时**）表格管线的 table_structure。
 //! "公式路由启用"只有一个判据：解析出了一个页面公式检测模型——`--formula-detector`，
-//! 或模型集里声明的 `formula_detector` role（CLI 优先）。公式未启用时公式模型
-//! **不在计划里**，因此 A1/A2 一个字节都不读它们（566 MB 的识别模型不再被无条件哈希）。
+//! 或模型集里声明的 `formula_detector` role（CLI 优先）。"表格路由启用"只有一个判据：
+//! 解析出了一个表格结构模型——`--table-model`，或模型集里声明的 `table_structure` role。
+//! 未启用时对应的模型**不在计划里**，因此 A1/A2 一个字节都不读它们（566 MB 的公式识别模型
+//! 与 7.8 MB 的结构模型都不再被无条件哈希）。
 //!
 //! 模型**库存**（`/api/models` 的 `sets[]` 与 `formula` 块）仍然是"单一来源描述的一整
 //! 个目录"：页面要能显示公式集合的体积、并按集合显式下载（§5.3、§5.4）。库存与计划的
@@ -47,17 +50,18 @@
 //! 集合声明了摘要时，判定完全按库的逐文件校验（哈希不匹配 = `corrupt`）。
 //! 两条规则都只在 [`PlanFile::state`] 这一处实现。
 //!
-//! # 两条管线的结论仍然分开
+//! # 三条管线的结论仍然分开
 //!
 //! 计划按 role 分组（[`Pipeline::of`]）：文本组的结论驱动引擎状态机与 `/api/ocr` 的 409，
-//! 公式组的结论驱动公式队列的 409（`detail.scope = "formula"`）。公式模型缺失/损坏
+//! 公式组的结论驱动公式队列的 409（`detail.scope = "formula"`），表格组的结论驱动
+//! `?table=1` 的 409（`detail.scope = "table"`）。任一可选能力的模型缺失/损坏
 //! **绝不**让普通 OCR 变成 409，反之亦然。
 
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     DefaultModelSelection, EngineConfig, ModelFileSpec, ModelFileState, ModelRequest, ModelRole,
     ModelSet, ModelSetStatus, ModelSource, ModelSourceKind, RapidOcrError,
 };
@@ -72,17 +76,23 @@ use super::state::ModelReadiness;
 pub(crate) enum Pipeline {
     Text,
     Formula,
+    Table,
 }
 
 impl Pipeline {
-    /// 两条管线的稳定顺序（错误文案、分组报告与日志都用它）。
-    pub const ALL: [Self; 2] = [Self::Text, Self::Formula];
+    /// 三条管线的稳定顺序（错误文案、分组报告与日志都用它）。
+    pub const ALL: [Self; 3] = [Self::Text, Self::Formula, Self::Table];
 
     /// 某个 role 属于哪条管线（**唯一**实现，与库的
     /// `ModelRequest::{text_roles, formula_roles}` 是同一个划分）。
+    ///
+    /// 表格是**第三条**管线而不是文本管线的一部分：它与公式一样是**可选**能力，
+    /// 只有在解析出结构模型时才属于这次运行。把它并进文本组会让"表格模型没下载"
+    /// 变成普通 OCR 的 409（M4 已经为公式修过这个错误结论，见 [`Self::of`] 的调用方）。
     pub fn of(role: ModelRole) -> Self {
         match role {
             ModelRole::FormulaDetector | ModelRole::FormulaRecognizer => Self::Formula,
+            ModelRole::TableStructure => Self::Table,
             ModelRole::Detector
             | ModelRole::Classifier
             | ModelRole::Recognizer
@@ -96,6 +106,7 @@ impl Pipeline {
         match self {
             Self::Text => "text",
             Self::Formula => "formula",
+            Self::Table => "table",
         }
     }
 }
@@ -215,17 +226,21 @@ pub(super) struct ModelPlan {
     planned: Vec<PlanFile>,
     /// 解析出的公式检测模型；`None` = 公式路由不可用（公式模型因此不在计划里）。
     detector: Option<FormulaDetectorSpec>,
+    /// 解析出的表格结构模型；`None` = 表格路由不可用（结构模型因此不在计划里）。
+    table_model: Option<TableModelSpec>,
 }
 
 impl ModelPlan {
     /// §5.3 的单一来源选择 + 与 `--config` 一致的管线选择 + 这次运行的模型计划。
     ///
-    /// 第三个参数是 `--formula-detector`（CLI 侧的值）：它是否在场**唯一**决定公式管线
-    /// 是否属于这次运行，因此计划必须在这里一次算完，而不是由调用方事后拼装。
+    /// 第三个参数是 `--formula-detector`、第四个是 `--table-model`（CLI 侧的值）：
+    /// 它们是否在场**唯一**决定对应管线是否属于这次运行，因此计划必须在这里一次算完，
+    /// 而不是由调用方事后拼装。
     pub fn resolve(
         model_dir: &Path,
         engine: &EngineConfig,
         formula_detector: Option<&Path>,
+        table_model: Option<&Path>,
     ) -> Result<Self, ModelPlanError> {
         let source = ModelSource::select(model_dir).map_err(ModelPlanError::Source)?;
         if matches!(source.kind(), ModelSourceKind::DefaultTable) {
@@ -256,6 +271,7 @@ impl ModelPlan {
             sets,
             planned: Vec::new(),
             detector: None,
+            table_model: None,
         };
 
         // 结构性检查（与"这次跑不跑公式"无关）：**被集合声明过的每个 role** 都必须唯一
@@ -269,6 +285,9 @@ impl ModelPlan {
         // 公式检测模型：CLI（`--formula-detector`）优先，其次是集合声明的 role。
         // 解析结果 = "路径 + 集合声明的 SHA-256"，且它是否在场唯一决定公式路由。
         plan.detector = plan.resolve_formula_detector(formula_detector)?;
+        // 表格结构模型：与公式检测**同一条规则**（CLI 优先，其次是集合声明的 role，
+        // 摘要一律随被选中的那个文件走）。它是否在场唯一决定表格路由。
+        plan.table_model = plan.resolve_table_model(table_model)?;
         plan.planned = plan.build_plan(engine.global.use_cls)?;
         Ok(plan)
     }
@@ -358,6 +377,16 @@ impl ModelPlan {
         self.detector.as_ref()
     }
 
+    /// 表格管线是否属于这次运行（= 解析出了结构模型）。
+    pub fn table_in_plan(&self) -> bool {
+        self.table_model.is_some()
+    }
+
+    /// 配置好的表格结构模型（路径 + 集合声明的 SHA-256）；`None` = 表格路由不可用。
+    pub fn table_model(&self) -> Option<&TableModelSpec> {
+        self.table_model.as_ref()
+    }
+
     /// 每个集合的逐文件状态（§5.2 的唯一实现是库里的 `validate_model_files`）。
     ///
     /// 每次调用都会重新读盘：状态永远报告磁盘上的**当前**事实，而不是启动时的快照
@@ -391,6 +420,8 @@ impl ModelPlan {
             blocking: self.plan_blocking(Pipeline::Text),
             formula_blocking: self.plan_blocking(Pipeline::Formula),
             formula_in_plan: self.formula_in_plan(),
+            table_blocking: self.plan_blocking(Pipeline::Table),
+            table_in_plan: self.table_in_plan(),
         }
     }
 
@@ -432,11 +463,13 @@ impl ModelPlan {
 
     /// 构造**运行计划**（唯一实现，[`Self::resolve`] 调用一次）。
     ///
-    /// 文本管线恒在计划里；公式管线（识别 + 检测）只在解析出检测模型时加入。
-    /// 被选中的检测模型如果**不是**集合声明的那个文件（CLI 覆盖到别处），集合里那份
-    /// 就不会被加载，因此它**不进计划**——计划必须精确等于"这次会打开的文件"。
+    /// 文本管线恒在计划里；公式管线（识别 + 检测）只在解析出检测模型时加入；表格管线
+    /// （结构模型）只在解析出结构模型时加入。被选中的模型如果**不是**集合声明的那个文件
+    /// （CLI 覆盖到别处），集合里那份就不会被加载，因此它**不进计划**——计划必须精确等于
+    /// "这次会打开的文件"。
     fn build_plan(&self, use_cls: bool) -> Result<Vec<PlanFile>, ModelPlanError> {
         let formula = self.detector.is_some();
+        let table = self.table_model.is_some();
         let mut roles = vec![ModelRole::Detector];
         if use_cls {
             roles.push(ModelRole::Classifier);
@@ -448,6 +481,9 @@ impl ModelPlan {
             if self.detector_is_declared() {
                 roles.push(ModelRole::FormulaDetector);
             }
+        }
+        if table && self.table_is_declared() {
+            roles.push(ModelRole::TableStructure);
         }
 
         let mut out: Vec<PlanFile> = Vec::new();
@@ -468,34 +504,53 @@ impl ModelPlan {
                 });
             }
         }
-        if !formula {
-            return Ok(out);
+        if formula {
+            // 公式识别模型是公式队列的必需文件（库的 `ModelRequest::formula_roles`）；
+            // 缺失在这里是可定位的启动期错误（带管线信息），而不是第一次公式请求才失败。
+            if !out
+                .iter()
+                .any(|planned| planned.role == ModelRole::FormulaRecognizer)
+            {
+                return Err(ModelPlanError::MissingRole {
+                    role: ModelRole::FormulaRecognizer,
+                });
+            }
+            let spec = self
+                .detector
+                .as_ref()
+                .expect("the formula pipeline is only planned when a detector was resolved");
+            if !out
+                .iter()
+                .any(|planned| same_file(&planned.path, &spec.path))
+            {
+                out.push(PlanFile {
+                    name: file_name(&spec.path),
+                    role: ModelRole::FormulaDetector,
+                    path: spec.path.clone(),
+                    declared_sha256: spec.expected_sha256.clone(),
+                    pipeline: Pipeline::Formula,
+                });
+            }
         }
-        // 公式识别模型是公式队列的必需文件（库的 `ModelRequest::formula_roles`）；
-        // 缺失在这里是可定位的启动期错误（带管线信息），而不是第一次公式请求才失败。
-        if !out
-            .iter()
-            .any(|planned| planned.role == ModelRole::FormulaRecognizer)
-        {
-            return Err(ModelPlanError::MissingRole {
-                role: ModelRole::FormulaRecognizer,
-            });
-        }
-        let spec = self
-            .detector
-            .as_ref()
-            .expect("the formula pipeline is only planned when a detector was resolved");
-        if !out
-            .iter()
-            .any(|planned| same_file(&planned.path, &spec.path))
-        {
-            out.push(PlanFile {
-                name: file_name(&spec.path),
-                role: ModelRole::FormulaDetector,
-                path: spec.path.clone(),
-                declared_sha256: spec.expected_sha256.clone(),
-                pipeline: Pipeline::Formula,
-            });
+        if table {
+            // 结构模型是**唯一**的表格文件，所以这里没有"必需 role 缺失"的对应分支：
+            // 模型自己就是那个 role。CLI 覆盖到集合之外时同样按路径去重后补进计划。
+            let spec = self
+                .table_model
+                .as_ref()
+                .expect("the table pipeline is only planned when a structure model was resolved");
+            if !out
+                .iter()
+                .any(|planned| same_file(&planned.path, &spec.path))
+            {
+                out.push(PlanFile {
+                    name: file_name(&spec.path),
+                    role: ModelRole::TableStructure,
+                    path: spec.path.clone(),
+                    declared_sha256: spec.expected_sha256.clone(),
+                    pipeline: Pipeline::Table,
+                });
+            }
         }
         Ok(out)
     }
@@ -511,6 +566,18 @@ impl ModelPlan {
             .is_some_and(|declared| same_file(&self.model_dir.join(&declared.name), &spec.path))
     }
 
+    /// 被选中的结构模型是否**就是**集合声明的那个文件（与 [`Self::detector_is_declared`]
+    /// 是同一条规则的表格版）。
+    fn table_is_declared(&self) -> bool {
+        let Some(spec) = self.table_model.as_ref() else {
+            return false;
+        };
+        self.spec_for(ModelRole::TableStructure)
+            .ok()
+            .flatten()
+            .is_some_and(|declared| same_file(&self.model_dir.join(&declared.name), &spec.path))
+    }
+
     /// 某个 role 在模型集里的文件描述（`None` = 该 role 没有被任何集合声明）。
     ///
     /// 重复声明（两个集合声明同一 role 的不同文件，或同一个清单里声明两次）会返回
@@ -519,8 +586,8 @@ impl ModelPlan {
     fn spec_for(
         &self,
         role: ModelRole,
-    ) -> Result<Option<&rapid_ocr_rs::ModelFileSpec>, ModelPlanError> {
-        let mut found: Option<&rapid_ocr_rs::ModelFileSpec> = None;
+    ) -> Result<Option<&rapid_structure_rs::ModelFileSpec>, ModelPlanError> {
+        let mut found: Option<&rapid_structure_rs::ModelFileSpec> = None;
         for set in &self.sets {
             for file in &set.files {
                 if file.role != role {
@@ -573,10 +640,40 @@ impl ModelPlan {
         }))
     }
 
+    /// 解析表格结构模型：CLI（`--table-model`）优先，其次是模型集声明的
+    /// `table_structure` role。
+    ///
+    /// **与 [`Self::resolve_formula_detector`] 是同一条规则**，不是第二套机制：哈希跟随
+    /// 被选中的那个文件（集合声明过 → 摘要随路径交给 `TablePolicy`，库在加载结构模型时
+    /// 校验；CLI 给了集合没声明过的路径 → `None`，如实表示"无法校验内容"）。
+    ///
+    /// 结构模型在模型集里是**单个** role，因此这里没有公式检测器那种"声明了但可能不属于
+    /// 本次运行"的额外歧义面：`spec_for` 已经保证同 role 不会映射到两个文件名。
+    fn resolve_table_model(
+        &self,
+        cli: Option<&Path>,
+    ) -> Result<Option<TableModelSpec>, ModelPlanError> {
+        let declared = self.spec_for(ModelRole::TableStructure)?;
+        let Some(cli) = cli else {
+            return Ok(declared.map(|spec| TableModelSpec {
+                path: self.model_dir.join(&spec.name),
+                expected_sha256: spec.has_hash().then(|| spec.sha256.clone()),
+            }));
+        };
+        let expected_sha256 = declared
+            .filter(|spec| same_file(&self.model_dir.join(&spec.name), cli))
+            .filter(|spec| spec.has_hash())
+            .map(|spec| spec.sha256.clone());
+        Ok(Some(TableModelSpec {
+            path: cli.to_path_buf(),
+            expected_sha256,
+        }))
+    }
+
     /// **冷验证**运行计划里的每一个文件，忽略身份键控缓存（`--reverify-models` 与
     /// `POST /api/models/reverify` 的唯一实现）。
     ///
-    /// 每个文件都调用库的 [`rapid_ocr_rs::force_verify_file`]：它现在就读盘重算 SHA-256，
+    /// 每个文件都调用库的 [`rapid_structure_rs::force_verify_file`]：它现在就读盘重算 SHA-256，
     /// 并如实回答"这一次算了没有、为什么算"（`cause`）。命中路径**不存在**，
     /// 因此调用方拿到的 `digests_computed` 就是"这次真的读了多少个文件"。
     ///
@@ -594,7 +691,7 @@ impl ModelPlan {
             // 缺失 → 下载，损坏 → 重新下载并以原子方式替换）。因此先用一次 `is_file`
             // 把"不在"分离出来，`force_verify_file` 的错误随后只表示"在但读不出来"。
             let outcome = if planned.path.is_file() {
-                Some(rapid_ocr_rs::force_verify_file(&planned.path))
+                Some(rapid_structure_rs::force_verify_file(&planned.path))
             } else {
                 None
             };
@@ -602,11 +699,11 @@ impl ModelPlan {
                 None => (
                     ModelFileState::Missing,
                     None,
-                    rapid_ocr_rs::ReverifyCause::FirstSight,
+                    rapid_structure_rs::ReverifyCause::FirstSight,
                 ),
                 Some(Ok(outcome)) => {
                     digests_computed += 1;
-                    if outcome.cause == rapid_ocr_rs::ReverifyCause::ContentChanged {
+                    if outcome.cause == rapid_structure_rs::ReverifyCause::ContentChanged {
                         content_changed.push(planned.name.clone());
                     }
                     let state = if planned.has_declared_digest() {
@@ -636,7 +733,7 @@ impl ModelPlan {
                         actual: format!("unreadable: {error}"),
                     },
                     None,
-                    rapid_ocr_rs::ReverifyCause::FirstSight,
+                    rapid_structure_rs::ReverifyCause::FirstSight,
                 ),
             };
             files.push(VerifiedPlanFile {
@@ -749,7 +846,7 @@ pub(crate) struct VerifiedPlanFile {
     pub sha256: Option<String>,
     pub state: ModelFileState,
     /// 这一轮为什么算了摘要（`force_verify_file` 从不返回 `cache_hit`）。
-    pub cause: rapid_ocr_rs::ReverifyCause,
+    pub cause: rapid_structure_rs::ReverifyCause,
 }
 
 impl VerifiedPlanFile {
@@ -783,6 +880,17 @@ fn short_digest(value: &str) -> &str {
 /// 两者必须一起传递：只有路径的旧形状正是"检测模型从不校验"的根因。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct FormulaDetectorSpec {
+    pub path: PathBuf,
+    pub expected_sha256: Option<String>,
+}
+
+/// 启动期解析出的表格结构模型：路径 + **集合声明的** SHA-256（`None` = 没有可信摘要）。
+///
+/// 与 [`FormulaDetectorSpec`] 形状相同但**不是**同一个类型：两者的 role 不同、驱动不同的
+/// 管线、也会被塞进不同的策略结构（`FormulaPolicy` / `TablePolicy`）。合并成一个类型会让
+/// "把结构模型当成公式检测器传给引擎"这种错误在编译期消失。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TableModelSpec {
     pub path: PathBuf,
     pub expected_sha256: Option<String>,
 }
@@ -901,6 +1009,18 @@ pub(super) fn blocked_names(files: &[BlockingFile]) -> Vec<String> {
     files.iter().map(|file| file.name.clone()).collect()
 }
 
+/// 启动日志里一条**可选**管线的一句话结论。
+///
+/// 不在计划里时点名"为什么"——两种可选能力缺席的原因不同（一个是没配检测模型，
+/// 一个是没配结构模型），混成同一句话会让日志读不出该去配哪个开关。
+fn pipeline_clause(in_plan: bool, blocked: usize, absent_reason: &str) -> String {
+    if in_plan {
+        format!("{blocked} model file(s) missing or corrupt")
+    } else {
+        format!("not part of this run ({absent_reason})")
+    }
+}
+
 /// 一个集合里待下载文件的规模（**唯一实现**：磁盘核算、预算预检与下载进度共用它）。
 pub(super) fn pending_download(status: &ModelSetStatus) -> PendingDownload {
     let mut files = 0_usize;
@@ -996,6 +1116,10 @@ pub(super) struct ModelSnapshot {
     formula_blocking: Vec<BlockingFile>,
     /// 公式管线是否属于这次运行（启动日志用）。
     formula_in_plan: bool,
+    /// 表格管线的缺失/损坏文件（表格不在计划里时为空，理由同公式）。
+    table_blocking: Vec<BlockingFile>,
+    /// 表格管线是否属于这次运行（启动日志用）。
+    table_in_plan: bool,
 }
 
 impl ModelSnapshot {
@@ -1030,21 +1154,33 @@ impl ModelSnapshot {
         self.formula_in_plan
     }
 
+    /// 表格管线在**这次运行的计划**里缺失/损坏的文件名（日志与诊断用）。
+    pub fn table_blocking_names(&self) -> Vec<String> {
+        blocked_names(&self.table_blocking)
+    }
+
+    /// 表格管线是否属于这次运行（= 解析出了结构模型）。
+    pub fn table_in_plan(&self) -> bool {
+        self.table_in_plan
+    }
+
     /// 启动日志用的一行摘要（避免把绝对路径写进响应）。
     ///
-    /// 两条管线分别给出结论：只报一个总数会让"公式模型没下载"看起来像"引擎起不来"。
+    /// 三条管线分别给出结论：只报一个总数会让"公式模型没下载"看起来像"引擎起不来"。
     pub fn summary(&self) -> String {
         format!(
-            "text pipeline: {} model file(s) missing or corrupt; formula pipeline: {}",
+            "text pipeline: {} model file(s) missing or corrupt; formula pipeline: {}; table pipeline: {}",
             self.blocking.len(),
-            if self.formula_in_plan {
-                format!(
-                    "{} model file(s) missing or corrupt",
-                    self.formula_blocking.len()
-                )
-            } else {
-                "not part of this run (no formula detector configured)".to_string()
-            }
+            pipeline_clause(
+                self.formula_in_plan,
+                self.formula_blocking.len(),
+                "no formula detector configured",
+            ),
+            pipeline_clause(
+                self.table_in_plan,
+                self.table_blocking.len(),
+                "no table structure model configured",
+            ),
         )
     }
 
@@ -1133,7 +1269,7 @@ impl std::error::Error for ModelPlanError {}
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use rapid_ocr_rs::{EngineConfig, ModelFileState, ModelRole, sha256_file};
+    use rapid_structure_rs::{EngineConfig, ModelFileState, ModelRole, sha256_file};
 
     use super::{ModelPlan, ModelPlanError, Pipeline, undeclared_digest_failure};
 
@@ -1152,7 +1288,7 @@ mod tests {
     }
 
     fn resolve(dir: &Path) -> ModelPlan {
-        ModelPlan::resolve(dir, &EngineConfig::default(), None).expect("model plan")
+        ModelPlan::resolve(dir, &EngineConfig::default(), None, None).expect("model plan")
     }
 
     /// 写一份本地清单目录：文件内容由 `files` 给出，清单里的 `sha256` 是**真实**摘要。
@@ -1359,7 +1495,7 @@ mod tests {
         assert!(!names.contains(&"pp_formulanet_plus_m.onnx"));
 
         // 给出 `--formula-detector`：公式识别 + 检测都进计划，且检测模型带**它自己的**路径。
-        let with = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector))
+        let with = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector), None)
             .expect("model plan");
         assert!(with.formula_in_plan());
         assert_eq!(with.plan_files_in(Pipeline::Formula).len(), 2);
@@ -1448,7 +1584,8 @@ mod tests {
         std::fs::write(dir.join("mfd.onnx"), b"placeholder").expect("fixture file");
 
         // role 本身：路径 + 集合声明的哈希一起进计划。
-        let plan = ModelPlan::resolve(&dir, &EngineConfig::default(), None).expect("manifest");
+        let plan =
+            ModelPlan::resolve(&dir, &EngineConfig::default(), None, None).expect("manifest");
         let spec = plan
             .formula_detector()
             .expect("the role is declared")
@@ -1469,8 +1606,8 @@ mod tests {
 
         // CLI 指向**同一个**文件（写法不同）→ 声明的哈希仍然跟随，且计划里只有它一个。
         let indirect = dir.join(".").join("mfd.onnx");
-        let plan =
-            ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&indirect)).expect("manifest");
+        let plan = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&indirect), None)
+            .expect("manifest");
         let spec = plan.formula_detector().expect("cli override").clone();
         assert_eq!(
             spec.expected_sha256.as_deref(),
@@ -1494,8 +1631,8 @@ mod tests {
         // （它不会被加载）。
         let other = dir.join("other-mfd.onnx");
         std::fs::write(&other, b"placeholder").expect("fixture file");
-        let plan =
-            ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&other)).expect("manifest");
+        let plan = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&other), None)
+            .expect("manifest");
         assert_eq!(plan.formula_detector().expect("cli").path, other);
         assert_eq!(plan.formula_detector().expect("cli").expected_sha256, None);
         let planned = plan.plan_file(ModelRole::FormulaDetector).expect("planned");
@@ -1522,8 +1659,8 @@ mod tests {
         let outside = fixture_dir().join("external-detector-outside.onnx");
         std::fs::write(&outside, plausible_onnx_bytes("external detector")).expect("detector");
 
-        let plan =
-            ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&outside)).expect("model plan");
+        let plan = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&outside), None)
+            .expect("model plan");
         let planned = plan.plan_file(ModelRole::FormulaDetector).expect("planned");
         assert_eq!(planned.path, outside);
         assert!(!planned.has_declared_digest());
@@ -1635,8 +1772,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("fixture dir");
         let detector = dir.join("mfd.onnx");
         std::fs::write(&detector, plausible_onnx_bytes("identity detector")).expect("detector");
-        let plan =
-            ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector)).expect("plan");
+        let plan = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector), None)
+            .expect("plan");
 
         // 1) 计划本身的文件（名字 + role + 管线）。
         let planned: Vec<(String, ModelRole, Pipeline)> = plan
@@ -1651,8 +1788,8 @@ mod tests {
         for file in plan.plan_files() {
             std::fs::write(&file.path, plausible_onnx_bytes(&file.name)).expect("planned file");
         }
-        let plan =
-            ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector)).expect("plan");
+        let plan = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector), None)
+            .expect("plan");
 
         // 2) 冷验证逐文件结论与计划**同序同集**（含集合外的检测模型）。
         let report = plan.reverify();
@@ -1737,8 +1874,8 @@ mod tests {
         let detector = dir.join("mfd.onnx");
         std::fs::write(&detector, plausible_onnx_bytes("detector")).expect("detector");
 
-        let enabled =
-            ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector)).expect("plan");
+        let enabled = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector), None)
+            .expect("plan");
         assert_eq!(
             super::blocked_names(&enabled.plan_blocking(Pipeline::Formula)),
             vec!["fx.onnx"]
@@ -1773,8 +1910,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("fixture dir");
         let detector = dir.join("mfd.onnx");
         std::fs::write(&detector, plausible_onnx_bytes("reverify detector")).expect("detector");
-        let plan =
-            ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector)).expect("plan");
+        let plan = ModelPlan::resolve(&dir, &EngineConfig::default(), Some(&detector), None)
+            .expect("plan");
         let report = plan.reverify();
         assert_eq!(report.files().len(), plan.plan_files().len());
         // 目录里只有那个集合之外的检测模型：它是唯一"算得出摘要"的文件，其余都缺失。
@@ -1815,9 +1952,9 @@ mod tests {
     fn a_model_type_conflict_is_rejected_with_a_locating_error() {
         let dir = fixture_dir();
         let mut engine = EngineConfig::default();
-        engine.det.model_type = rapid_ocr_rs::ModelType::Server;
-        engine.rec.model.model_type = rapid_ocr_rs::ModelType::Mobile;
-        let error = ModelPlan::resolve(&dir, &engine, None).expect_err("must reject");
+        engine.det.model_type = rapid_structure_rs::ModelType::Server;
+        engine.rec.model.model_type = rapid_structure_rs::ModelType::Mobile;
+        let error = ModelPlan::resolve(&dir, &engine, None, None).expect_err("must reject");
         let text = error.to_string();
         assert!(text.contains("det.model_type"), "{text}");
         assert!(text.contains("rec.model.model_type"), "{text}");
@@ -1859,7 +1996,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("fixture dir");
         let mut engine = EngineConfig::default();
         engine.global.use_cls = true;
-        let plan = ModelPlan::resolve(&dir, &engine, None).expect("default table");
+        let plan = ModelPlan::resolve(&dir, &engine, None, None).expect("default table");
         assert!(
             plan.plan_file(ModelRole::Classifier).is_some(),
             "the engine loads the classifier when use_cls is on"
@@ -1887,7 +2024,8 @@ mod tests {
                          {"name":"rec.onnx","role":"recognizer","sha256":"bb"}]}"#,
         )
         .expect("manifest");
-        let error = ModelPlan::resolve(&dir, &EngineConfig::default(), None).expect_err("reject");
+        let error =
+            ModelPlan::resolve(&dir, &EngineConfig::default(), None, None).expect_err("reject");
         let text = error.to_string();
         assert!(text.contains("dictionary"), "{text}");
         assert!(
@@ -1907,7 +2045,8 @@ mod tests {
             r#"{"detector":{"file_name":"d.onnx","sha256":"a"}}"#,
         )
         .expect("manifest");
-        let error = ModelPlan::resolve(&dir, &EngineConfig::default(), None).expect_err("reject");
+        let error =
+            ModelPlan::resolve(&dir, &EngineConfig::default(), None, None).expect_err("reject");
         let text = error.to_string();
         assert!(text.contains("schema_version"), "{text}");
         assert!(text.contains("migrate"), "{text}");
@@ -1929,7 +2068,8 @@ mod tests {
                          {"name":"fx.onnx","role":"formula_recognizer","sha256":"ee"}]}"#,
         )
         .expect("manifest");
-        let error = ModelPlan::resolve(&dir, &EngineConfig::default(), None).expect_err("reject");
+        let error =
+            ModelPlan::resolve(&dir, &EngineConfig::default(), None, None).expect_err("reject");
         assert!(matches!(
             error,
             ModelPlanError::AmbiguousRole {
@@ -1959,7 +2099,8 @@ mod tests {
                          {"name":"fx-b.onnx","role":"formula_recognizer","sha256":"ff"}]}"#,
         )
         .expect("manifest");
-        let error = ModelPlan::resolve(&dir, &EngineConfig::default(), None).expect_err("reject");
+        let error =
+            ModelPlan::resolve(&dir, &EngineConfig::default(), None, None).expect_err("reject");
         let text = error.to_string();
         assert!(text.contains("formula_recognizer"), "{text}");
         assert!(text.contains("fx-a.onnx"), "{text}");

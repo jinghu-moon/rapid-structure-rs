@@ -29,9 +29,18 @@
 *.pdiparams
 *.nb
 *.bin
+# 例外：表格 golden 的前置烘焙图（cv2.resize 之后的 BGR）必须随仓库提交，
+# 否则「resize 不可逐位复现」这一步就退化成 skip，逐位比对失去意义。
+!tests/fixtures/table-golden/input_bgr_resized.bin
 *.dll
 *.dylib
 *.so
+
+# 模型权重与随权重分发的字典（下载来源见 assets/default_models.yaml 与 models/*/manifest.json）。
+# 实测 models/formula/recognition/ 下的 tar + pdparams 合计 8.6 GB，绝不入库。
+models/**/*.tar
+models/**/*.pdparams
+models/**/*_dict.txt
 
 # OS metadata
 .DS_Store

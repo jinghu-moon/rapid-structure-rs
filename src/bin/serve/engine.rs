@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     EngineConfig, OcrEngine, OcrOutput, OcrRequest, PipelineProviderResolutions, RapidOcrEngine,
     RapidOcrError, ResolvedExecutionProvider,
 };
@@ -95,7 +95,7 @@ pub(super) fn provider_label(provider: ResolvedExecutionProvider) -> String {
 #[cfg(test)]
 mod tests {
     use super::provider_label;
-    use rapid_ocr_rs::ResolvedExecutionProvider;
+    use rapid_structure_rs::ResolvedExecutionProvider;
 
     #[test]
     fn every_execution_provider_has_a_stable_label() {

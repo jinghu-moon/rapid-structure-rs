@@ -1,10 +1,10 @@
-# rapid-ocr-rs Windows x64（MSVC ABI）重构与性能优化任务清单
+# rapid-structure-rs Windows x64（MSVC ABI）重构与性能优化任务清单
 
 > 文档状态：待实施计划
 >
-> 目标：在项目开发期将 `rapid-ocr-rs` 的正式支持范围收窄为 Windows x64 + MSVC ABI，并借此删除无效的平台分支、收紧模块边界、减少原生依赖，同时用 Windows 实测数据优化 OCR 与公式识别性能。
+> 目标：在项目开发期将 `rapid-structure-rs` 的正式支持范围收窄为 Windows x64 + MSVC ABI，并借此删除无效的平台分支、收紧模块边界、减少原生依赖，同时用 Windows 实测数据优化 OCR 与公式识别性能。
 >
-> 适用范围：`crates/rapid-ocr-rs`。本计划允许破坏性 API 修改，不为 Linux/macOS 保留兼容层。
+> 适用范围：`crates/rapid-structure-rs`。本计划允许破坏性 API 修改，不为 Linux/macOS 保留兼容层。
 
 ---
 
@@ -55,7 +55,7 @@
 | runtime 配置 | det/cls/rec 各自带线程/provider/视觉配置，Rayon 另有全局池 | 在基准后设计统一 RuntimeProfile，消除线程过度订阅和重复配置 |
 | 后端抽象 | `RuntimeBackend` 只有 `OnnxCpu` 一个枚举变体 | 删除无实际选择价值的枚举和字段，直接固定 ONNX Runtime |
 | 公式 batch | 有最大 batch 和动态 Loop，但未形成 Windows 机器的最优 profile | 用固定样本测量 batch、线程和 provider 组合，形成推荐策略 |
-| 元数据 | Cargo repository 仍是旧地址 `mg-chao/rapid-ocr-rs` | 改为实际 GitHub 仓库并补齐发布元数据 |
+| 元数据 | Cargo repository 仍是旧地址 `mg-chao/rapid-structure-rs` | 改为实际 GitHub 仓库并补齐发布元数据 |
 
 ### 1.2 不应直接做的“伪优化”
 
@@ -100,10 +100,10 @@
 cargo test --all-targets
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
-cargo build --release --bin rapidocr
+cargo build --release --bin rapidstruct
 cargo tree --features cli-default
-cargo run --release --bin bench_warm_e2e -- --config <config> --images-dir <OCR-test-image> --rounds 5 --warmup-rounds 1
-cargo run --release --bin formula_eval -- --model <model> --dataset-root <Formula-TestSet> --dataset latexocr --split test --limit 100
+cargo run --release --bin bench_warm_e2e -- --config <config> --images-dir <datasets/text> --rounds 5 --warmup-rounds 1
+cargo run --release --bin formula_eval -- --model <model> --dataset-root <datasets/formula> --dataset latexocr --split test --limit 100
 ```
 
 ### 3.3 验收
@@ -279,12 +279,12 @@ cargo run --release --bin formula_eval -- --model <model> --dataset-root <Formul
 `timing_ledger`），它的口径必须被正确表述，否则同一份数字会被读成互相矛盾的结论：
 
 - 账本的 `total_ms` 是**两个串行窗口之和**：外层 `OcrTimings::preprocess_ms`
-  （`rapid_ocr.rs:619` → `:719`）加内层 `inner.run()` 的 e2e 窗口（`rapid_ocr.rs:106` →
-  `:130`，`total_ms = exec.e2e_ms + preprocess_ms` 见 `rapid_ocr.rs:910`）。
+  （`rapid_structure.rs:619` → `:719`）加内层 `inner.run()` 的 e2e 窗口（`rapid_structure.rs:106` →
+  `:130`，`total_ms = exec.e2e_ms + preprocess_ms` 见 `rapid_structure.rs:910`）。
   **两个窗口首尾相接，不存在重叠，也没有任何一段墙钟被计两次**——写“窗口重叠/重复计数”
   属于与实现矛盾的因果陈述（该错误曾在终审报告里出现，已更正）。
 - 命名分量是这些窗口里的**子窗口**：`inner.run()` 窗口内的 `prepare_image` resize
-  （`rapid_ocr.rs:156-162`）、`apply_vertical_padding`（`:189-195`）、`crop_text_regions`
+  （`rapid_structure.rs:156-162`）、`apply_vertical_padding`（`:189-195`）、`crop_text_regions`
   （`:210-212`）与 recognizer 的批次装配（`rec/recognizer.rs:89-98, 222-231`）不属于任何
   阶段计时。因此 `attributed_ms` 会与 `total_ms` 相差一个**口径残差**
   （release 实测约 −6.75 ms／页 = 0.69%），账本把它报为 `conservation.residual_ms` /
@@ -307,7 +307,7 @@ cargo run --release --bin formula_eval -- --model <model> --dataset-root <Formul
 - [x] 根据阶段 3 决策删除或收敛 `VisionBackend`；删除无效的 `resolve_backend_or_pure_rust` fallback，核心路径使用严格错误。（阶段 4 完成）
 - [x] 清理 `RuntimeConfig` 中重复字段、无调用方字段和只为旧 API 保留的名字。（逐字段复核：无无调用方字段，未做无依据删除）
 - [x] 将普通 OCR、公式 OCR、共享输入/模型/runtime 的模块边界写入 `src/*/mod.rs` 和 README，避免再次把两条 pipeline 复制出来。
-- [x] 更新 crate metadata：repository 改为 `https://github.com/jinghu-moon/rapid-ocr-rs`，补齐 `rust-version`、categories/description，并检查 `cargo package --list`。
+- [x] 更新 crate metadata：repository 改为 `https://github.com/jinghu-moon/rapid-structure-rs`，补齐 `rust-version`、categories/description，并检查 `cargo package --list`。
 - [x] README 只写 Windows 支持、CPU/DirectML/CUDA provider、OpenCV/turbojpeg 最终决策和准确验证命令。
 - [x] 增加 `CHANGELOG` 或开发期变更记录，明确这是破坏性平台收窄，不承诺 Linux/macOS。
 

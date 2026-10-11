@@ -47,7 +47,7 @@ pub const PROVIDER_DLL_NAMES: &[&str] = &["DirectML.dll", "onnxruntime_providers
 
 // 与 `build.rs` 中同名常量保持一致（build script 的常量无法被 src 引用）。
 // `option_env!` 只接受字面量，所以这里用字面量并在注释里标明对应关系：
-// `RAPID_OCR_ORT_LINK_DIR` / `RAPID_OCR_ORT_LINK_NAME` / `RAPID_OCR_ORT_LINK_BYTES`
+// `RAPID_STRUCTURE_ORT_LINK_DIR` / `RAPID_STRUCTURE_ORT_LINK_NAME` / `RAPID_STRUCTURE_ORT_LINK_BYTES`
 // 分别对应 `build.rs` 的 `LINK_LIB_BASE_ENV` / `LINK_LIB_NAME_ENV` / `LINK_LIB_SIZE_ENV`。
 
 /// 一个运行库/模块的身份：路径 + 体积 + SHA-256。
@@ -88,9 +88,11 @@ pub struct OrtLinkInfo {
 impl OrtLinkInfo {
     /// 读取编译期记录；没有记录（例如未触发 ort-sys 构建脚本）时返回 `None`。
     pub fn from_build_env() -> Option<Self> {
-        let base_dir = option_env!("RAPID_OCR_ORT_LINK_DIR")?;
-        let file_name = option_env!("RAPID_OCR_ORT_LINK_NAME")?;
-        let size_bytes: u64 = option_env!("RAPID_OCR_ORT_LINK_BYTES")?.parse().ok()?;
+        let base_dir = option_env!("RAPID_STRUCTURE_ORT_LINK_DIR")?;
+        let file_name = option_env!("RAPID_STRUCTURE_ORT_LINK_NAME")?;
+        let size_bytes: u64 = option_env!("RAPID_STRUCTURE_ORT_LINK_BYTES")?
+            .parse()
+            .ok()?;
         Some(Self {
             base_dir: base_dir.to_string(),
             file_name: file_name.to_string(),

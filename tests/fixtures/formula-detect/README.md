@@ -9,7 +9,7 @@ uses only `numpy` + `onnxruntime` + `Pillow` (never the `ultralytics` package) a
 re-implements letterbox -> head output -> `scale_boxes` -> class-aware NMS itself:
 
 ```powershell
-$env:RAPID_OCR_MODEL_ROOT='<workspace>\OCR-Model'
+$env:RAPID_STRUCTURE_MODEL_ROOT='<workspace>\OCR-Model'
 python tools/formula_detect_reference.py
 ```
 

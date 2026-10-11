@@ -2,6 +2,25 @@
 
 本 crate 处于开发期，**不承诺向后兼容**。这里只记录结构性的、会影响下游的变更。
 
+## 改名：`rapid-ocr-rs` → `rapid-structure-rs`（未发布）
+
+破坏性改名。旧名字只描述了三分之一的能力：这个 crate 的整页管线同时做**文本**（PP-OCRv6
+检测 + 识别）、**表格结构**（SLANet-plus → HTML/Markdown）与**公式**（PP-FormulaNet_plus-M），
+所以改用上游 PaddleOCR 对这条合并管线的叫法 —— **PP-Structure** 的 "Structure"。
+
+| 面 | 旧 | 新 |
+| --- | --- | --- |
+| crate / lib | `rapid-ocr-rs` / `rapid_ocr_rs` | `rapid-structure-rs` / `rapid_structure_rs` |
+| 二进制 | `rapidocr`（`src/bin/rapidocr.rs`） | `rapidstruct`（`src/bin/rapidstruct.rs`） |
+| 库内模块 | `src/ocr/pipeline/rapid_ocr.rs` | `src/ocr/pipeline/rapid_structure.rs` |
+| 环境变量前缀 | `RAPID_OCR_*`、`RAPIDOCR_SERVE_*` | `RAPID_STRUCTURE_*`、`RAPID_STRUCTURE_SERVE_*` |
+| serve 令牌头 | `X-RapidOCR-Token` | `X-RapidStructure-Token` |
+| serve 界面状态 | `%LOCALAPPDATA%\RapidOCR\serve-ui.json` | `%LOCALAPPDATA%\RapidStructure\serve-ui.json` |
+
+**不改**：`RapidAI/RapidOCR` 等模型来源 URL、`THIRD_PARTY_NOTES.md` 的上游署名、
+`refer/**` 与 `prototypes/**` 的第三方/图片文字内容、以及被 SHA-256 钉住的
+`tests/fixtures/serve/result-real-42-regions.json`（里面的旧 URL 是**图上的文字真值**）。
+
 ## 平台收窄：Windows x64 + MSVC ABI（未发布）
 
 破坏性平台收窄，对应 `docs/03-windows-only-optimization-tasks.md` 的阶段 0–8
@@ -68,7 +87,7 @@
 - `LedgerConservation` 新增 `excess_ms`（= `max(0, -residual_ms)`，占比成立的上界；该字段
   终审时曾临时叫 `overlap_ms`，名字与语义均已废弃）与 `interpretation`（进入 JSON 的读法
   说明）。时间账本是**诊断**工具：残差是 `total_ms`（总窗口）与命名分量之和之间的
-  **口径差异**——外层 `preprocess_ms` 窗口（`rapid_ocr.rs:619-719`）与 `inner.run()` 的
+  **口径差异**——外层 `preprocess_ms` 窗口（`rapid_structure.rs:619-719`）与 `inner.run()` 的
   e2e 窗口（`:106-130`）**串行、不重叠**，没有任何一段墙钟被算两次——**不是** `total_ms`
   算错了，也不能作为性能验收依据。
 

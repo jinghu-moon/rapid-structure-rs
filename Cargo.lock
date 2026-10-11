@@ -2130,7 +2130,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rapid-ocr-rs"
+name = "rapid-structure-rs"
 version = "0.7.0"
 dependencies = [
  "clap",

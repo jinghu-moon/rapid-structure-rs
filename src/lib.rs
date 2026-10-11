@@ -1,4 +1,4 @@
-//! `rapid-ocr-rs`：用 Rust 调用 PP-OCR / PP-FormulaNet 系列 ONNX 模型。
+//! `rapid-structure-rs`：用 Rust 调用 PP-OCR / PP-FormulaNet 系列 ONNX 模型。
 //!
 //! # 平台支持
 //!
@@ -69,6 +69,8 @@ mod ocr;
 mod output;
 #[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
 mod runtime;
+#[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
+mod table;
 #[cfg(all(windows, target_arch = "x86_64", target_env = "msvc", test))]
 mod test_support;
 #[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
@@ -93,12 +95,12 @@ mod platform_tests {
     ///
     /// ```text
     /// error[E0080]: evaluation of constant value failed
-    /// rapid-ocr-rs only supports x86_64-pc-windows-msvc ...
+    /// rapid-structure-rs only supports x86_64-pc-windows-msvc ...
     /// ```
     const _: () = {
         assert!(
             cfg!(all(windows, target_arch = "x86_64", target_env = "msvc")),
-            "rapid-ocr-rs only supports x86_64-pc-windows-msvc; this test suite is being built \
+            "rapid-structure-rs only supports x86_64-pc-windows-msvc; this test suite is being built \
              for a different target"
         );
     };

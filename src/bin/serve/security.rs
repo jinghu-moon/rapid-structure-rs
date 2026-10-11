@@ -62,7 +62,7 @@ impl fmt::Display for NonLoopbackBindError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "refusing to serve on {}: rapidocr serve only listens on {LOOPBACK_BIND_ADDRESS}; \
+            "refusing to serve on {}: rapidstruct serve only listens on {LOOPBACK_BIND_ADDRESS}; \
              there is deliberately no --host option (docs/05 §7.1)",
             self.bound
         )
@@ -180,7 +180,7 @@ impl LocalOrigin {
     }
 }
 
-/// 每进程随机令牌（§7.2：客户端用 `X-RapidOCR-Token`；所有 `/api/*` 都需要）。
+/// 每进程随机令牌（§7.2：客户端用 `X-RapidStructure-Token`；所有 `/api/*` 都需要）。
 #[derive(Clone, PartialEq, Eq)]
 pub struct ServeToken(String);
 
@@ -249,7 +249,7 @@ impl fmt::Display for RandomError {
         match self {
             Self::Bcrypt { status } => write!(
                 f,
-                "BCryptGenRandom (bcrypt.dll) failed with NTSTATUS {status:#x}; rapidocr serve \
+                "BCryptGenRandom (bcrypt.dll) failed with NTSTATUS {status:#x}; rapidstruct serve \
                  refuses to start instead of falling back to weak entropy"
             ),
             Self::Empty => write!(f, "cannot generate an empty random string"),

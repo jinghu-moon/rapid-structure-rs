@@ -27,7 +27,7 @@
       }
     },
     "image_count": 12,
-    "images_dir": "D:\\100_Projects\\110_Daily\\SnapClip\\OCR-test-image",
+    "images_dir": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\datasets/text",
     "init_ms": 142.9987,
     "ort_runtime": {
       "api_version": "1.28.0",
@@ -41,13 +41,13 @@
         {
           "loaded": true,
           "name": "DirectML.dll",
-          "path": "D:\\100_Projects\\110_Daily\\SnapClip\\crates\\rapid-ocr-rs\\target\\release\\DirectML.dll",
+          "path": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\target\\release\\DirectML.dll",
           "size_bytes": 18527776
         },
         {
           "loaded": false,
           "name": "onnxruntime_providers_cuda.dll",
-          "path": "D:\\100_Projects\\110_Daily\\SnapClip\\crates\\rapid-ocr-rs\\target\\release\\onnxruntime_providers_cuda.dll",
+          "path": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\target\\release\\onnxruntime_providers_cuda.dll",
           "size_bytes": 62276096
         }
       ],

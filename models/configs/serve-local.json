@@ -1,0 +1,11 @@
+{
+  "_comment": "快档（默认档位）：models/text/small + 表格结构。由仓库根目录的 serve.ps1 读取（pwsh -File serve.ps1）。字段含义见 serve.ps1 的 .DESCRIPTION；命令行参数优先于本文件。本机实测同一张 3200x2000 页面约 0.87 s（small），代价是这个集合没有 manifest.json、也没有公式 role，公式路由因此被禁用（页面里两个含公式的模式会变灰并说明原因）。需要公式就用 serve-local-full.json。",
+  "schema_version": 1,
+  "port": 8760,
+  "model_dir": "models/text/small",
+  "config": "models/configs/test-config-small.yaml",
+  "table_model": "models/table/slanet-plus.onnx",
+  "table_enabled": true,
+  "open": true,
+  "provider": null
+}

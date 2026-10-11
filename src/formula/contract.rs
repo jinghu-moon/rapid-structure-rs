@@ -100,7 +100,8 @@ mod tests {
         ] {
             let path = fixture(name);
             let runtime = RuntimeConfig::default();
-            let session = OrtSession::open_unchecked(&path, &runtime).expect("fixture must load");
+            let session =
+                OrtSession::open_unchecked(&path, &runtime, &[]).expect("fixture must load");
             let probe = session.probe_io().expect("fixture must probe");
             let contract = validate_formula_contract(&probe, &path);
 
@@ -123,7 +124,7 @@ mod tests {
     fn spatial_dims_must_be_fixed_at_384() {
         let path = fixture("formula_input_512.onnx");
         let runtime = RuntimeConfig::default();
-        let session = OrtSession::open_unchecked(&path, &runtime).expect("fixture must load");
+        let session = OrtSession::open_unchecked(&path, &runtime, &[]).expect("fixture must load");
         let probe = session.probe_io().expect("fixture must probe");
         let error = validate_formula_contract(&probe, &path).expect_err("512 must be rejected");
         assert!(error.to_string().contains("384"), "error: {error}");
@@ -133,18 +134,16 @@ mod tests {
     fn dynamic_spatial_dims_are_rejected_consistently() {
         use crate::runtime::contracts::TensorSpec;
         let probe = ModelIoProbe {
-            inputs: vec![TensorSpec {
-                name: "x".to_string(),
-                rank: 4,
-                dims: vec![-1, 1, -1, -1],
-                element_type: TensorElementType::Float32,
-            }],
-            outputs: vec![TensorSpec {
-                name: "fetch_name_0".to_string(),
-                rank: 2,
-                dims: vec![-1, -1],
-                element_type: TensorElementType::Int64,
-            }],
+            inputs: vec![TensorSpec::new(
+                "x",
+                vec![-1, 1, -1, -1],
+                TensorElementType::Float32,
+            )],
+            outputs: vec![TensorSpec::new(
+                "fetch_name_0",
+                vec![-1, -1],
+                TensorElementType::Int64,
+            )],
         };
         let error = validate_formula_contract(&probe, Path::new("dynamic.onnx"))
             .expect_err("dynamic spatial dims must be rejected");

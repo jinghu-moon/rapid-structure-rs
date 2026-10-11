@@ -73,11 +73,17 @@ pub fn render_report(
     let mut rows = String::new();
     let mut formula_rows = String::new();
     let mut formula_count = 0usize;
+    let mut table_rows = String::new();
+    let mut table_count = 0usize;
     for (index, item) in items.iter().enumerate() {
         let id = format!("ocr-{index}");
         let is_formula = item.kind == "formula";
+        let is_table = item.kind == "table";
         if is_formula {
             formula_count += 1;
+        }
+        if is_table {
+            table_count += 1;
         }
         let (points, label_x, label_y) = item
             .box_
@@ -101,6 +107,8 @@ pub fn render_report(
         if !points.is_empty() {
             let class = if is_formula {
                 "polygon formula-polygon"
+            } else if is_table {
+                "polygon table-polygon"
             } else {
                 "polygon"
             };
@@ -114,11 +122,15 @@ pub fn render_report(
         }
         let row_class = if is_formula {
             "result formula-result"
+        } else if is_table {
+            "result table-result"
         } else {
             "result"
         };
         let kind_badge = if is_formula {
             "<span class=\"kind\">公式</span>"
+        } else if is_table {
+            "<span class=\"kind\">表格</span>"
         } else {
             ""
         };
@@ -143,6 +155,38 @@ pub fn render_report(
             )
             .expect("writing a String cannot fail");
         }
+
+        if is_table {
+            // `item.table` 缺席时**不做任何猜测**：退化成一个只有标题的条目，而不是
+            // 把 `txt`（Markdown）塞进 `<pre>` 冒充表格。
+            let meta = match item.table.as_ref() {
+                Some(view) => format!(
+                    "{} × {} · {} 个单元格 · 置信度 {}{}",
+                    view.rows,
+                    view.cols,
+                    view.cells,
+                    escape_html(view.confidence),
+                    if view.holes == 0 {
+                        String::new()
+                    } else {
+                        format!(" · {} 个空洞", view.holes)
+                    }
+                ),
+                None => "（缺少表格视图）".to_string(),
+            };
+            // **两次净化**：`item.table.table_html` 来自引擎出口（已净化），而
+            // `render_report` 也会被测试与其它调用方用**手工构造**的 `OcrJsonItem` 调用。
+            // 幂等保证第二次不会双重转义（见 `sanitizing_is_idempotent`）。
+            let body = match item.table.as_ref() {
+                Some(view) => sanitize_table_html(&view.table_html),
+                None => String::new(),
+            };
+            writeln!(
+                table_rows,
+                "<li data-target=\"{id}\"><div class=\"table-meta\">{meta}</div><div class=\"table-scroll\">{body}</div></li>"
+            )
+            .expect("writing a String cannot fail");
+        }
     }
 
     let formulas_section = if formula_rows.is_empty() {
@@ -151,6 +195,22 @@ pub fn render_report(
         format!(
             "<div class=\"formulas\"><h2>公式 ({formula_count})</h2><ol>{formula_rows}</ol></div>"
         )
+    };
+
+    // 表格区块**只在存在表格时出现**（样式也一起带上），因此没有表格的报告逐字节不变。
+    let tables_section = if table_rows.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<style>{TABLES_STYLE}</style><div class=\"tables\"><h2>表格 ({table_count})</h2><p class=\"table-note\" style=\"margin:0 0 8px;color:#66737d;font-size:12px;\">表格为结构模型预测并经净化后的 HTML；跨行/跨列在 Markdown 里无法表达，Markdown 通道会显式标注。</p><ol>{table_rows}</ol></div>"
+        )
+    };
+
+    // 表头里的表格计数同样只在存在表格时出现，理由同上。
+    let table_meta = if table_count == 0 {
+        String::new()
+    } else {
+        format!(" · {table_count} 个表格")
     };
 
     // 两个模式的**唯一**差异：`Static` 不发出任何脚本（`docs/05` §9.5 的硬要求）。
@@ -204,10 +264,10 @@ pub fn render_report(
   </style>
 </head>
 <body>
-  <header><h1>{title}</h1><div class="meta">原图 {width} × {height} px · {count} 个区域 · {formula_count} 个公式 · {timing}</div></header>
+  <header><h1>{title}</h1><div class="meta">原图 {width} × {height} px · {count} 个区域 · {formula_count} 个公式{table_meta} · {timing}</div></header>
   <main>
     <section class="viewer"><div class="image-stage"><img src="{image_href}" alt="OCR source"><svg viewBox="0 0 {width} {height}" aria-label="OCR polygons">{polygons}</svg></div></section>
-    <aside><div class="summary">点击右侧文本或图片中的框，可检查原位坐标与识别结果是否对应。公式区域渲染为 LaTeX，不经过普通文本通道。</div><div class="results">{rows}</div>{formulas_section}</aside>
+    <aside><div class="summary">点击右侧文本或图片中的框，可检查原位坐标与识别结果是否对应。公式区域渲染为 LaTeX，不经过普通文本通道。</div><div class="results">{rows}</div>{formulas_section}{tables_section}</aside>
   </main>
 {script}</body>
 </html>
@@ -222,6 +282,8 @@ pub fn render_report(
         polygons = polygons,
         rows = rows,
         formulas_section = formulas_section,
+        tables_section = tables_section,
+        table_meta = table_meta,
         script = script,
     ))
 }
@@ -241,7 +303,7 @@ pub fn relative_image_name(image_path: &Path) -> String {
 /// `OcrOutput` → 报告 HTML（`mode` 决定是否发出脚本段，见 [`ReportMode`]）。
 ///
 /// CLI 的 `report` 子命令固定传 [`ReportMode::Full`]（与引入本参数之前逐字节相同）；
-/// `rapidocr serve` 的导出固定传 [`ReportMode::Static`]。
+/// `rapidstruct serve` 的导出固定传 [`ReportMode::Static`]。
 pub fn render_output_report(
     title: &str,
     image_href: &str,
@@ -281,10 +343,197 @@ pub(crate) fn escape_attr(value: &str) -> String {
         .replace('\t', "&#9;")
 }
 
+/// 表格 HTML 的标签白名单（`docs/11` §3 E15.2 / G8）。
+///
+/// 含 `<html>` / `<body>`：引擎的 `TableOutcome::html` 带着这一层外壳，而官方
+/// `metric.py` 的 `pred.xpath('body/table')` 依赖它 —— 净化不能把外壳吃掉。
+const ALLOWED_TABLE_TAGS: &[&str] = &[
+    "html", "body", "table", "thead", "tbody", "tfoot", "caption", "colgroup", "col", "tr", "th",
+    "td", "br", "sub", "sup", "b", "i", "u", "em", "strong", "span", "p", "div", "ul", "ol", "li",
+    "code", "small",
+];
+
+/// 表格 HTML 的**唯一**净化实现（`docs/11` §3 E15.2）。
+///
+/// # 它做什么
+///
+/// 只保留 [`ALLOWED_TABLE_TAGS`] 里的标签与取值合法的 `rowspan`/`colspan`/`align`/`valign`，
+/// 丢掉 HTML 注释，其余标记一律从输出里移除。
+///
+/// **文本节点原样通过**：调用方必须已经用 `TextPolicy::Escape` 转义过单元格文本，
+/// 否则这里再转义一次会把 `&lt;` 变成 `&amp;lt;`。这条前置条件由 `Escape` 保证 ——
+/// 引擎只在 `TableTextPolicy::Escape`（默认，也是**面向用户**的口径）上调用本函数；
+/// `Raw` 是评测口径，它的消费者是 `lxml` 而不是浏览器，净化会改动与 PubTabNet 真值的
+/// 可比性，因此不作用于它。
+///
+/// # 为什么白名单就够
+///
+/// 危险的不是文本而是**可执行的标记**：`<script>` / `<iframe>` / `<img onerror>` /
+/// `style=` / `href="javascript:"` 全都依赖某个标签或某个属性，而它们一个都不在白名单里。
+/// 于是即使调用方误用了 `Raw`，注入的标记也只是**不出现**，不会被执行。
+///
+/// # 幂等
+///
+/// 输出只含白名单标签与白名单属性，所以再跑一遍结果不变
+/// （`sanitizing_is_idempotent` 钉住这一点）。因此"引擎出口净化一次 + 渲染入口再净化一次"
+/// 不会产生第二份实现，也不会双重转义。
+///
+/// # 已知的粗糙处
+///
+/// 标签以第一个 `>` 结束，因此属性值里的裸 `>`（`<td title="a>b">`）会把标签截短。这会
+/// 丢掉一个本来就会被白名单拒绝的属性，并把 `b">` 当成文本 —— 既不改行为也不引入风险。
+/// 发射器自己产出的属性只有数字与引号，不会触发这条路径。
+pub fn sanitize_table_html(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find('<') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        if let Some(length) = comment_length(after) {
+            rest = &after[length..];
+            continue;
+        }
+        let Some(end) = after.find('>') else {
+            // 没有闭合的 `<`：不是标记，按文本处理。
+            out.push_str(after);
+            rest = "";
+            break;
+        };
+        if let Some(tag) = sanitize_tag(&after[1..end]) {
+            out.push_str(&tag);
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `<!-- … -->` 的长度（含两端定界符）。未闭合时吃掉剩余全部。
+fn comment_length(input: &str) -> Option<usize> {
+    let inner = input.strip_prefix("<!--")?;
+    Some(match inner.find("-->") {
+        Some(end) => 4 + end + 3,
+        None => input.len(),
+    })
+}
+
+/// 一个标签（不含尖括号）→ 净化后的标记；不在白名单里返回 `None`。
+fn sanitize_tag(inner: &str) -> Option<String> {
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return None;
+    }
+    let (closing, body) = match inner.strip_prefix('/') {
+        Some(body) => (true, body.trim()),
+        None => (false, inner),
+    };
+    let mut pieces = body.splitn(2, char::is_whitespace);
+    let name = pieces.next().unwrap_or("").to_ascii_lowercase();
+    if !ALLOWED_TABLE_TAGS.contains(&name.as_str()) {
+        return None;
+    }
+    if closing {
+        return Some(format!("</{name}>"));
+    }
+    let attrs = pieces.next().unwrap_or("").trim_end_matches('/');
+    Some(format!("<{name}{}>", sanitize_attrs(attrs)))
+}
+
+/// 属性串 → 只保留白名单属性（`rowspan`/`colspan` 必须是 1..=1000 的整数，
+/// `align`/`valign` 必须落在固定枚举里）。取值一律重新拼装，因此没有编码歧义。
+fn sanitize_attrs(raw: &str) -> String {
+    const ALIGNMENTS: [&str; 7] = [
+        "left", "center", "right", "top", "middle", "bottom", "justify",
+    ];
+    let bytes = raw.as_bytes();
+    let mut out = String::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if index >= bytes.len() {
+            break;
+        }
+        let name_start = index;
+        while index < bytes.len() && !bytes[index].is_ascii_whitespace() && bytes[index] != b'=' {
+            index += 1;
+        }
+        let name = raw[name_start..index].to_ascii_lowercase();
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        let mut value = String::new();
+        if index < bytes.len() && bytes[index] == b'=' {
+            index += 1;
+            while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+                index += 1;
+            }
+            if index < bytes.len() && (bytes[index] == b'"' || bytes[index] == b'\'') {
+                let quote = bytes[index];
+                index += 1;
+                let value_start = index;
+                while index < bytes.len() && bytes[index] != quote {
+                    index += 1;
+                }
+                value = raw[value_start..index].to_string();
+                if index < bytes.len() {
+                    index += 1;
+                }
+            } else {
+                let value_start = index;
+                while index < bytes.len() && !bytes[index].is_ascii_whitespace() {
+                    index += 1;
+                }
+                value = raw[value_start..index].to_string();
+            }
+        }
+        match name.as_str() {
+            "rowspan" | "colspan" => {
+                // 只接受正整数，且拒绝荒唐的大值（`rowspan="999999"` 会让渲染器炸掉）。
+                if let Ok(number) = value.parse::<u32>()
+                    && (1..=1000).contains(&number)
+                {
+                    out.push_str(&format!(" {name}=\"{number}\""));
+                }
+            }
+            "align" | "valign" => {
+                let normalized = value.to_ascii_lowercase();
+                if ALIGNMENTS.contains(&normalized.as_str()) {
+                    out.push_str(&format!(" {name}=\"{normalized}\""));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 表格区块自带的样式。
+///
+/// **刻意不写进 `<style>` 里**：那段样式在每个报告里，改它会让"没有表格的报告"也变字节。
+/// 放在这里意味着只有真的存在表格时才多出这几条规则 —— 于是 `docs/11` §3.2 第 ④ 条
+/// "既有 text/formula 的输出逐字节不变"在报告通道上是**字面成立**的。
+const TABLES_STYLE: &str = r#"
+    .table-polygon { fill:#0f8a5f; fill-opacity:.08; stroke:#0f8a5f; }
+    .table-polygon:hover, .table-polygon.active { fill:#f08a24; fill-opacity:.25; stroke:#d46500; }
+    .tables { padding:12px 14px; border-top:1px solid var(--line); }
+    .tables h2 { margin:0 0 8px; font-size:14px; }
+    .tables ol { margin:0; padding-left:18px; }
+    .tables li { margin-bottom:12px; line-height:1.5; }
+    .tables li.active { background:#eef6f8; }
+    .tables .table-meta { color:var(--muted); font:11px Consolas,monospace; margin-bottom:4px; }
+    .tables .table-scroll { overflow-x:auto; border:1px solid var(--line); }
+    .tables table { border-collapse:collapse; background:#fff; font-size:12px; }
+    .tables th, .tables td { border:1px solid #d9e0e6; padding:3px 6px; text-align:left; vertical-align:top; }
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::{REPORT_SCRIPT, ReportMode, relative_image_name, render_report};
-    use crate::OcrJsonItem;
+    use super::{
+        REPORT_SCRIPT, ReportMode, relative_image_name, render_report, sanitize_table_html,
+    };
+    use crate::{OcrJsonItem, OcrTableItem};
 
     /// 两个现有用例共用的样例：一个文本区域 + 一个公式区域（公式用于覆盖 LaTeX 分支）。
     fn sample_items() -> Vec<OcrJsonItem> {
@@ -297,6 +546,7 @@ mod tests {
                 latex: None,
                 eos_index: None,
                 truncated: None,
+                table: None,
             },
             OcrJsonItem {
                 box_: Some([[1.0, 40.0], [80.0, 40.0], [80.0, 70.0], [1.0, 70.0]]),
@@ -306,6 +556,7 @@ mod tests {
                 latex: Some("a<b & c\nd".into()),
                 eos_index: None,
                 truncated: Some(true),
+                table: None,
             },
         ]
     }
@@ -325,6 +576,7 @@ mod tests {
                 latex: None,
                 eos_index: None,
                 truncated: None,
+                table: None,
             }],
             "total 12.3 ms",
             ReportMode::Full,
@@ -354,6 +606,7 @@ mod tests {
                     latex: None,
                     eos_index: None,
                     truncated: None,
+                    table: None,
                 },
                 OcrJsonItem {
                     box_: Some([[1.0, 40.0], [80.0, 40.0], [80.0, 70.0], [1.0, 70.0]]),
@@ -363,6 +616,7 @@ mod tests {
                     latex: Some("a<b & c\nd".into()),
                     eos_index: None,
                     truncated: Some(true),
+                    table: None,
                 },
             ],
             "total 12.3 ms",
@@ -454,6 +708,203 @@ mod tests {
         assert!(html.contains("  </main>\n  <script>\n"), "{html}");
         assert!(html.ends_with("  </script>\n</body>\n</html>\n"), "{html}");
         assert_eq!(html.matches("<script").count(), 1, "{html}");
+    }
+
+    /// 表格 HTML 的净化（`docs/11` §3 E15.2 / G8）：白名单内的结构一字不改。
+    #[test]
+    fn sanitize_keeps_the_whitelisted_table_structure() {
+        let table = "<html><body><table><thead><tr><td>a</td><td rowspan=\"2\" colspan=\"3\">b</td></tr></thead><tbody><tr><td colspan=\"2\">c</td></tr></tbody></table></body></html>";
+        assert_eq!(sanitize_table_html(table), table);
+    }
+
+    /// 净化必须**同时**挡住每一类"可执行的标记"。
+    ///
+    /// 每条用例都是一种真实的注入面：脚本标签、事件处理器属性、`style`、`javascript:`
+    /// 协议、被替换的嵌入元素、条件注释。判据是"注入的标记不出现"，而不是"输出里没有
+    /// 某些字符串" —— 后者会被编码绕过。
+    #[test]
+    fn sanitize_removes_every_active_construct() {
+        let cases: [(&str, &[&str]); 7] = [
+            (
+                "<table><tr><td><script>alert(1)</script></td></tr></table>",
+                &["<script", "</script"],
+            ),
+            (
+                "<table><tr><td><img src=x onerror=alert(1)></td></tr></table>",
+                &["<img", "onerror"],
+            ),
+            (
+                "<table><tr><td style=\"background:url(javascript:alert(1))\">x</td></tr></table>",
+                &["style=", "javascript:"],
+            ),
+            (
+                "<table onclick=\"alert(1)\"><tr><td>x</td></tr></table>",
+                &["onclick"],
+            ),
+            (
+                "<table><tr><td><a href=\"javascript:alert(1)\">x</a></td></tr></table>",
+                &["<a ", "href="],
+            ),
+            (
+                "<table><tr><td><iframe src=\"//evil\"></iframe></td></tr></table>",
+                &["<iframe"],
+            ),
+            (
+                "<table><!--[if IE]><script>alert(1)</script><![endif]--><tr><td>x</td></tr></table>",
+                &["<!--", "<script"],
+            ),
+        ];
+        for (input, forbidden) in cases {
+            let cleaned = sanitize_table_html(input);
+            for needle in forbidden {
+                assert!(
+                    !cleaned.contains(needle),
+                    "`{needle}` survived sanitizing of `{input}`:\n{cleaned}"
+                );
+            }
+            // 净化不是"整段丢弃"：表格骨架必须还在，否则它只是把内容删了。
+            assert!(
+                cleaned.contains("<table>"),
+                "sanitizing must keep the table skeleton:\n{cleaned}"
+            );
+        }
+    }
+
+    /// 引擎出口净化一次、渲染入口再净化一次 —— 第二次必须是空操作（`sanitize_table_html`
+    /// 的文档承诺）。没有这条，双重净化会悄悄改字节。
+    #[test]
+    fn sanitizing_is_idempotent() {
+        for input in [
+            "<html><body><table><tr><td rowspan=\"2\">a</td></tr></table></body></html>",
+            "<table><tr><td><script>x</script><b>keep</b></td></tr></table>",
+            "<table><tr><td>plain</td></tr></table>",
+        ] {
+            let once = sanitize_table_html(input);
+            assert_eq!(sanitize_table_html(&once), once, "input: {input}");
+        }
+    }
+
+    /// 官方 `metric.py` 依赖 `pred.xpath('body/table')`，所以 `<html>`/`<body>` 外壳
+    /// **不能**被净化吃掉。
+    #[test]
+    fn sanitize_keeps_the_page_shell_that_the_metric_requires() {
+        let cleaned =
+            sanitize_table_html("<html><body><table><tr><td>x</td></tr></table></body></html>");
+        assert!(cleaned.starts_with("<html><body>"), "{cleaned}");
+        assert!(cleaned.ends_with("</body></html>"), "{cleaned}");
+        assert!(cleaned.contains("<body><table>"), "{cleaned}");
+    }
+
+    /// 表格区域渲染成**真的** `<table>`（而不是被转义的 `<pre>` 块）。
+    #[test]
+    fn report_renders_a_table_region_as_real_table_markup() {
+        let html = render_report(
+            "表格报告",
+            "source.png",
+            640,
+            480,
+            &[table_item()],
+            "total 12.3 ms",
+            ReportMode::Full,
+        )
+        .expect("report should render");
+
+        assert!(html.contains("1 个表格"), "html: {html}");
+        assert!(html.contains("class=\"tables\""), "html: {html}");
+        assert!(html.contains("table-polygon"), "html: {html}");
+        assert!(
+            html.contains("class=\"result table-result\""),
+            "html: {html}"
+        );
+        assert!(html.contains("2 × 2 · 4 个单元格 · 置信度 high"), "{html}");
+        // 真的表格标签，而不是转义后的文本。
+        assert!(html.contains("<td>c11</td>"), "html: {html}");
+        assert!(!html.contains("&lt;td&gt;"), "html: {html}");
+        assert!(
+            html.contains(".tables table { border-collapse:collapse;"),
+            "{html}"
+        );
+        // 表格的 Markdown 仍在结果列表里（`txt` 的口径），但它不是表格渲染的唯一载体。
+        assert!(html.contains("| c00 | c01 |"), "html: {html}");
+    }
+
+    /// `docs/11` §3.2 第 ④ 条在报告通道上的**字面**形态。
+    ///
+    /// 一份只有文本与公式的报告，其表头、区块与标记必须与表格通道引入之前逐字节相同：
+    /// 表格计数、表格区块、表格样式都只在存在表格时出现。
+    #[test]
+    fn a_report_without_tables_gains_no_table_markup_at_all() {
+        let html = render_report(
+            "无表格",
+            "source.png",
+            640,
+            480,
+            &sample_items(),
+            "total 12.3 ms",
+            ReportMode::Full,
+        )
+        .expect("report should render");
+        // 表头原文（没有 ` · 0 个表格` 这种"新增字段就是空"的改动）。
+        assert!(
+            html.contains("原图 640 × 480 px · 2 个区域 · 1 个公式 · total 12.3 ms"),
+            "html: {html}"
+        );
+        for needle in [
+            "个表格",
+            "class=\"tables\"",
+            "table-polygon",
+            "table-result",
+            "table-scroll",
+        ] {
+            assert!(
+                !html.contains(needle),
+                "a table-free report must not contain `{needle}`"
+            );
+        }
+    }
+
+    /// `kind == "table"` 但缺 `table` 视图：**不许猜**。退化成一个只有标题的条目，
+    /// 而不是把 `txt`（Markdown）塞进 `<pre>` 冒充表格。
+    #[test]
+    fn a_table_item_without_its_view_is_not_disguised_as_a_table() {
+        let html = render_report(
+            "缺视图",
+            "source.png",
+            640,
+            480,
+            &[OcrJsonItem {
+                table: None,
+                ..table_item()
+            }],
+            "total 1.0 ms",
+            ReportMode::Full,
+        )
+        .expect("report should render");
+        assert!(html.contains("（缺少表格视图）"), "html: {html}");
+        assert!(!html.contains("<table"), "html: {html}");
+    }
+
+    fn table_item() -> OcrJsonItem {
+        OcrJsonItem {
+            box_: Some([[1.0, 6.0], [5.0, 6.0], [5.0, 9.0], [1.0, 9.0]]),
+            txt: "| c00 | c01 |\n| --- | --- |\n| c10 | c11 |".into(),
+            score: 0.71,
+            kind: "table",
+            latex: None,
+            eos_index: None,
+            truncated: None,
+            table: Some(OcrTableItem {
+                rows: 2,
+                cols: 2,
+                confidence: "high",
+                degradations: Vec::new(),
+                holes: 0,
+                cells: 4,
+                table_html:
+                    "<table><tr><td>c00</td><td>c01</td></tr><tr><td>c10</td><td>c11</td></tr></table>"
+                        .into(),
+            }),
+        }
     }
 
     #[test]

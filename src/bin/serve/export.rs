@@ -21,7 +21,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use image::ImageFormat;
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     LoadImage, OcrInput, OcrOutput, OcrTimings, RapidOcrError, ReportMode, TextOrder, TimingLedger,
     draw_output, render_output_report, to_output_json, to_output_markdown,
 };
@@ -32,7 +32,7 @@ use super::results::{SerializeError, serialize_bounded, text_bounded};
 /// 解码原图时的像素/字节上限：与库内 `OcrRequest` 的默认预处理策略同源
 /// （§1.1 的 "24 Mpx" 与编码字节上限都只有一份定义）。
 fn decode_limits() -> (u64, u64) {
-    let policy = rapid_ocr_rs::PreprocessPolicy::default();
+    let policy = rapid_structure_rs::PreprocessPolicy::default();
     (policy.max_decode_pixels, policy.max_encoded_bytes)
 }
 
@@ -69,7 +69,7 @@ impl From<SerializeError> for ExportError {
 }
 
 /// 用库的唯一解码实现把保留的**编码字节**变回 `RecImage`。
-pub(super) fn decode_original(bytes: &[u8]) -> Result<rapid_ocr_rs::RecImage, ExportError> {
+pub(super) fn decode_original(bytes: &[u8]) -> Result<rapid_structure_rs::RecImage, ExportError> {
     let (max_pixels, max_encoded) = decode_limits();
     let image = LoadImage::default().load_with_limit(
         OcrInput::Bytes(bytes.to_vec()),

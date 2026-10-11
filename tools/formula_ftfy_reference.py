@@ -13,7 +13,7 @@
 用法：
 
 ```powershell
-$env:RAPID_OCR_FORMULA_TEST_ROOT = "<workspace>/Formula-TestSet"   # 可选：补充真实语料探针
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT = "<workspace>/datasets/formula"   # 可选：补充真实语料探针
 python tools/formula_ftfy_reference.py
 ```
 """
@@ -172,7 +172,7 @@ def main() -> int:
     parser.add_argument("--dataset-root", default=None)
     args = parser.parse_args()
 
-    dataset_root = pathlib.Path(args.dataset_root or os.environ.get("RAPID_OCR_FORMULA_TEST_ROOT", ""))
+    dataset_root = pathlib.Path(args.dataset_root or os.environ.get("RAPID_STRUCTURE_FORMULA_TEST_ROOT", ""))
     if not str(dataset_root) or not dataset_root.is_dir():
         dataset_root = None
 

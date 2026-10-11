@@ -1,10 +1,19 @@
-# rapid-ocr-rs
+# rapid-structure-rs
 
-`rapid-ocr-rs` is a reusable Rust OCR crate for PaddleOCR-family ONNX models.
-It owns image normalization, detection, text-region cropping, recognition,
-CTC decoding, polygon output, model resolution, and ONNX Runtime sessions. It
-does not depend on Tauri, SQLite, a clipboard implementation, or a specific
-application.
+`rapid-structure-rs` is a reusable Rust **document-structure** engine for
+PaddleOCR-family ONNX models. One page pipeline covers three capabilities:
+
+- **text** — detection, text-region cropping, recognition and CTC decoding (PP-OCRv6 family);
+- **table** — table region location plus SLANet-plus structure decoding to HTML / Markdown;
+- **formula** — PP-FormulaNet_plus-M recognition with a Pix2Text MFD detector for routing.
+
+It owns image normalization, polygon output, model resolution, ONNX Runtime
+sessions, the three output channels (JSON / HTML / Markdown), an evaluation
+harness, and a local web demo (`rapidstruct serve`). It does not depend on
+Tauri, SQLite, a clipboard implementation, or a specific application.
+
+> **Renamed**: this crate was `rapid-ocr-rs` up to v0.7.0 — the name only
+> described the text half of it. See `CHANGELOG.md` for the rename entry.
 
 ## Platform support
 
@@ -29,7 +38,7 @@ Platform differences are expected to live only in platform implementation module
 
 ## License
 
-The `rapid-ocr-rs` source code is licensed under the Apache License, Version
+The `rapid-structure-rs` source code is licensed under the Apache License, Version
 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party dependencies,
 ONNX Runtime binaries, OCR model weights, and model dictionaries have separate
 license and redistribution terms; see [THIRD_PARTY_NOTES.md](THIRD_PARTY_NOTES.md)
@@ -55,7 +64,7 @@ before redistributing a complete application or model bundle.
 ## Minimal usage
 
 ```rust,no_run
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     ClassifierPlan, ClassifierPolicy, DetectionPolicy, EngineConfig, FormulaPolicy, ImageInput,
     OcrEngine, OcrRequest, OutputPolicy, PreprocessPolicy, RapidOcrEngine,
     RecognitionPolicy, StagePlan, WordOutputMode,
@@ -87,7 +96,7 @@ let output = engine.recognize(OcrRequest {
     formula: FormulaPolicy::default(),
 })?;
 println!("{} regions", output.regions.len());
-# Ok::<(), rapid_ocr_rs::RapidOcrError>(())
+# Ok::<(), rapid_structure_rs::RapidOcrError>(())
 ```
 
 `PreprocessPolicy::default()` leaves `max_side` as `None`, so the engine's
@@ -104,14 +113,14 @@ part of the public crate contract.
 
 ## Formula recognition
 
-`rapid-ocr-rs` exposes two formula capabilities: an independent
+`rapid-structure-rs` exposes two formula capabilities: an independent
 PP-FormulaNet_plus-M ONNX recognizer, and optional page-level formula routing
 that reuses the ordinary OCR pipeline without touching its CTC contract.
 
 ### Independent formula API
 
 ```rust,no_run
-use rapid_ocr_rs::{FormulaRecognizer, RuntimeConfig};
+use rapid_structure_rs::{FormulaRecognizer, RuntimeConfig};
 
 let mut recognizer = FormulaRecognizer::from_model(
     "pp_formulanet_plus_m.onnx".as_ref(),
@@ -150,11 +159,11 @@ println!("{}", result.latex);
 typed formula regions:
 
 ```rust,no_run
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     FormulaPolicy, ImageInput, OcrEngine, OcrRegion, OcrRequest, RapidOcrEngine, RegionKind,
 };
 
-# fn example(engine: &mut RapidOcrEngine) -> Result<(), rapid_ocr_rs::RapidOcrError> {
+# fn example(engine: &mut RapidOcrEngine) -> Result<(), rapid_structure_rs::RapidOcrError> {
 let request = OcrRequest {
     // ... stages / preprocess / detection / recognition / output as usual ...
     # input: ImageInput::File("page.png".into()),
@@ -244,7 +253,7 @@ https://www.modelscope.cn/models/RapidAI/RapidDoc/resolve/v1.0.0/formula/PP-Form
 SHA-256 71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b
 
 page formula detector:
-OCR-Model/Formula-Detection-Model/pix2text-mfd-1.5.onnx (Pix2Text-MFD-1.5, YOLO11m detect)
+models/formula/detection/pix2text-mfd-1.5.onnx (Pix2Text-MFD-1.5, YOLO11m detect)
 ```
 
 The models and tokenizer metadata are not bundled. Download them separately,
@@ -266,7 +275,7 @@ The heuristic mojibake repairs (`fix_encoding`, `restore_byte_a0`,
 **not** implemented; `fix_surrogates` cannot apply to a Rust `String`. This is
 not a silent gap: `tests/fixtures/formula-postprocess/cases.json` enumerates the
 divergence cases and asserts them, and the same fixture records that across all
-357,022 labels in `Formula-TestSet` the deterministic subset explains every
+357,022 labels in `datasets/formula` the deterministic subset explains every
 observed `ftfy` change (1 of 357,022 lines, a curly-quote uncurl).
 `postprocess_latex` must therefore not be described as fully equivalent to
 RapidDoc's post-processing.
@@ -325,7 +334,7 @@ memory).
 
 ### One run model plan
 
-`rapidocr serve` resolves **one** list of "files this run will load" at startup and
+`rapidstruct serve` resolves **one** list of "files this run will load" at startup and
 everything reads it: `--reverify-models`, `POST /api/models/reverify`, the
 `pipelines` block of `/api/models`, admission on both queues, and the two loading
 paths (`pin_engine_paths` and `FormulaPolicy`).
@@ -365,12 +374,12 @@ declared value is always enforced by hash.
 
 ### Flow logging: following one upload end to end
 
-`rapidocr serve` writes **no** flow log by default. Turn it on with `--log-level flow`
+`rapidstruct serve` writes **no** flow log by default. Turn it on with `--log-level flow`
 or the equivalent environment variable:
 
 ```text
-rapidocr serve --model-dir <DIR> --log-level flow
-RAPID_OCR_SERVE_LOG=flow rapidocr serve --model-dir <DIR>     # same switch, CLI wins
+rapidstruct serve --model-dir <DIR> --log-level flow
+RAPID_STRUCTURE_SERVE_LOG=flow rapidstruct serve --model-dir <DIR>     # same switch, CLI wins
 ```
 
 Every HTTP request then gets one line (request id, method, path, status, response
@@ -396,7 +405,7 @@ serve-flow: req=9 queue=formula admission=rejected status=409 code=models_corrup
 
 An unknown level (`--log-level chatty`) refuses to start and names the switch, rather
 than silently behaving as `off`. The startup banner always prints the effective level
-and the current value of `RAPID_OCR_SERVE_LOG` (`<unset>` when unset).
+and the current value of `RAPID_STRUCTURE_SERVE_LOG` (`<unset>` when unset).
 
 The page has a matching switch: **`?verbose=1`** (or `?verbose=0` to turn it off, or
 `Ctrl+Alt+L`; the choice is remembered in `localStorage`). The diagnostics panel then
@@ -428,10 +437,10 @@ from drifting apart:
 The CLI renders one offline HTML report per image in a directory:
 
 ```text
-cargo run --bin rapidocr -- report \
-  --input-dir ../../OCR-test-image \
+cargo run --bin rapidstruct -- report \
+  --input-dir ./datasets/text \
   --output-dir ./reports/ocr \
-  --config ../../OCR-Model/test-config-small.yaml
+  --config ./models/configs/test-config-small.yaml
 ```
 
 For every supported image in the input directory, the command copies the source
@@ -443,7 +452,7 @@ single `run`; use `--json` for one-off machine-readable output or `report` for
 the directory-level visual pass.
 
 ```text
-cargo run --bin rapidocr -- run --img-path screen.png --config config.yaml --json
+cargo run --bin rapidstruct -- run --img-path screen.png --config config.yaml --json
 cargo run --bin bench_warm_e2e -- --config config.yaml --images-dir ./screens --rounds 3
 ```
 
@@ -451,15 +460,15 @@ For accuracy regression, provide a JSON manifest with `image`, `text`, and
 optional quadrilateral `boxes` fields, then run:
 
 ```text
-cargo run --bin rapidocr -- evaluate \
-  --manifest ./golden/manifest.json \
-  --config ../../OCR-Model/test-config-small.yaml \
+cargo run --bin rapidstruct -- evaluate \
+  --manifest ./datasets/text/golden-manifest.json \
+  --config ./models/configs/test-config-small.yaml \
   --output ./reports/evaluation.json
 ```
 
 The evaluator reports per-image and aggregate Unicode CER, exact-text match,
 detection precision and recall, and matched quadrilateral polygon IoU. The
-repository fixture `../../OCR-test-image/golden-manifest.json` is generated
+repository fixture `./datasets/text/golden-manifest.json` is generated
 from the visible text in `prototypes/ocr-location-test.html`; it is a real
 text regression baseline for all 12 images. Its `boxes` arrays are intentionally
 empty until every text polygon is independently annotated, so detection
@@ -523,7 +532,7 @@ For an application or CLI that wants the ONNX Runtime binaries copied during
 build and DirectML enabled, use the opt-in convenience feature:
 
 ```text
-cargo run --features cli-default --bin rapidocr -- run --img-path screen.png
+cargo run --features cli-default --bin rapidstruct -- run --img-path screen.png
 ```
 
 `cli-default` expands to `download-binaries`, `copy-dylibs`, and
@@ -531,13 +540,38 @@ cargo run --features cli-default --bin rapidocr -- run --img-path screen.png
 `ort-runtime`; it does not download runtime binaries or enable a GPU provider
 implicitly.
 
+### Local web UI in one command
+
+The released package does **not** ship the models, and `rapidstruct serve` takes a model
+directory plus the model-specific switches. `serve.ps1` (repository root) wraps both: it
+reads a small JSON profile, inspects the run's model plan *before* serving, prints the
+download URL for every missing file (or, with consent, downloads it and verifies the
+declared SHA-256), and only then starts the server.
+
+```text
+pwsh -File serve.ps1                  # fast profile: models/text/small + the table model
+pwsh -File serve.ps1 -DryRun          # print what it would run
+pwsh -File serve.ps1 -ModelsOnly      # check/download models, do not serve
+pwsh -File serve.ps1 -Download        # pre-consent to auto-download missing files
+pwsh -File serve.ps1 -ServeConfig models/configs/serve-local-full.json
+```
+
+Precedence is command line > profile > built-in defaults. The profiles are
+`models/configs/serve-local.json` (fast: ~1 s/page on a 3200x2000 page) and
+`models/configs/serve-local-full.json` (medium OCR + formula + table: 18-27 s/page on
+the same page). Per-file download URLs come from the server's own `/api/models`
+(`sets[].files[].source_url`), so the launcher never re-implements model resolution;
+`--table-model` is the one startup-time path check, so it is repaired before the server
+starts. It never fabricates a URL: a file whose set declares no `source_url` is reported
+as "no declared download URL". Details: `docs/05-local-web-demo-implementation.md` §3.1.
+
 ## API replacement acceptance
 
 Exact numeric equality with the previous implementation is not an acceptance
 requirement: the unified API changes region ordering, stage reporting, provider
 resolution, and some post-processing details. Replacement acceptance is a
 functional regression check with explicit tolerances on the repository fixture
-(`OCR-test-image/api-comparison-small-medium.json`):
+(`benchmarks/image-bench/api-comparison-small-medium.json`):
 
 - mean CER ≤ 0.03 on the 12-image fixture;
 - mean polygon IoU ≥ 0.85 where box annotations exist;
@@ -572,7 +606,7 @@ Manifests carry three digests:
 
 ```powershell
 $Model = "<pp_formulanet_plus_m.onnx>"
-$TestSet = "../../Formula-TestSet"   # collection root
+$TestSet = "./datasets/formula"   # collection root
 
 # PaddleX example set, 501 val images, with a reproducible manifest.
 cargo run --release --bin formula_eval -- --model $Model --dataset-root $TestSet `
@@ -667,20 +701,20 @@ fallback anywhere in the crate.
 
 ```powershell
 # Force external-asset tests to fail instead of skipping (CI with staged assets).
-$env:RAPID_OCR_REQUIRE_EXTERNAL_ASSETS = "1"
-$env:RAPID_OCR_MODEL_ROOT = "<workspace>/OCR-Model"
-$env:RAPID_OCR_FORMULA_TEST_ROOT = "<workspace>/Formula-TestSet"
+$env:RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS = "1"
+$env:RAPID_STRUCTURE_MODEL_ROOT = "<workspace>/models"
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT = "<workspace>/datasets/formula"
 cargo test --all-targets
 ```
 
 | variable | purpose |
 | --- | --- |
-| `RAPID_OCR_MODEL_ROOT` | OCR model root (`<workspace>/OCR-Model`); also locates the formula model, the formula detector, and (via its parent) `OCR-test-image` |
-| `RAPID_OCR_FORMULA_MODEL` | direct path to `pp_formulanet_plus_m.onnx` |
-| `RAPID_OCR_FORMULA_DETECT_MODEL` | direct path to `pix2text-mfd-1.5.onnx` |
-| `RAPID_OCR_FORMULA_TEST_ROOT` | formula test-set root (`<workspace>/Formula-TestSet`) |
-| `RAPID_OCR_TEST_IMAGES` | page images used by the page-level formula integration tests |
-| `RAPID_OCR_REQUIRE_EXTERNAL_ASSETS` | `1` turns a missing asset into a test failure |
+| `RAPID_STRUCTURE_MODEL_ROOT` | OCR model root (`<workspace>/models`); also locates the formula model and the formula detector |
+| `RAPID_STRUCTURE_FORMULA_MODEL` | direct path to `pp_formulanet_plus_m.onnx` |
+| `RAPID_STRUCTURE_FORMULA_DETECT_MODEL` | direct path to `pix2text-mfd-1.5.onnx` |
+| `RAPID_STRUCTURE_FORMULA_TEST_ROOT` | formula test-set root (`<workspace>/datasets/formula`) |
+| `RAPID_STRUCTURE_TEST_IMAGES` | page images used by the page-level formula integration tests |
+| `RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS` | `1` turns a missing asset into a test failure |
 
 ### Quality gates
 
@@ -702,7 +736,7 @@ actually falsify your change.
 | Change | Required verification | Cost |
 | --- | --- | --- |
 | Ordinary code, docs, refactors with no formula behavior change | `cargo test --all-targets` (fixtures only, no external assets) + `cargo fmt`/`clippy` | seconds |
-| Formula routing, outputs, input limits, detector decoding | above + `cargo test --all-targets` with `RAPID_OCR_MODEL_ROOT`/`RAPID_OCR_TEST_IMAGES` set (page-level integration tests) + one real page through the CLI | ~1 min |
+| Formula routing, outputs, input limits, detector decoding | above + `cargo test --all-targets` with `RAPID_STRUCTURE_MODEL_ROOT`/`RAPID_STRUCTURE_TEST_IMAGES` set (page-level integration tests) + one real page through the CLI | ~1 min |
 | Tokenizer, post-processing, model invocation, batch/EOS logic | above + **100-image im2latex smoke** + **501-image `val` with the Rust/Python link comparison** | ~15 min |
 | Model file, preprocessing, decode/EOS semantics, metric implementation | above + the affected **full dataset(s)**; re-record the baseline | hours |
 | Release acceptance | full datasets + `formula_bench` on every available provider, serially and uncontended | hours |

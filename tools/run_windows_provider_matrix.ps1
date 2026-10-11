@@ -11,8 +11,8 @@
 # 不可用 provider 必须记录真实错误，**不得**把 CPU fallback 当加速成功。
 
 param(
-    [string]$Config = 'D:\100_Projects\110_Daily\SnapClip\OCR-Model\test-config-small.yaml',
-    [string]$ImagesDir = 'D:\100_Projects\110_Daily\SnapClip\OCR-test-image',
+    [string]$Config = '',
+    [string]$ImagesDir = '',
     [int]$Rounds = 3,
     [int]$WarmupRounds = 1,
     [int]$MaxSideLen = 2000,
@@ -21,6 +21,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Crate = Split-Path -Parent $PSScriptRoot
+# 默认路径从脚本位置推导，不写死开发机绝对路径（`docs/09` §14.2③）。
+if (-not $Config) { $Config = Join-Path $Crate 'models\configs\test-config-small.yaml' }
+if (-not $ImagesDir) { $ImagesDir = Join-Path $Crate 'datasets\text' }
 $OutDir = Join-Path $Crate 'tests\baseline\windows-baseline'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $WorkDir = Join-Path $Crate 'target\provider-configs'

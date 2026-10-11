@@ -35,8 +35,8 @@ pub const DEFAULT_MAX_EXPORT_MB: u64 = 32;
 /// `--max-download-mb`：单文件下载上限，默认 1024 MiB（必须大于 566 MB 公式模型，§6.2）。
 ///
 /// **唯一来源是库常量**：库内调用方（`EngineConfig::allow_download` 分支）也要用同一个默认
-/// 上限，因此这里引用 `rapid_ocr_rs::DEFAULT_MAX_DOWNLOAD_MB`，而不是再写一遍 1024。
-pub const DEFAULT_MAX_DOWNLOAD_MB: u64 = rapid_ocr_rs::DEFAULT_MAX_DOWNLOAD_MB;
+/// 上限，因此这里引用 `rapid_structure_rs::DEFAULT_MAX_DOWNLOAD_MB`，而不是再写一遍 1024。
+pub const DEFAULT_MAX_DOWNLOAD_MB: u64 = rapid_structure_rs::DEFAULT_MAX_DOWNLOAD_MB;
 /// `--max-queue-text`：普通 OCR 队列上限，默认 4。
 pub const DEFAULT_MAX_QUEUE_TEXT: usize = 4;
 /// `--max-queue-formula`：公式 OCR 队列上限，默认 2。
@@ -274,9 +274,9 @@ impl ServeLimits {
     }
 
     /// 下载任务的预算：`--max-download-mb` 同时是**单文件上限**与**整批下载的总量额度**
-    /// （§6.2）。多文件集合由 [`rapid_ocr_rs::download_model_set`] 按剩余额度递减。
-    pub fn download_budget(&self) -> rapid_ocr_rs::DownloadBudget {
-        rapid_ocr_rs::DownloadBudget::new(self.max_download_bytes)
+    /// （§6.2）。多文件集合由 [`rapid_structure_rs::download_model_set`] 按剩余额度递减。
+    pub fn download_budget(&self) -> rapid_structure_rs::DownloadBudget {
+        rapid_structure_rs::DownloadBudget::new(self.max_download_bytes)
     }
 }
 

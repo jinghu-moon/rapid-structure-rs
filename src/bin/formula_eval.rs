@@ -1,22 +1,22 @@
 //! PP-FormulaNet_plus 主评测工具（任务文档阶段 9）。
 //!
-//! `--dataset-root` 指向公式测试集**根目录**（例如 `<workspace>/Formula-TestSet`），
+//! `--dataset-root` 指向公式测试集**根目录**（例如 `<workspace>/datasets/formula`），
 //! 工具按 `--dataset` 拼接标准子目录 `im2latex-100k` / `ocr_rec_latexocr_dataset_example` /
 //! `UniMER-Test`。
 //!
 //! ```powershell
 //! # PaddleX 示例集 501 张 smoke
-//! cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <Formula-TestSet> `
+//! cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <datasets/formula> `
 //!   --dataset latexocr --split validate --output target/formula-val-501.json
 //! # im2latex 100 张固定 smoke（数据集相对路径 + 真值的稳定哈希抽样；
 //! # 图像内容只进 `content_sha256`，不参与样本选择）
-//! cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <Formula-TestSet> `
+//! cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <datasets/formula> `
 //!   --dataset im2latex --split test --limit 100 --output target/formula-im2latex-100.json
 //! # im2latex 完整测试集
-//! cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <Formula-TestSet> `
+//! cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <datasets/formula> `
 //!   --dataset im2latex --split test --output target/formula-im2latex-full.json
 //! # UniMER 分组（逐个 subset 运行，禁止混合汇总）
-//! cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <Formula-TestSet> `
+//! cargo run --release --bin formula_eval -- --model <onnx> --dataset-root <datasets/formula> `
 //!   --dataset unimer --subset spe --output target/formula-unimer-spe.json
 //! ```
 //!
@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::{Parser, ValueEnum};
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     FormulaRecognizer, ProviderPreference, RapidOcrError, RuntimeConfig,
     evaluation::{
         formula::{
@@ -76,7 +76,7 @@ struct Cli {
     /// 公式识别模型；`--merge-shards` 与 `--manifest-only` 不需要。
     #[arg(long, required_unless_present_any = ["merge_shards", "manifest_only"])]
     model: Option<PathBuf>,
-    /// 公式测试集根目录，例如 `<workspace>/Formula-TestSet`；合并分片报告时不需要。
+    /// 公式测试集根目录，例如 `<workspace>/datasets/formula`；合并分片报告时不需要。
     #[arg(long = "dataset-root")]
     dataset_root: Option<PathBuf>,
     /// 合并分片报告时不需要（数据集信息从分片报告读取）。
@@ -1112,7 +1112,7 @@ fn score_record(mut record: SampleRecord, expected: &str) -> SampleRecord {
     let actual = record.actual.clone().unwrap_or_default();
     let truncated = record.truncated.unwrap_or(false);
     let (metrics, failure) =
-        rapid_ocr_rs::evaluation::formula::report::score_latex(expected, &actual, truncated);
+        rapid_structure_rs::evaluation::formula::report::score_latex(expected, &actual, truncated);
     record.failure = failure;
     record.exact_match = metrics.exact_match;
     record.normalized_match = metrics.normalized_match;
@@ -1212,7 +1212,7 @@ mod tests {
     use std::path::PathBuf;
 
     use clap::Parser;
-    use rapid_ocr_rs::evaluation::formula::fixture::{FormulaSplit, UniMerSubset};
+    use rapid_structure_rs::evaluation::formula::fixture::{FormulaSplit, UniMerSubset};
 
     use super::{
         DatasetArg, SubsetArg, dataset_name, dataset_subdir, load_fixture, parse_shard,
@@ -1233,7 +1233,7 @@ mod tests {
         records: &[&str],
         content_sha256: Option<&str>,
     ) -> super::EvaluationReport {
-        use rapid_ocr_rs::evaluation::formula::{
+        use rapid_structure_rs::evaluation::formula::{
             report::{FailureKind, SampleRecord},
             sampling::{Manifest, ManifestEntry, SampleStrategy},
         };
@@ -1309,8 +1309,8 @@ mod tests {
             throughput: super::ThroughputInfo {
                 images_per_second: 1.0,
                 total_wall_ms: 1000.0,
-                per_image_ms: rapid_ocr_rs::evaluation::stats::Stats::default(),
-                per_batch_ms: rapid_ocr_rs::evaluation::stats::Stats::default(),
+                per_image_ms: rapid_structure_rs::evaluation::stats::Stats::default(),
+                per_batch_ms: rapid_structure_rs::evaluation::stats::Stats::default(),
                 batch_size,
             },
             memory: super::MemoryInfo {
@@ -1319,7 +1319,7 @@ mod tests {
                 delta_bytes: None,
                 source: "test".to_string(),
             },
-            summary: rapid_ocr_rs::evaluation::formula::report::summarize(records.iter()),
+            summary: rapid_structure_rs::evaluation::formula::report::summarize(records.iter()),
             reference_comparison: reference,
             shard: Some(super::ShardInfo { index: 0, count: 2 }),
             merged_from: None,
@@ -1383,7 +1383,8 @@ mod tests {
     }
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("rapid-ocr-rs-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("rapid-structure-rs-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
         dir
@@ -1675,7 +1676,7 @@ mod tests {
     #[test]
     fn fixture_loading_uses_the_collection_root() {
         // 不存在的根目录必须返回可定位错误，而不是 panic。
-        let root = std::env::temp_dir().join("rapid-ocr-rs-does-not-exist");
+        let root = std::env::temp_dir().join("rapid-structure-rs-does-not-exist");
         assert!(load_fixture(&root, DatasetArg::Im2latex, FormulaSplit::Test, None).is_err());
     }
 

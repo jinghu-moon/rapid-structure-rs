@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tiny_http::{Header, Request, Response, Server, StatusCode};
 
-use rapid_ocr_rs::ProviderPreference;
+use rapid_structure_rs::ProviderPreference;
 
 use super::admit::{
     self, AdmissionError, BodySource, ChunkOutcome, HttpMethod, QueueAdmission, RequestDescriptor,
@@ -71,11 +71,15 @@ pub(super) const EXPORT_CSP: &str =
     "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'none'; sandbox";
 
 /// 主页面 CSP（§9.5 第 3 条；**不含** `unsafe-inline`，nonce 与页面属性逐字节相同）。
+///
+/// `font-src 'self'` 只为一个目的存在：KaTeX 的 woff2 字体（同源、编译期嵌入，见
+/// [`super::assets`]）。MathJax 走 tex-svg 输出（内联路径，不取字体），不需要它。
+/// 其余仍由 `default-src 'none'` 兜底；脚本与样式只认 nonce。
 pub(super) fn page_csp(nonce: &str) -> String {
     format!(
-        "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; img-src 'self' \
-         blob: data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors \
-         'none'"
+        "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; font-src \
+         'self'; img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; form-action \
+         'none'; frame-ancestors 'none'"
     )
 }
 
@@ -83,6 +87,9 @@ pub(super) fn page_csp(nonce: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Route {
     Page,
+    /// `GET /static/*`：编译期嵌入的公式渲染引擎（KaTeX / MathJax，见 [`super::assets`]）。
+    /// 不在 `/api/*` 之下，因此**不**要求令牌（§7.2）；路径只参与封闭查表，不碰文件系统。
+    Static(String),
     Status,
     Models,
     ModelsDownload,
@@ -110,7 +117,8 @@ impl Route {
             | Self::Job(_)
             | Self::JobResult(_)
             | Self::JobAnnotated(_)
-            | Self::JobExport(_) => HttpMethod::Get,
+            | Self::JobExport(_)
+            | Self::Static(_) => HttpMethod::Get,
             Self::ModelsDownload
             | Self::ModelsReverify
             | Self::EngineReload
@@ -128,8 +136,9 @@ impl Route {
     }
 
     /// §7.2：令牌对**所有 `/api/*`** 必需，`GET /`（令牌的下发者本身）除外。
+    /// `/static/*` 不是 `/api/*`，且资源不含用户数据，同样不需令牌。
     fn requires_token(&self) -> bool {
-        !matches!(self, Self::Page)
+        !matches!(self, Self::Page | Self::Static(_))
     }
 }
 
@@ -279,13 +288,20 @@ fn handle(shared: &Arc<ServeShared>, mut request: Request) {
         Route::Ocr => shared.routing().class_for(queue_raw).ok(),
         _ => None,
     };
+    // E16.2：`?table=` 与 `?queue=` **正交**（见 `OcrRouting` 的文档）。这里与 `queue` 同样
+    // 宽容解析（`.ok()`），非法取值/未启用的 `1` 由 `dispatch` 以 400 回答——判定顺序不变。
+    let table_raw = query_param(query, "table");
+    let table = match route {
+        Route::Ocr => shared.routing().table_requested(table_raw).ok(),
+        _ => None,
+    };
     // 第 4 步的**原子预留**入口（评审 P2-1）：`admit` 在判定容量的同一次加锁里占位，
     // 因此两个并发请求不可能都通过预检、都读入大 body。
     let slot_source = class.map(|class| QueueSlotSource { shared, class });
 
     // 头字段先取成自有字符串：`RequestDescriptor` 借用的是这份局部数据，而不是
     // `Request` 本身，否则下面读 body 需要的可变借用会与之冲突。
-    let token_header = header(&request, "X-RapidOCR-Token").map(str::to_string);
+    let token_header = header(&request, "X-RapidStructure-Token").map(str::to_string);
     let host_header = header(&request, "Host").map(str::to_string);
     let origin_header = header(&request, "Origin").map(str::to_string);
     let content_type_header = header(&request, "Content-Type").map(str::to_string);
@@ -367,6 +383,19 @@ fn handle(shared: &Arc<ServeShared>, mut request: Request) {
         // 因此原因要落在请求 id 上，否则"上传没有任何反应"依旧无法解释。
         let body = shared.formula_blocked_body();
         let (code, detail) = shared.formula_blocked_reason();
+        flow.job_rejected(queue_label(class, queue_raw), body.status, code, &detail);
+        let _ = respond(request, body, &[], &flow);
+        return;
+    }
+
+    // E16.2：表格阶段的模型可用性预检（同一处、同一口径、**读 body 之前**）。
+    //
+    // 表格只有一个文件，因此判据更简单，但结论的形状与公式完全一致：`409 models_missing`
+    // / `models_corrupt`，`detail.scope = "table"`，并在流动日志里留下同一个请求 id。
+    // `table == Some(true)` 才预检：`?table=0` 与不带参数都不该因为结构模型缺失而被拒绝。
+    if matches!(route, Route::Ocr) && table == Some(true) && !shared.table_models_ready() {
+        let body = shared.table_blocked_body();
+        let (code, detail) = shared.table_blocked_reason();
         flow.job_rejected(queue_label(class, queue_raw), body.status, code, &detail);
         let _ = respond(request, body, &[], &flow);
         return;
@@ -480,6 +509,19 @@ fn dispatch(
                 page_csp(shared.nonce()),
             )],
         )),
+        // 封闭表查中即 200；表里没有 → 和其它未知路径同一个 404（不区分“目录不存在”
+        // 与“文件不存在”，避免把表形状泄露给非同源的探测）。缓存头由 `SECURITY_HEADERS`
+        // 统一带 `no-store`：资源随二进制演进，升级后不能吃浏览器缓存里的旧版本。
+        Route::Static(path) => match super::assets::lookup(path) {
+            Some((content_type, bytes)) => Ok(Dispatch::Respond(
+                Body::typed(200, content_type, bytes.to_vec()),
+                Vec::new(),
+            )),
+            None => Ok(Dispatch::Respond(
+                route_error(RouteDecision::NotFound, HttpMethod::Get, path),
+                Vec::new(),
+            )),
+        },
         Route::Status => Ok(Dispatch::Respond(
             json_body(200, shared.status_json())?,
             Vec::new(),
@@ -493,8 +535,15 @@ fn dispatch(
             let bytes = read_body(request, &admitted)?;
             let max_side = parse_max_side(query_param(query, "max_side"), shared.min_side_len())?;
             let class = shared.routing().class_for(query_param(query, "queue"))?;
+            // E16.2：`?table=` 在这里**严格**解析（`?` 而不是 `.ok()`）：`?table=2` 与
+            // "路由没打开却给 `1`" 都是 400。第 4 步的宽容解析只为判定顺序服务，真正的
+            // 取值校验必须在建任务之前完成 —— 否则任务已经入队，才发现参数是错的。
+            let table = shared
+                .routing()
+                .table_requested(query_param(query, "table"))?;
             // 第 4 步预留的槽位随请求一路传到这里：入队成功即提交，任何提前返回都会归还容量。
-            let value = shared.submit_ocr(bytes, class, max_side, admitted.reservation, flow)?;
+            let value =
+                shared.submit_ocr(bytes, class, max_side, table, admitted.reservation, flow)?;
             // §4.2：任务提交返回 **202**（异步任务，不存在"同步返回结果"的第二套语义）。
             Ok(Dispatch::Respond(json_body(202, value)?, Vec::new()))
         }
@@ -884,6 +933,8 @@ fn route_of(method: HttpMethod, path: &str) -> (RouteDecision, Option<Route>) {
         "/api/engine/reload" => Some(Route::EngineReload),
         "/api/ocr" => Some(Route::Ocr),
         "/api/evaluate" => Some(Route::Evaluate),
+        // 前缀路由：完整路径交给 [`super::assets::lookup`] 的封闭表，这里只判定“是不是静态”。
+        _ if path.starts_with("/static/") => Some(Route::Static(path.to_string())),
         _ => job_route(path),
     };
     match candidate {
@@ -986,7 +1037,7 @@ mod tests {
     };
     use crate::serve::error::ServeError;
     use crate::serve::export::ExportFormat;
-    use rapid_ocr_rs::ProviderPreference;
+    use rapid_structure_rs::ProviderPreference;
 
     #[test]
     fn the_router_matches_the_documented_endpoint_set_and_nothing_else() {
@@ -1033,6 +1084,13 @@ mod tests {
                 "/api/jobs/job-1/export",
                 Route::JobExport("job-1".into()),
             ),
+            // 公式渲染引擎的前缀路由：`/static/` 下的任意具体路径都命中路由本身，
+            // 资源是否存在由 `assets::lookup` 的封闭表决定（表外 → 404）。
+            (
+                HttpMethod::Get,
+                "/static/katex/katex.min.js",
+                Route::Static("/static/katex/katex.min.js".into()),
+            ),
         ];
         for (method, path, expected) in cases {
             let (decision, route) = route_of(method, path);
@@ -1077,6 +1135,24 @@ mod tests {
             route_of(HttpMethod::Head, "/api/ocr").0,
             RouteDecision::MethodNotAllowed
         );
+    }
+
+    /// `/static/*`：GET 路由、POST 405，且**不要求令牌**（不在 `/api/*` 边界内，§7.2）。
+    /// 令牌豁免面只有 `Page` 与 `Static` 两个变体——这里钉住边界本身。
+    #[test]
+    fn static_routes_are_get_only_and_outside_the_token_boundary() {
+        let (decision, route) = route_of(HttpMethod::Get, "/static/mathjax/tex-svg.js");
+        assert_eq!(decision, RouteDecision::Matched);
+        assert!(
+            !route.expect("static route").requires_token(),
+            "/static/* must not require the token"
+        );
+        let (decision, route) = route_of(HttpMethod::Post, "/static/katex/katex.min.css");
+        assert_eq!(decision, RouteDecision::MethodNotAllowed);
+        assert_eq!(route.expect("known path").allow(), "GET");
+        assert!(!Route::Page.requires_token());
+        assert!(Route::Status.requires_token());
+        assert!(Route::JobExport("job-1".into()).requires_token());
     }
 
     /// 只有 §9.5 的三个格式被接受；缺失或未知取值都是 400（不是"猜一个默认值"）。
@@ -1222,5 +1298,9 @@ mod tests {
         assert!(!csp.contains("unsafe-inline"), "{csp}");
         assert!(csp.contains("default-src 'none'"), "{csp}");
         assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+        // 字体只对同源放行（唯一用途：KaTeX 的 woff2；MathJax tex-svg 不取字体）。
+        assert!(csp.contains("font-src 'self'"), "{csp}");
+        assert!(!csp.contains("font-src *"), "{csp}");
+        assert!(!csp.contains("font-src 'none'"), "{csp}");
     }
 }

@@ -265,8 +265,10 @@ mod tests {
     /// 而不是把绝对路径当成“相对路径”泄漏进抽样键与 manifest。
     #[test]
     fn dataset_relative_path_rejects_images_outside_the_root() {
-        let root =
-            std::env::temp_dir().join(format!("rapid-ocr-rs-rootcheck-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "rapid-structure-rs-rootcheck-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let inner = root.join("images");
         std::fs::create_dir_all(&inner).expect("root");
@@ -284,7 +286,7 @@ mod tests {
         );
 
         // 根目录之外：必须失败，并且错误信息能定位到图像与数据集根。
-        let outside = std::env::temp_dir().join("rapid-ocr-rs-outside.png");
+        let outside = std::env::temp_dir().join("rapid-structure-rs-outside.png");
         std::fs::write(&outside, b"x").expect("write outside");
         let error = dataset_relative_path(&root, &outside)
             .expect_err("images outside the dataset root must be rejected");
@@ -336,7 +338,8 @@ mod tests {
     /// 越界成分。这条测试固定该回归必须被拒绝。
     #[test]
     fn dataset_relative_path_rejects_parent_dir_escapes() {
-        let base = std::env::temp_dir().join(format!("rapid-ocr-rs-escape-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("rapid-structure-rs-escape-{}", std::process::id()));
         let root = base.join("dataset");
         let outside_dir = base.join("outside");
         std::fs::create_dir_all(root.join("images")).expect("root");
@@ -417,7 +420,8 @@ mod tests {
     /// 那条用例不依赖任何权限，因此始终执行。
     #[test]
     fn dataset_relative_path_rejects_symlinks_leading_outside() {
-        let base = std::env::temp_dir().join(format!("rapid-ocr-rs-link-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("rapid-structure-rs-link-{}", std::process::id()));
         let root = base.join("dataset");
         let outside_dir = base.join("outside");
         std::fs::create_dir_all(&root).expect("root");
@@ -569,7 +573,7 @@ mod tests {
     #[test]
     fn content_hash_detects_replaced_image_files() {
         let workspace = std::env::temp_dir().join(format!(
-            "rapid-ocr-rs-manifest-content-{}",
+            "rapid-structure-rs-manifest-content-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&workspace);

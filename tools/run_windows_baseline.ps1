@@ -13,9 +13,9 @@
 # 用法：pwsh -NoProfile -File tools/run_windows_baseline.ps1
 
 param(
-    [string]$Config = 'D:\100_Projects\110_Daily\SnapClip\OCR-Model\test-config-small.yaml',
-    [string]$ImagesDir = 'D:\100_Projects\110_Daily\SnapClip\OCR-test-image',
-    [string]$GoldenManifest = 'D:\100_Projects\110_Daily\SnapClip\OCR-test-image\golden-manifest.json',
+    [string]$Config = '',
+    [string]$ImagesDir = '',
+    [string]$GoldenManifest = '',
     [int]$Rounds = 3,
     [int]$WarmupRounds = 1,
     [int]$IntraThreads = 16
@@ -23,6 +23,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Crate = Split-Path -Parent $PSScriptRoot
+# 默认路径从**脚本位置**推导，不写死开发机绝对路径：写死会让脚本只在采集机上可运行，
+# 而且会把机器路径带进发布产物（`docs/09` §14.2③）。显式传参仍然覆盖这些默认值。
+if (-not $Config) { $Config = Join-Path $Crate 'models\configs\test-config-small.yaml' }
+if (-not $ImagesDir) { $ImagesDir = Join-Path $Crate 'datasets\text' }
+if (-not $GoldenManifest) { $GoldenManifest = Join-Path $Crate 'datasets\text\golden-manifest.json' }
 $OutDir = Join-Path $Crate 'tests\baseline\windows-baseline'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
@@ -58,14 +63,14 @@ $environment | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $OutDir 'e
 Write-Host '=== build stats ==='
 $binDir = Join-Path $Crate 'target\release'
 $binSizes = [ordered]@{}
-foreach ($name in 'rapidocr', 'bench_warm_e2e', 'formula_eval', 'formula_bench') {
+foreach ($name in 'rapidstruct', 'bench_warm_e2e', 'formula_eval', 'formula_bench') {
     $path = Join-Path $binDir "$name.exe"
     if (Test-Path $path) { $binSizes[$name] = (Get-Item $path).Length }
 }
 $targetSize = (Get-ChildItem (Join-Path $Crate 'target') -Recurse -File -ErrorAction SilentlyContinue |
     Measure-Object -Property Length -Sum).Sum
 # crate 自身重编译耗时（依赖已构建）：provider 与发布基线使用同一口径。
-& cargo clean -p rapid-ocr-rs --release 2>&1 | Out-Null
+& cargo clean -p rapid-structure-rs --release 2>&1 | Out-Null
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 & cargo build --release --bins 2>&1 | Out-Null
 $sw.Stop()
@@ -73,7 +78,7 @@ $buildStats = [ordered]@{
     collected_at_utc       = (Get-Date).ToUniversalTime().ToString('o')
     profile                = 'release'
     crate_rebuild_ms       = $sw.ElapsedMilliseconds
-    crate_rebuild_scope    = 'cargo clean -p rapid-ocr-rs --release; cargo build --release --bins'
+    crate_rebuild_scope    = 'cargo clean -p rapid-structure-rs --release; cargo build --release --bins'
     binary_bytes           = $binSizes
     target_dir_bytes       = $targetSize
 }
@@ -109,10 +114,10 @@ foreach ($side in 2000, 1280) {
 
 Write-Host '=== 12-image evaluation (CER) ==='
 $evalOut = Join-Path $OutDir 'evaluation-cpu.json'
-$evalApp = Measure-Process (Join-Path $binDir 'rapidocr.exe') @(
+$evalApp = Measure-Process (Join-Path $binDir 'rapidstruct.exe') @(
     'evaluate', '--manifest', $GoldenManifest, '--config', $Config, '--output', $evalOut
 )
-if ($evalApp.exit_code -ne 0) { throw "rapidocr evaluate failed (exit $($evalApp.exit_code))" }
+if ($evalApp.exit_code -ne 0) { throw "rapidstruct evaluate failed (exit $($evalApp.exit_code))" }
 $evaluation = Get-Content $evalOut -Raw -Encoding UTF8 | ConvertFrom-Json
 Write-Host ("  mean CER={0:N4} exact={1:N4} peak={2:N1}MB" -f `
     $evaluation.mean_cer, $evaluation.exact_match_rate, ($evaluation.peak_working_set_bytes / 1MB))

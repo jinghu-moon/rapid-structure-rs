@@ -14,8 +14,9 @@ pub use crate::api::{
     OwnedPixelBuffer, PixelFormat, Polygon, PreprocessPolicy, ProviderInfo,
     ProviderPreference as GenericProviderPreference, ProviderResolutionInfo, RecognitionOutcome,
     RecognitionPolicy, RectU32, RegionKind, RegionSource, ResolvedProvider, StagePlan, StageReport,
-    StageReports, StageState, StageTiming, TextOrder, TextOrientation, TilePolicy, WordKind,
-    WordOutputMode,
+    StageReports, StageState, StageTiming, TableCellMatch, TableCellOutcome, TableDegradation,
+    TableOutcome, TablePolicy, TableStructureConfidence, TableTextPolicy, TextOrder,
+    TextOrientation, TilePolicy, WordKind, WordOutputMode,
 };
 pub use crate::config::{
     ColorOrder, LangCls, LangDet, LangRec, ModelType, OcrVersion, ProviderPreference, RecImage,
@@ -23,7 +24,7 @@ pub use crate::config::{
 };
 pub use crate::error::{RapidOcrError, Result};
 // 输入层：`ImageInput::Encoded` 在管线内部走的就是这两个类型。导出它们是为了让
-// `rapidocr serve` 的 `/annotated.png` 能**复用同一个**解码实现（编码字节上限、header
+// `rapidstruct serve` 的 `/annotated.png` 能**复用同一个**解码实现（编码字节上限、header
 // 像素探测、EXIF 方向、解码错误语义只有一份），而不是在 serve 里另写一套图片解码
 // （docs/05 §4.5：原图只保留编码字节，注释图按需重新解码）。
 pub use crate::formula::contract::{
@@ -86,13 +87,14 @@ pub use crate::model_store::{
 pub use crate::ocr::config::{ModelConfig, RecognizeOptions, RecognizerConfig};
 pub use crate::ocr::pipeline::{
     config::{EngineConfig, GlobalConfig},
-    rapid_ocr::{PipelineProviderResolutions, RapidOcr, RapidOcrEngine},
+    rapid_structure::{PipelineProviderResolutions, RapidOcr, RapidOcrEngine},
 };
 pub use crate::ocr::types::{LineResult, RecognizeOutput, WordBox, WordInfo, WordType};
+pub use crate::output::html::sanitize_table_html;
 pub use crate::output::html::{
     ReportMode, relative_image_name, render_output_report, render_report,
 };
-pub use crate::output::json::{OcrJsonItem, to_output_items, to_output_json};
+pub use crate::output::json::{OcrJsonItem, OcrTableItem, to_output_items, to_output_json};
 pub use crate::output::markdown::to_output_markdown;
 pub use crate::output::visualize::draw_output;
 pub use crate::runtime::contracts::{ModelIoProbe, TensorSpec};
@@ -107,13 +109,42 @@ pub use crate::runtime::profile::{RuntimeProfile, ThreadPlan, ThreadSource};
 // `resolve_execution_providers` 与 `format_provider_preference` 是 serve 侧启动期
 // 校验运行配置（§7.5/§7.6）时**必须复用**的两个既有实现：前者给出"provider 名称/
 // feature 是否成立 + 运行库是否可用"的唯一判定，后者给出 provider 的唯一展示文本。
-// 导出的目的是让 `rapidocr serve` 不另写一套措辞（docs/05 §7.5 第 3 条）。
+// 导出的目的是让 `rapidstruct serve` 不另写一套措辞（docs/05 §7.5 第 3 条）。
 pub use crate::runtime::provider::{
     ProviderResolution, ResolvedExecutionProvider, format_provider_preference, ort_runtime_version,
     resolve_execution_providers,
 };
 pub use crate::runtime::session::OrtSession;
 pub use crate::runtime::timing::{LedgerConservation, LedgerShares, TimingLedger};
+// 表格识别域（`src/table/`）在 `lib.rs` 里是**私有** `mod table;`（E9 接线前不对外承诺
+// 稳定 API），但 `src/bin/` 的评测二进制必须能构造结构会话、跑解码器并发射 HTML。
+// 这里逐个列出**评测真正需要**的项，而不是 `pub use crate::table::*`：
+// 通配导出会让"评测需要什么"变成"模块里有什么"，阶段 7 的 API 清理门槛也就失去意义。
+pub use crate::table::cell_content_backfill::{
+    BackfillOutcome, BackfillSource, CellMatchKind, CellRecognizer, TABLE_MATCH_MIN_IOU,
+    TextConfidence, TextLine, axis_aligned_bbox, backfill, bbox_to_quad, join_line_texts,
+    match_cells, match_cells_with_min_iou, match_cells_with_offset, rectangle_distance,
+    rectangle_iou,
+};
+pub use crate::table::decode::{
+    CellSlot, GridCoverage, GridSize, LogicCell, SOS_CLASS_INDEX, StructureNode, StructureResult,
+    StructureTermination, StructureVocabulary, TableShape, TokenStep, argmax_structure,
+    decode_logic_points, decode_token_steps, eos_class_index, is_blank_polygon, parse_cell_tag,
+    polygon_to_bbox, rescale_polygon, rescale_ratios, tokens_to_structure,
+};
+pub use crate::table::emitter::{
+    RenderedTable, StructureConfidence, StructureDegradation, TextPolicy, emit_html, emit_markdown,
+    emit_table_html, structure_degradations,
+};
+pub use crate::table::ocr_resolution::TableOcrResolution;
+pub use crate::table::preprocess::{
+    TABLE_STRUCTURE_MEAN, TABLE_STRUCTURE_SCALE, TABLE_STRUCTURE_STD, TableCanvas,
+    resize_dimensions, table_structure_input,
+};
+pub use crate::table::structure::{
+    TABLE_STRUCTURE_SIDE_LEN, TableStructureConfig, TableStructureContract,
+    TableStructureModelInfo, TableStructureSession, validate_table_structure_contract,
+};
 
 /// 四边形（左上、右上、右下、左下）。
 pub type Quad = [[f32; 2]; 4];

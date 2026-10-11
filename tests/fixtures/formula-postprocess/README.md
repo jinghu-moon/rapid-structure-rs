@@ -13,7 +13,7 @@
 ## 重新生成
 
 ```powershell
-$env:RAPID_OCR_FORMULA_TEST_ROOT = "<workspace>/Formula-TestSet"   # 可选，用于语料探针
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT = "<workspace>/Formula-TestSet"   # 可选，用于语料探针
 python tools/formula_ftfy_reference.py
 ```
 

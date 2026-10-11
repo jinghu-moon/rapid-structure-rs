@@ -1,5 +1,5 @@
 [package]
-name = "rapid-ocr-rs"
+name = "rapid-structure-rs"
 version = "0.7.0"
 edition = "2024"
 readme = "README.md"
@@ -7,16 +7,37 @@ readme = "README.md"
 # 1.88 是实测下限：代码使用了 `as_chunks`/`as_chunks_mut`（1.88 稳定），
 # 声明得更低会让 `cargo clippy` 的 incompatible_msrv 检查直接失败。
 rust-version = "1.88"
-keywords = ["rapid", "ocr", "onnx", "paddleocr", "windows"]
+keywords = ["ocr", "document-structure", "table-recognition", "formula-recognition", "onnx"]
 categories = ["computer-vision", "multimedia::images", "api-bindings"]
 license = "Apache-2.0"
-description = "Rust OCR for PaddleOCR-family ONNX models (PP-OCRv6, PP-FormulaNet) on Windows x64 via ONNX Runtime."
-repository = "https://github.com/jinghu-moon/rapid-ocr-rs"
+description = "Rust document-structure engine for PaddleOCR-family ONNX models: text detection/recognition (PP-OCRv6), table structure (SLANet-plus) and formula recognition (PP-FormulaNet) on Windows x64 via ONNX Runtime."
+repository = "https://github.com/jinghu-moon/rapid-structure-rs"
 authors = ["mg-chao <chao@mgchao.top>"]
 # 打进 crate 包的内容必须自包含：`tests/baseline/**` 是仓库证据（记录了采集机器的
 # 绝对路径与 benchmark 结果），属于生成产物而不是 crate 内容，因此排除。
 # `tests/fixtures/**` 反之必须保留：契约 fixture 是干净 clone 能跑测试的前提。
-exclude = ["tests/baseline/**"]
+#
+# 下面四项是 E13 §14.2③「包内没有模型、数据集、开发机绝对路径」的落点。它们都**不被
+# `.gitignore` 覆盖**（`.gitignore` 只忽略 `*.onnx` 这类扩展名），所以 `cargo package`
+# 会把它们算进包内容：实测 `git ls-files --cached --others --exclude-standard` 列出
+# 214,934 个文件，其中 `datasets/` 214,194 个（TabRecSet + UniMER 全量图）、`Temp/` 282 个
+# （含采集机器的绝对路径与中间 JSON）、`refer/` 56 个（第三方 checkout 与 20 MB 压缩包）、
+# `models/` 27 个。靠扩展名忽略挡不住它们，必须在这里排除。
+exclude = [
+    "tests/baseline/**",
+    "datasets/**",
+    "refer/**",
+    "Temp/**",
+    # `benchmarks/**` 与 `tests/baseline/**` 同类：**未入库的采集产物**，记录了采集机器的
+    # 绝对路径（实测 `benchmarks/model-bench/bench-reference-*-cpu-r3.json` 三个文件）。
+    "benchmarks/**",
+    # `prototypes/**` 是浏览器原型（含指向本机 ONNX 的绝对路径），不是 crate 内容。
+    "prototypes/**",
+    # `models/**` 是**运行时模型目录**：权重由应用下载，`manifest.json` 必须与权重同目录
+    # 才符合 `src/model_source.rs` 的单一来源规则。测试读的是**工作树**里的
+    # `models/configs/*.yaml`（`src/test_support.rs`），不是包里的副本。
+    "models/**",
+]
 
 [dependencies]
 geo-clipper = "0.9.0"
@@ -40,7 +61,7 @@ rayon = "1.10"
 regex = "1"
 clap = { version = "4.5", features = ["derive"] }
 unicode-normalization = { version = "0.1.25", default-features = false }
-# `rapidocr serve` 的 HTTP 服务器（docs/05 §2.2）。**必须 optional 且不进 `default`**：
+# `rapidstruct serve` 的 HTTP 服务器（docs/05 §2.2）。**必须 optional 且不进 `default`**：
 # 库的依赖图与发布内容不受影响，只有 `--features serve` 的构建才引入它
 # （证据见 docs/06-local-web-demo-reports.md 的 M1 cargo tree 对比）。
 tiny_http = { version = "0.12", optional = true }
@@ -53,7 +74,7 @@ download-binaries = ["ort/download-binaries"]
 copy-dylibs = ["ort/copy-dylibs"]
 directml-provider = ["ort/directml"]
 cuda-provider = ["ort/cuda"]
-# `rapidocr serve`（本地 Web 评估界面，docs/05）。
+# `rapidstruct serve`（本地 Web 评估界面，docs/05）。
 #
 # `serve` **不进 `default`**：默认构建的依赖图与发布内容不受影响
 # （证据见 docs/06-local-web-demo-reports.md 的 cargo tree 对比）。
@@ -62,9 +83,9 @@ cuda-provider = ["ort/cuda"]
 # `src/bin/serve/*` 里被引用（`src/bin/serve/mod.rs` 的边界断言会扫描这一点）。
 serve = ["dep:tiny_http"]
 
-# 集成测试：`tests/serve_startup.rs` 验收的是**真实的 `rapidocr serve` 进程**
+# 集成测试：`tests/serve_startup.rs` 验收的是**真实的 `rapidstruct serve` 进程**
 # （A1：`--reverify-models` 在启动期冷验证并用非零退出码拒绝损坏的模型集）。
-# 默认构建里 `rapidocr serve` 只是一句可定位的拒绝，那条路径不是这个用例要考察的东西，
+# 默认构建里 `rapidstruct serve` 只是一句可定位的拒绝，那条路径不是这个用例要考察的东西，
 # 因此它只在启用 `serve` 时构建（文件内另有一道 `#![cfg(feature = "serve")]`）。
 # 注意：这是**测试目标**声明，不引入任何依赖（`cargo tree` 逐行不变）。
 [[test]]

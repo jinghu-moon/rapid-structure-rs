@@ -1,7 +1,7 @@
-//! `rapidocr serve` 的命令行面（§3）。
+//! `rapidstruct serve` 的命令行面（§3）。
 //!
 //! M0c 只定义**结构、默认值与校验入口**，不含任何启动行为：M1 才把它接进
-//! `rapidocr` 的子命令表并实现"未启用 `serve` feature 时返回可定位错误"。
+//! `rapidstruct` 的子命令表并实现"未启用 `serve` feature 时返回可定位错误"。
 //!
 //! 三条必须在选项面上成立的约束：
 //!
@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
-use rapid_ocr_rs::{EngineConfig, ProviderPreference};
+use rapid_structure_rs::{EngineConfig, ProviderPreference};
 
 use super::limits::{
     DEFAULT_JOB_TTL_SECS, DEFAULT_MAX_BODY_MB, DEFAULT_MAX_CONSECUTIVE_FORMULA,
@@ -47,7 +47,7 @@ impl ProviderChoice {
     }
 }
 
-/// `rapidocr serve` 的全部选项（§3 的清单，逐项对应）。
+/// `rapidstruct serve` 的全部选项（§3 的清单，逐项对应）。
 #[derive(Debug, Clone, Args)]
 pub struct ServeArgs {
     /// 监听端口；被占用时报可定位错误，**不静默换端口**（§3）。
@@ -149,6 +149,17 @@ pub struct ServeArgs {
     #[arg(long = "formula-detector", value_name = "ONNX")]
     pub formula_detector: Option<PathBuf>,
 
+    /// 表格结构模型（`slanet-plus.onnx`；给出即启用 `?table=1`，docs/11 §4.2）。
+    ///
+    /// 与 `--formula-detector` 是**同一条规则**：给出即启用，不给则看模型集是否声明了
+    /// `table_structure` role。`models/table/manifest.json` 声明了它（含 SHA-256 与来源），
+    /// 因此这里通常传 `models/table/slanet-plus.onnx` 即可，摘要由清单提供。
+    ///
+    /// 表格路由是**可选**能力：不配置时普通 OCR 与公式队列完全不受影响，
+    /// `?table=1` 会得到 400（而不是静默忽略——静默忽略会让页面以为表格在跑）。
+    #[arg(long = "table-model", value_name = "ONNX")]
+    pub table_model: Option<PathBuf>,
+
     /// `POST /api/evaluate` 一张清单最多评估多少张图（默认 32）。
     #[arg(long = "max-eval-cases", default_value_t = DEFAULT_MAX_EVAL_CASES, value_name = "N")]
     pub max_eval_cases: usize,
@@ -176,7 +187,7 @@ pub struct ServeArgs {
     /// 每个任务另有准入/排队/运行/终态四类行，行内带**同一个**请求 id——一次上传因此
     /// 可以从请求行一路追到任务终态。失败的任务行带状态码 + `code` + `detail`。
     ///
-    /// 环境变量 `RAPID_OCR_SERVE_LOG` 提供同一个开关；**CLI 优先**。默认 `off`：
+    /// 环境变量 `RAPID_STRUCTURE_SERVE_LOG` 提供同一个开关；**CLI 优先**。默认 `off`：
     /// 关闭时所有记录函数在第一次判断就返回，不做任何格式化。
     #[arg(long = "log-level", value_name = "off|flow")]
     pub log_level: Option<String>,
@@ -212,12 +223,12 @@ impl ServeArgs {
         self.allow_provider_fallback
     }
 
-    /// 生效的流动日志级别：`--log-level` > `RAPID_OCR_SERVE_LOG` > `off`。
+    /// 生效的流动日志级别：`--log-level` > `RAPID_STRUCTURE_SERVE_LOG` > `off`。
     ///
     /// 解析失败是**可定位的启动期错误**（不是静默降级到 `off`）：把级别名写错的用户
     /// 会看到"期望 `off` 或 `flow`"，而不是"日志开关看起来没生效"。
     pub fn log_level(&self) -> Result<super::flowlog::LogLevel, StartupConfigError> {
-        let env = std::env::var("RAPID_OCR_SERVE_LOG").ok();
+        let env = std::env::var("RAPID_STRUCTURE_SERVE_LOG").ok();
         super::flowlog::LogLevel::resolve(self.log_level.as_deref(), env.as_deref())
             .map_err(StartupConfigError::LogLevel)
     }
@@ -226,7 +237,7 @@ impl ServeArgs {
     pub fn model_dir(&self) -> PathBuf {
         self.model_dir
             .clone()
-            .unwrap_or_else(rapid_ocr_rs::default_model_store_dir)
+            .unwrap_or_else(rapid_structure_rs::default_model_store_dir)
     }
 
     /// 读取 `EngineConfig`（CLI 的 `--config` 优先，否则库内建默认）。
@@ -257,7 +268,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use clap::Parser as _;
-    use rapid_ocr_rs::ProviderPreference;
+    use rapid_structure_rs::ProviderPreference;
 
     use super::{ProviderChoice, ServeArgs};
     use crate::serve::limits::{
@@ -269,7 +280,7 @@ mod tests {
     };
 
     /// §3 的完整选项名清单（**唯一**的一处枚举）。
-    const DOCUMENTED_OPTION_NAMES: [&str; 26] = [
+    const DOCUMENTED_OPTION_NAMES: [&str; 27] = [
         "port",
         "model-dir",
         "config",
@@ -293,12 +304,14 @@ mod tests {
         "job-ttl-secs",
         // M4：公式队列的检测模型与评估用例上限（§3、§4.2）。
         "formula-detector",
+        // E16.2：表格结构模型（`?table=1` 的路由开关，docs/11 §4.2）。
+        "table-model",
         "max-eval-cases",
         // 评审 P2-3：评估的沙箱根（不给即拒绝整个端点）。
         "eval-root",
         // A1：启动期冷验证这次运行会用到的模型文件，缺失/损坏即拒绝启动。
         "reverify-models",
-        // M5：流动日志级别（`off` 默认 / `flow`），与 `RAPID_OCR_SERVE_LOG` 同义、CLI 优先。
+        // M5：流动日志级别（`off` 默认 / `flow`），与 `RAPID_STRUCTURE_SERVE_LOG` 同义、CLI 优先。
         "log-level",
     ];
 
@@ -409,6 +422,8 @@ mod tests {
         assert_eq!(args.job_ttl_secs, DEFAULT_JOB_TTL_SECS);
         // M4：公式检测模型默认**不给**（路由默认关闭，§10.8），用例上限是文档默认值。
         assert_eq!(args.formula_detector, None);
+        // E16.2：表格结构模型同样默认**不给**（`?table=1` 默认 400）。
+        assert_eq!(args.table_model, None);
         assert_eq!(args.max_eval_cases, DEFAULT_MAX_EVAL_CASES);
         // 评审 P2-3：默认**没有**沙箱 → `/api/evaluate` 整体拒绝。
         assert_eq!(args.eval_root, None);
@@ -482,6 +497,8 @@ mod tests {
             "1200",
             "--formula-detector",
             "D:\\models\\pix2text-mfd-1.5.onnx",
+            "--table-model",
+            "D:\\models\\slanet-plus.onnx",
             "--max-eval-cases",
             "8",
             "--eval-root",
@@ -527,6 +544,10 @@ mod tests {
         assert_eq!(
             args.formula_detector.as_deref(),
             Some(std::path::Path::new("D:\\models\\pix2text-mfd-1.5.onnx"))
+        );
+        assert_eq!(
+            args.table_model.as_deref(),
+            Some(std::path::Path::new("D:\\models\\slanet-plus.onnx"))
         );
         assert_eq!(
             args.eval_root.as_deref(),
@@ -634,7 +655,10 @@ mod tests {
     #[test]
     fn the_model_dir_default_comes_from_the_library() {
         let args = parse(&[]);
-        assert_eq!(args.model_dir(), rapid_ocr_rs::default_model_store_dir());
+        assert_eq!(
+            args.model_dir(),
+            rapid_structure_rs::default_model_store_dir()
+        );
         let explicit = parse(&["--model-dir", "D:\\m"]);
         assert_eq!(explicit.model_dir(), std::path::PathBuf::from("D:\\m"));
     }

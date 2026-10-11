@@ -1,17 +1,17 @@
-//! `rapidocr serve` 的**进程边界**验收（A1：`--reverify-models` 的启动期 fail-fast）。
+//! `rapidstruct serve` 的**进程边界**验收（A1：`--reverify-models` 的启动期 fail-fast）。
 //!
-//! 只有启用 `serve` feature 时才有意义：默认构建里 `rapidocr serve` 是一句可定位的
+//! 只有启用 `serve` feature 时才有意义：默认构建里 `rapidstruct serve` 是一句可定位的
 //! 拒绝（§2.1：HTTP 层是 optional feature），那条路径不是本文件要考察的东西。
 //! 因此整个文件在未启用 feature 时被 `cfg` 掉（`Cargo.toml` 的 `[[test]]` 也声明了
 //! `required-features`，两道保险）。
 //!
 //! # 为什么它在 `tests/` 而不是在 `src/bin/serve/tests.rs`
 //!
-//! 单元测试跑在 `target/<profile>/deps/rapidocr-*.exe` 里，cargo 在那里**不**保证注入
-//! `CARGO_BIN_EXE_rapidocr`（`src/bin` 的 `#[cfg(test)] mod tests` 只能靠猜上一级目录，
+//! 单元测试跑在 `target/<profile>/deps/rapidstruct-*.exe` 里，cargo 在那里**不**保证注入
+//! `CARGO_BIN_EXE_rapidstruct`（`src/bin` 的 `#[cfg(test)] mod tests` 只能靠猜上一级目录，
 //! 猜到的可能是 `cargo build` 留下的、**没有** `serve` feature 的旧可执行文件——
 //! 那会让测试断言一个与本次构建无关的东西）。集成测试里 cargo **保证**注入这个变量，
-//! 它指向本次 `cargo test --features serve` 构建出来的 `rapidocr.exe`。
+//! 它指向本次 `cargo test --features serve` 构建出来的 `rapidstruct.exe`。
 //!
 //! # 这一条用例证什么
 //!
@@ -78,15 +78,15 @@ fn manifest_model_dir_with(root: &Path, name: &str, with_detector: bool) -> Path
 
 /// 测试用的 SHA-256（只读几十字节的夹具；不引入任何库依赖）。
 fn sha256_file(path: &Path) -> String {
-    // `rapid_ocr_rs` 的下载/校验路径用的就是它，这里直接用同一个实现，
+    // `rapid_structure_rs` 的下载/校验路径用的就是它，这里直接用同一个实现，
     // 避免在集成测试里手写第二套哈希。
-    rapid_ocr_rs::sha256_file(path).expect("hash the fixture")
+    rapid_structure_rs::sha256_file(path).expect("hash the fixture")
 }
 
-/// A1：损坏/缺失的计划模型 → `rapidocr serve --reverify-models` **拒绝启动**。
+/// A1：损坏/缺失的计划模型 → `rapidstruct serve --reverify-models` **拒绝启动**。
 #[test]
 fn the_serve_command_refuses_to_start_when_the_plan_model_is_missing() {
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rapidocr"));
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rapidstruct"));
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/m1-serve-tests");
     std::fs::create_dir_all(&root).expect("create the fixture root");
     let dir = manifest_model_dir(&root, "cli-reverify-process");
@@ -136,7 +136,7 @@ fn the_serve_command_refuses_to_start_when_the_plan_model_is_missing() {
 /// 可以一路留到第一次公式请求。
 #[test]
 fn the_serve_command_refuses_to_start_when_the_formula_detector_is_corrupt() {
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rapidocr"));
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rapidstruct"));
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/m1-serve-tests");
     std::fs::create_dir_all(&root).expect("create the fixture root");
     // 集合声明了 `formula_detector` → 公式管线属于这次运行（不需要 --formula-detector）。

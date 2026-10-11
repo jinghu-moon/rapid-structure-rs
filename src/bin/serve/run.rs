@@ -1,4 +1,4 @@
-//! `rapidocr serve` 的启动编排：CLI → 绑定 → 校验 → 模型 → 页面 → 运行时（§3、§7、§9）。
+//! `rapidstruct serve` 的启动编排：CLI → 绑定 → 校验 → 模型 → 页面 → 运行时（§3、§7、§9）。
 //!
 //! # 启动顺序（`docs/05` §7.6 的逐步落地）
 //!
@@ -59,6 +59,8 @@ pub(crate) enum ServeStartError {
     Page(PageError),
     /// `--formula-detector` 指向的文件不存在（M4：配置错误在启动期失败）。
     FormulaDetector { path: std::path::PathBuf },
+    /// `--table-model` 指向的文件不存在（E16.2：同一条启动期规则）。
+    TableModel { path: std::path::PathBuf },
     /// `--eval-root` 不可用（不存在、不是目录、或无法规范化）——启动期失败，
     /// 绝不"先开着、第一次评估才发现沙箱是空的"。
     EvalRoot {
@@ -84,7 +86,7 @@ impl std::fmt::Display for ServeStartError {
         match self {
             Self::Bind { address, detail } => write!(
                 f,
-                "cannot bind {address}: {detail}; rapidocr serve reports the conflict instead of \
+                "cannot bind {address}: {detail}; rapidstruct serve reports the conflict instead of \
                  silently switching ports (docs/05 §3)"
             ),
             Self::NonLoopback(error) => write!(f, "{error}"),
@@ -96,6 +98,13 @@ impl std::fmt::Display for ServeStartError {
                 "--formula-detector {} does not exist (or is not a file); the formula queue needs \
                  the page formula detection model, and a wrong path must fail at startup instead \
                  of on the first formula request (docs/05 §4.2)",
+                path.display()
+            ),
+            Self::TableModel { path } => write!(
+                f,
+                "--table-model {} does not exist (or is not a file); `?table=1` needs the table \
+                 structure model, and a wrong path must fail at startup instead of on the first \
+                 table request (docs/11 §4.2)",
                 path.display()
             ),
             Self::Runtime(error) => write!(f, "cannot start the serve runtime: {error}"),
@@ -203,13 +212,13 @@ pub(crate) fn run(args: ServeArgs) -> Result<(), ServeStartError> {
     let nonce = generate_nonce().map_err(ServeStartError::Random)?;
     let page = render_page(&token, &nonce)?;
     println!("serve: token/nonce entropy source: {}", random_source());
-    // M5：流动日志级别（`--log-level` > `RAPID_OCR_SERVE_LOG` > `off`）。取值非法就拒绝启动
+    // M5：流动日志级别（`--log-level` > `RAPID_STRUCTURE_SERVE_LOG` > `off`）。取值非法就拒绝启动
     // —— 一个写错的开关名不应该表现为"日志开关看起来没生效"。
     let log_level = args.log_level()?;
     println!(
-        "serve: flow logging: --log-level={} (RAPID_OCR_SERVE_LOG={}); {}",
+        "serve: flow logging: --log-level={} (RAPID_STRUCTURE_SERVE_LOG={}); {}",
         log_level.name(),
-        std::env::var("RAPID_OCR_SERVE_LOG").unwrap_or_else(|_| "<unset>".to_string()),
+        std::env::var("RAPID_STRUCTURE_SERVE_LOG").unwrap_or_else(|_| "<unset>".to_string()),
         match log_level {
             LogLevel::Off =>
                 "one line per HTTP request and per job lifecycle is off (pass \
@@ -256,10 +265,17 @@ pub(crate) fn run(args: ServeArgs) -> Result<(), ServeStartError> {
         // 而不是等到第一次公式请求（§7.6 第 2 步的"配置错误在启动期失败"）。
         return Err(ServeStartError::FormulaDetector { path: path.clone() });
     }
+    // E16.2：表格结构模型走**同一条**启动期规则（CLI > 集合声明的 `table_structure` role）。
+    if let Some(path) = args.table_model.as_ref()
+        && !path.is_file()
+    {
+        return Err(ServeStartError::TableModel { path: path.clone() });
+    }
     let model_plan = ModelPlan::resolve(
         &model_dir,
         &startup.plan.engine,
         args.formula_detector.as_deref(),
+        args.table_model.as_deref(),
     )?;
     // 快照只算一次（逐文件校验会重新读盘并哈希）：日志、引擎状态机与 `/api/models`
     // 的启动期字段都来自这一份。
@@ -300,6 +316,7 @@ pub(crate) fn run(args: ServeArgs) -> Result<(), ServeStartError> {
         model_plan
             .formula_detector()
             .map(|spec| spec.path.as_path()),
+        model_plan.table_model().map(|spec| spec.path.as_path()),
         eval_root.as_ref(),
     );
 
@@ -419,6 +436,7 @@ pub(crate) fn reverify_gate(model_plan: &ModelPlan) -> Result<PlanReverification
         let expected: Vec<String> = match pipeline {
             Pipeline::Text => fresh.blocking_names(),
             Pipeline::Formula => fresh.formula_blocking_names(),
+            Pipeline::Table => fresh.table_blocking_names(),
         };
         let observed: Vec<String> = report
             .blocking_in(pipeline)
@@ -506,9 +524,10 @@ fn log_startup(
     allow_download_hosts: &[String],
     provider_overridden: bool,
     yaml_max_side: usize,
-    yaml_provider: rapid_ocr_rs::ProviderPreference,
+    yaml_provider: rapid_structure_rs::ProviderPreference,
     routing: &super::server::OcrRouting,
     formula_detector: Option<&std::path::Path>,
+    table_model: Option<&std::path::Path>,
     eval_root: Option<&evaluate::EvalRoot>,
 ) {
     println!(
@@ -554,6 +573,32 @@ fn log_startup(
         }
     );
     println!(
+        "serve: table routing {} (table structure model: {})",
+        if routing.table {
+            "enabled by a table structure model"
+        } else {
+            "disabled (no table structure model configured)"
+        },
+        table_model
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    );
+    let table_blocking = snapshot.table_blocking_names();
+    println!(
+        "serve: table pipeline {}",
+        if !snapshot.table_in_plan() {
+            "not part of this run's model plan (no table structure model is configured)".to_string()
+        } else if table_blocking.is_empty() {
+            "complete (the table structure model is in this run's plan and verified)".to_string()
+        } else {
+            format!(
+                "incomplete: {} (`?table=1` returns 409 until it is present; text OCR and the \
+                 formula queue are unaffected)",
+                table_blocking.join(", ")
+            )
+        }
+    );
+    println!(
         "serve: startup model verification {}",
         if args.reverify_models {
             "cold (--reverify-models: every file this run uses was re-hashed at startup, and a \
@@ -585,7 +630,7 @@ fn log_startup(
         if provider_overridden {
             format!(
                 "--provider overrides --config {}",
-                rapid_ocr_rs::format_provider_preference(yaml_provider)
+                rapid_structure_rs::format_provider_preference(yaml_provider)
             )
         } else {
             "from --config / built-in default".to_string()
@@ -635,6 +680,13 @@ fn log_startup(
         "serve: trusted download hosts {}",
         effective_hosts(allow_download_hosts).join(", ")
     );
+    // 公式渲染引擎随二进制编译期嵌入（build.rs 扫描 src/bin/web/static/）；
+    // 把数量打进启动日志，让“这次构建带没带渲染引擎”在启动时就可归因。
+    println!(
+        "serve: formula render assets: {} embedded file(s) served from /static/* (KaTeX + \
+         MathJax tex-svg; same-origin, zero CDN)",
+        super::assets::asset_count()
+    );
     if !allow_download_hosts.is_empty() {
         // §6.1 第 3 条要求的**高风险警告**：白名单必须来自可信配置，而不是资源描述自身
         // （OWASP SSRF Prevention）。把理由与后果都写出来，而不是一句"已启用"。
@@ -646,7 +698,7 @@ fn log_startup(
              allow-list to come from trusted configuration instead. Every host you add here is \
              accepted for model downloads; add only hosts you control or trust, and remove the \
              flag when you no longer need it.",
-            rapid_ocr_rs::ALLOWED_DOWNLOAD_HOSTS.join(", "),
+            rapid_structure_rs::ALLOWED_DOWNLOAD_HOSTS.join(", "),
             allow_download_hosts.join(", ")
         );
     }
@@ -654,7 +706,7 @@ fn log_startup(
 
 /// 编译期白名单 ∪ `--allow-download-host`（启动日志用；库常量本身不变）。
 fn effective_hosts(extra: &[String]) -> Vec<String> {
-    let mut hosts: Vec<String> = rapid_ocr_rs::ALLOWED_DOWNLOAD_HOSTS
+    let mut hosts: Vec<String> = rapid_structure_rs::ALLOWED_DOWNLOAD_HOSTS
         .iter()
         .map(|host| (*host).to_string())
         .collect();
@@ -702,7 +754,7 @@ fn yaml_provider_is_overridden(args: &ServeArgs) -> bool {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use rapid_ocr_rs::{EngineConfig, sha256_file};
+    use rapid_structure_rs::{EngineConfig, sha256_file};
 
     use super::{
         PAGE_TEMPLATE, PageError, ServeStartError, check_nonce_attributes, render_page_with,
@@ -765,7 +817,7 @@ mod tests {
 
     /// 解析一份运行计划（`--formula-detector` 的值由调用方给出）。
     fn plan_for(dir: &Path, detector: Option<&Path>) -> ModelPlan {
-        ModelPlan::resolve(dir, &EngineConfig::default(), detector).expect("model plan")
+        ModelPlan::resolve(dir, &EngineConfig::default(), detector, None).expect("model plan")
     }
 
     /// A1：健康的模型集 → 冷验证通过，**每个文件都在这一次真的算了一次摘要**

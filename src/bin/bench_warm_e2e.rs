@@ -1,5 +1,5 @@
 use clap::Parser;
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     ClassifierPlan, ClassifierPolicy, DetectionPolicy, EngineConfig, ImageInput, OcrEngine,
     OcrRequest, OutputPolicy, PreprocessPolicy, RapidOcrEngine, RecognitionPolicy, StagePlan,
     TimingLedger, WordOutputMode,
@@ -11,7 +11,7 @@ use std::{fs, path::PathBuf, sync::Arc, time::Instant};
 struct Cli {
     #[arg(long = "config")]
     config_path: Option<PathBuf>,
-    #[arg(long, default_value = "OCR-test-image")]
+    #[arg(long, default_value = "datasets/text")]
     images_dir: PathBuf,
     #[arg(long, default_value_t = 1)]
     rounds: usize,
@@ -23,6 +23,15 @@ struct Cli {
     max_side_len: Option<usize>,
     #[arg(long)]
     intra_threads: Option<usize>,
+    /// SLANet-plus ONNX 路径。给出即启用页面级表格路由（门禁 G5 的对照开关）。
+    ///
+    /// 不给出时表格路由**显式关闭**，报告与启用表格功能之前逐位可比 —— 这正是
+    /// G6（关闭时输出与基线一致）在性能侧的对照条件。
+    #[arg(long)]
+    table_model: Option<PathBuf>,
+    /// 表格结构会话的 intra 线程数；缺省继承运行时推导值（E12 实测：改它没有依据）。
+    #[arg(long)]
+    table_intra_threads: Option<usize>,
 }
 fn main() {
     if let Err(e) = run() {
@@ -86,6 +95,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let init_ms = engine_start.elapsed().as_secs_f64() * 1000.0;
     // 引擎解析出的线程 plan：报告里的数字是**生效值**，不是 YAML 里写了什么。
     let thread_plan = serde_json::to_value(&engine.runtime_profile().threads)?;
+    // 表格路由：不给 `--table-model` 就保持关闭，且**不校验模型路径**（关闭即无影响）。
+    let table_policy = match &cli.table_model {
+        Some(model_path) => rapid_structure_rs::TablePolicy {
+            enabled: true,
+            model_path: Some(model_path.clone()),
+            intra_threads: cli.table_intra_threads,
+            ..rapid_structure_rs::TablePolicy::default()
+        },
+        None => rapid_structure_rs::TablePolicy::default(),
+    };
+    let table_meta = json!({
+        "enabled": table_policy.enabled,
+        "model_path": cli.table_model.as_ref().map(|p| p.display().to_string()),
+        "input_side_len": table_policy.input_side_len,
+        "intra_threads": table_policy.intra_threads,
+    });
     let request = |bytes: Vec<u8>| OcrRequest {
         input: ImageInput::Encoded(Arc::from(bytes)),
         roi: None,
@@ -107,7 +132,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             words: WordOutputMode::Off,
         },
         output: OutputPolicy::default(),
-        formula: rapid_ocr_rs::FormulaPolicy::default(),
+        formula: rapid_structure_rs::FormulaPolicy::default(),
+        table: table_policy.clone(),
     };
     for _ in 0..cli.warmup_rounds {
         for p in &images {
@@ -138,7 +164,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             stages.push(&out);
             ledgers.push(TimingLedger::from_timings(&out.timings));
             if provider_resolution.is_none() {
-                let describe = |info: &rapid_ocr_rs::ProviderResolutionInfo| {
+                let describe = |info: &rapid_structure_rs::ProviderResolutionInfo| {
                     serde_json::json!({
                         "requested": format!("{:?}", info.requested),
                         // `selected_ep` 只表示“交给 ORT 的 EP 链头部”，不是逐节点执行证据。
@@ -176,15 +202,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // 引擎解析出的线程分配（生效值；三个阶段共享同一个 plan）。
             // `null` 表示该值未被配置（交给 ORT / Rayon 自己的默认值）。
             "thread_plan": thread_plan,
+            // 页面级表格路由的开关与参数；`enabled = false` 的报告与启用表格功能之前
+            // 逐位可比（门禁 G6 的性能侧对照条件）。
+            "table": table_meta,
             "provider_resolution": provider_resolution,
             // 实际使用的 ONNX Runtime 指纹：API 版本字符串 + 运行库文件（路径/体积/SHA-256）
             // + provider DLL。本 crate 用 `rustc-link-lib=static=onnxruntime` 链接，
             // 进程里没有 onnxruntime.dll 模块，因此指纹来自静态库或 exe（见
             // `runtime::ort_runtime`）。没有指纹的报告不可与其它报告严格比较。
-            "ort_runtime": rapid_ocr_rs::ort_runtime_fingerprint(),
+            "ort_runtime": rapid_structure_rs::ort_runtime_fingerprint(),
             // 版本字符串仍然单独保留（旧报告里叫 `ort_runtime_version`），
             // 让“版本”这一项可以直接被 grep 到，不必先理解整个指纹结构。
-            "ort_runtime_version": rapid_ocr_rs::ort_runtime_version(),
+            "ort_runtime_version": rapid_structure_rs::ort_runtime_version(),
         },
         "stats": {
             "wall_ms": stats(&wall),
@@ -209,8 +238,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "timing_split": timing_split,
         // 峰值工作集口径与库内一致：`windows:GetProcessMemoryInfo.PeakWorkingSetSize`。
         "memory": {
-            "peak_working_set_bytes": rapid_ocr_rs::peak_working_set_bytes(),
-            "source": rapid_ocr_rs::peak_memory_source(),
+            "peak_working_set_bytes": rapid_structure_rs::peak_working_set_bytes(),
+            "source": rapid_structure_rs::peak_memory_source(),
         },
     });
     let text = serde_json::to_string_pretty(&report)?;
@@ -254,7 +283,7 @@ struct StageSamples {
 }
 
 impl StageSamples {
-    fn push(&mut self, out: &rapid_ocr_rs::OcrOutput) {
+    fn push(&mut self, out: &rapid_structure_rs::OcrOutput) {
         let push_opt = |dst: &mut Vec<f64>, value: Option<f32>| {
             if let Some(value) = value {
                 dst.push(f64::from(value));
@@ -348,8 +377,8 @@ impl StageSamples {
 ///
 /// 每个样本各算一份账（[`TimingLedger::from_timings`]，每一项只算一次），再按字段求
 /// 均值。守恒检查建立在均值账本上，而**均值账本与每个样本账本一样并不严格守恒**：
-/// `total_ms` 是“外层 `preprocess_ms` 窗口（`rapid_ocr.rs:619-719`）+ 内层 `inner.run()`
-/// 窗口（`rapid_ocr.rs:106-130`）”的总窗口，命名分量只是其中的若干子窗口，
+/// `total_ms` 是“外层 `preprocess_ms` 窗口（`rapid_structure.rs:619-719`）+ 内层 `inner.run()`
+/// 窗口（`rapid_structure.rs:106-130`）”的总窗口，命名分量只是其中的若干子窗口，
 /// 两者口径不同（**两个窗口串行，不是重叠**）。
 ///
 /// 因此这里必须把“不守恒该怎么读”一起写进 JSON：
@@ -383,6 +412,9 @@ fn ledger_report(ledgers: &[TimingLedger]) -> serde_json::Value {
             "model_postprocess_ms": mean.model_postprocess_ms(),
             "page_postprocess_ms": mean.page_postprocess_ms,
             "formula_ms": mean.formula_ms,
+            "table_detect_ms": mean.table_detect_ms,
+            "table_structure_infer_ms": mean.table_structure_infer_ms,
+            "table_backfill_ms": mean.table_backfill_ms,
             "rust_ms": mean.rust_ms(),
             "attributed_ms": mean.attributed_ms(),
             "unattributed_ms": mean.unattributed_ms,
@@ -467,6 +499,9 @@ fn inference_share(ledgers: &[TimingLedger], total_avg: f64) -> serde_json::Valu
         "detector_infer_share": share(mean.detector_infer_ms),
         "classifier_infer_share": share(mean.classifier_infer_ms),
         "recognizer_infer_share": share(mean.recognizer_infer_ms),
+        // 表格结构识别是推理，已计入 `ort_inference_ms`；单列出来是为了让
+        // `ort_inference_ms` 的增长始终可解释（表格未启用时为 0）。
+        "table_structure_infer_share": share(mean.table_structure_infer_ms),
         "rust_ms": rust,
         "rust_share": share(rust),
         // 兼容旧的字段名：以前把“页面级 preprocess + postprocess”称作 rust_preprocess /
@@ -480,6 +515,11 @@ fn inference_share(ledgers: &[TimingLedger], total_avg: f64) -> serde_json::Valu
         "rust_model_postprocess_share": share(mean.model_postprocess_ms()),
         "rust_page_postprocess_ms": mean.page_postprocess_ms,
         "rust_page_postprocess_share": share(mean.page_postprocess_ms),
+        // 表格域的两个 Rust 侧分量也计入 `rust_ms`，同样单列（未启用时为 0）。
+        "rust_table_detect_ms": mean.table_detect_ms,
+        "rust_table_detect_share": share(mean.table_detect_ms),
+        "rust_table_backfill_ms": mean.table_backfill_ms,
+        "rust_table_backfill_share": share(mean.table_backfill_ms),
         // 输入侧溢出：`decode + resize + crop` 超出外层 `preprocess_ms` 窗口的量。
         // `rust_ms` 用的是截断后的 `input_ms()`，所以这一项是恒等式里不可省略的独立项。
         "input_overflow_ms": input_overflow,
@@ -580,7 +620,7 @@ mod tests {
     fn timing_split_identity_keeps_input_overflow_explicit() {
         // 与 `src/runtime/timing.rs::input_overflow_keeps_the_input_invariant_by_construction`
         // 同一口径：外层窗口 5 ms，命名三项之和 12 ms → 溢出 7 ms。
-        let timings = rapid_ocr_rs::OcrTimings {
+        let timings = rapid_structure_rs::OcrTimings {
             decode_ms: 2.0,
             resize_ms: 7.0,
             crop_ms: 3.0,
@@ -598,6 +638,9 @@ mod tests {
             recognizer_postprocess_ms: 2.0,
             recognize_ms: 23.0,
             formula_ms: 0.0,
+            table_detect_ms: 0.0,
+            table_structure_infer_ms: 0.0,
+            table_backfill_ms: 0.0,
             postprocess_ms: 3.0,
             total_ms: 43.0,
         };

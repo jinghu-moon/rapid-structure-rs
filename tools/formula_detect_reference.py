@@ -15,8 +15,8 @@ It also *generates* the committed fixtures under `tests/fixtures/formula-detect/
     golden.json      geometry + raw head boxes + final polygons for page.png
     golden_scaled.json  same for page_scaled.png
 
-Model location: `--model`, else `RAPID_OCR_FORMULA_DETECT_MODEL`, else
-`RAPID_OCR_MODEL_ROOT` + the standard relative path.  Missing model => hard failure
+Model location: `--model`, else `RAPID_STRUCTURE_FORMULA_DETECT_MODEL`, else
+`RAPID_STRUCTURE_MODEL_ROOT` + the standard relative path.  Missing model => hard failure
 with a clear message (never a silent skip).
 """
 
@@ -65,10 +65,10 @@ def resolve_model(explicit: str | None) -> Path:
     candidates = []
     if explicit:
         candidates.append(Path(explicit))
-    env_direct = os.environ.get("RAPID_OCR_FORMULA_DETECT_MODEL")
+    env_direct = os.environ.get("RAPID_STRUCTURE_FORMULA_DETECT_MODEL")
     if env_direct:
         candidates.append(Path(env_direct.strip().strip('"')))
-    env_root = os.environ.get("RAPID_OCR_MODEL_ROOT")
+    env_root = os.environ.get("RAPID_STRUCTURE_MODEL_ROOT")
     if env_root:
         root = Path(env_root.strip().strip('"'))
         candidates.append(root if root.is_file() else root / MODEL_RELATIVE)
@@ -77,8 +77,8 @@ def resolve_model(explicit: str | None) -> Path:
             return candidate
     raise SystemExit(
         "pix2text-mfd-1.5.onnx not found. Pass --model <path>, or set "
-        "RAPID_OCR_FORMULA_DETECT_MODEL to the .onnx file, or set "
-        f"RAPID_OCR_MODEL_ROOT to the model root containing {MODEL_RELATIVE}."
+        "RAPID_STRUCTURE_FORMULA_DETECT_MODEL to the .onnx file, or set "
+        f"RAPID_STRUCTURE_MODEL_ROOT to the model root containing {MODEL_RELATIVE}."
     )
 
 

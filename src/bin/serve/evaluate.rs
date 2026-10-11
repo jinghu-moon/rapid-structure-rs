@@ -2,15 +2,15 @@
 //!
 //! # 复用库的指标，不另写一套
 //!
-//! 全部指标都来自 `rapid_ocr_rs::evaluation::ocr`：`EvaluationCase`（清单格式）、
+//! 全部指标都来自 `rapid_structure_rs::evaluation::ocr`：`EvaluationCase`（清单格式）、
 //! `evaluate_case`（CER / 精确匹配 / 检测精度与召回 / 多边形 IoU）与
 //! `EvaluationSummary::from_cases`（逐例 + 均值）。本模块**只**负责：
 //!
 //! 1. 解析请求体（白名单式：**恰好**一个 `manifest` 键，没有第二个可以改变行为的字段）；
 //! 2. 读清单、按 `--max-eval-cases` 限流、把 `image` 解析成绝对路径（与
-//!    `rapidocr evaluate --manifest` **同一套**规则：相对路径相对清单所在目录）；
+//!    `rapidstruct evaluate --manifest` **同一套**规则：相对路径相对清单所在目录）；
 //! 3. 逐张调引擎（文本管线，与 CLI 的评估一致）并汇总；
-//! 4. 把报告交回 HTTP 层。报告字段与 CLI 的 `rapidocr evaluate` 报告**同一份实现**
+//! 4. 把报告交回 HTTP 层。报告字段与 CLI 的 `rapidstruct evaluate` 报告**同一份实现**
 //!    （`crate::evaluation_report_value`：库的质量指标 + 进程级内存与 ORT 指纹）。
 //!
 //! # 为什么它不排队
@@ -29,10 +29,10 @@
 
 use std::path::{Path, PathBuf};
 
-use rapid_ocr_rs::evaluation::ocr::{
+use rapid_structure_rs::evaluation::ocr::{
     EvaluationCase, EvaluationReport, EvaluationSummary, evaluate_case,
 };
-use rapid_ocr_rs::{FormulaPolicy, to_output_items};
+use rapid_structure_rs::{FormulaPolicy, TablePolicy, to_output_items};
 use serde_json::{Value, json};
 
 use super::error::ServeError;
@@ -52,7 +52,7 @@ fn evaluation_disabled() -> ServeError {
     }
 }
 
-/// 判定框匹配的 IoU 阈值：与 `rapidocr evaluate --iou-threshold` 的默认值一致。
+/// 判定框匹配的 IoU 阈值：与 `rapidstruct evaluate --iou-threshold` 的默认值一致。
 ///
 /// 端点不接受该参数：一个协议字段就应该有一种含义，改阈值请用 CLI（或改这里的常量）。
 /// 响应里回显它，报告因此可复核。
@@ -161,7 +161,7 @@ pub(super) fn load_cases(manifest: &Path, limit: usize) -> Result<Vec<Evaluation
     let cases: Vec<EvaluationCase> =
         serde_json::from_str(&text).map_err(|error| ServeError::Evaluation {
             reason: format!(
-                "the manifest `{}` is not a `rapidocr evaluate` manifest (expected a JSON array \
+                "the manifest `{}` is not a `rapidstruct evaluate` manifest (expected a JSON array \
                  of `{{ image, text, boxes }}`): {error}",
                 manifest.display()
             ),
@@ -235,9 +235,13 @@ pub(super) fn run(shared: &ServeShared, manifest: &Path) -> Result<Value, ServeE
         let request = text_request(
             std::sync::Arc::from(bytes.into_boxed_slice()),
             None,
-            // 评估走文本管线：与 `rapidocr evaluate` 一致（公式指标是另一套报告，
+            // 评估走文本管线：与 `rapidstruct evaluate` 一致（公式指标是另一套报告，
             // 见 `evaluation::formula`，不在本端点的范围内）。
             FormulaPolicy::default(),
+            // 表格同理：`POST /api/evaluate` 是**指标**端点，表格的结构/内容指标由
+            // `rapidstruct table-eval` 与 `docs/10-table-evaluation-protocol.md` 负责。
+            // 这里显式关闭，而不是让表格阶段偷偷改变 CER 的输入。
+            TablePolicy::default(),
         );
         let output = recognize_with(shared, request)?;
         let metrics = evaluate_case(
@@ -276,7 +280,7 @@ mod tests {
 
     use super::{EvalRoot, IOU_THRESHOLD, load_cases, parse_manifest_body, resolve_image};
     use crate::serve::error::ServeError;
-    use rapid_ocr_rs::evaluation::ocr::EvaluationCase;
+    use rapid_structure_rs::evaluation::ocr::EvaluationCase;
 
     /// 沙箱测试自己的根目录。
     ///

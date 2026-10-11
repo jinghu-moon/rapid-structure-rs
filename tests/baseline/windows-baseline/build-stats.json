@@ -1,13 +1,12 @@
 {
-  "collected_at_utc": "2026-10-03T03:33:07.6860815Z",
+  "collected_at_utc": "2026-10-08T12:47:26.4309817Z",
   "profile": "release",
-  "crate_rebuild_ms": 17400,
-  "crate_rebuild_scope": "cargo clean -p rapid-ocr-rs --release; cargo build --release --bins",
+  "crate_rebuild_ms": 26392,
+  "crate_rebuild_scope": "cargo clean -p rapid-structure-rs --release; cargo build --release --bins",
   "binary_bytes": {
-    "rapidocr": 34611712,
-    "bench_warm_e2e": 34365440,
-    "formula_eval": 29712384,
-    "formula_bench": 29022208
+    "bench_warm_e2e": 33304576,
+    "formula_eval": 28444160,
+    "formula_bench": 27734016
   },
-  "target_dir_bytes": 18539595174.0
+  "target_dir_bytes": 43762586127.0
 }

@@ -1,0 +1,11 @@
+{
+  "_comment": "全功能档：models/serve（medium 的 det/rec/dict + 公式识别 pp_formulanet_plus_m + 公式检测 pix2text-mfd-1.5）+ 表格结构，三条管线全开。用法：pwsh -File serve.ps1 -ServeConfig models/configs/serve-local-full.json。本机实测同一张 3200x2000 页面 18-27 s：medium 的 infer 成本约为 small 的 20 倍（线程扫描 t=1 138 s / t=16 15.8 s，不是线程配置问题），是模型本身的量级差。",
+  "schema_version": 1,
+  "port": 8760,
+  "model_dir": "models/serve",
+  "config": "models/configs/test-config.yaml",
+  "table_model": "models/table/slanet-plus.onnx",
+  "table_enabled": true,
+  "open": true,
+  "provider": null
+}

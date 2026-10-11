@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT, DownloadBudget, DownloadError, DownloadObserver,
     ModelFileSpec, ModelSet, RapidOcrError, download_model_set_observed,
 };
@@ -115,7 +115,7 @@ pub(super) fn real_downloader_factory() -> DownloaderFactory {
     Arc::new(|| Box::new(RealDownloader))
 }
 
-/// [`rapid_ocr_rs::download_model_set_observed`] 的薄包装。
+/// [`rapid_structure_rs::download_model_set_observed`] 的薄包装。
 struct RealDownloader;
 
 impl ModelDownloader for RealDownloader {

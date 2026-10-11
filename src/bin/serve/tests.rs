@@ -47,12 +47,14 @@ use super::run::render_page;
 use super::security::{LocalOrigin, ServeToken, generate_nonce};
 use super::server::{FreeSpaceFactory, ServeContext, ServeShared};
 use super::state::ServeStartup;
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     CoordinateSpace, DetectionOutcome, DownloadError, EngineConfig, EngineInfo, FileIdentity,
     FormulaOutcome, FormulaPolicy, GenericProviderPreference, ImageInfo, ImageSize, LangDet,
     LangRec, ModelFileSpec, ModelType, OcrOutput, OcrRegion, OcrRequest, OcrTimings, OcrVersion,
     Polygon, ProviderInfo, ProviderResolutionInfo, RapidOcrError, RecognitionOutcome, RegionKind,
-    RegionSource, ResolvedProvider, StageReports, sha256_file,
+    RegionSource, ResolvedProvider, StageReports, TableCellMatch, TableCellOutcome,
+    TableDegradation, TableOutcome, TablePolicy, TableStructureConfidence, TableTextPolicy,
+    sha256_file,
 };
 use serde_json::{Value, json};
 
@@ -73,12 +75,17 @@ struct Scripted {
     served: Arc<Mutex<Vec<String>>>,
     /// 每次识别收到的 `FormulaPolicy`（M4：公式队列真的把公式管线接上了）。
     formulas: Arc<Mutex<Vec<FormulaPolicy>>>,
+    /// 每次识别收到的 `TablePolicy`（E16.2：`?table=1` 真的把表格阶段接上了）。
+    tables: Arc<Mutex<Vec<TablePolicy>>>,
     /// 可选的闸门：识别在返回**之前**阻塞，直到测试放行（M4 的单飞测试用它把
     /// "评估正在跑"变成确定性事实，而不是靠 sleep 猜时序）。
     gate: Option<Arc<Gate>>,
     /// 输出里附加的**公式**区域数（M5 的契约用例：`/result` 的 `formula.latex`
     /// 只有真的有一条公式区域时才被这条端到端路径覆盖）。
     formula_regions: usize,
+    /// 输出里附加的**表格**区域数（E16.2/E16.3 的契约用例：`/result` 的 `table.html`
+    /// 只有真的有一条表格区域时才被这条端到端路径覆盖）。
+    table_regions: usize,
 }
 
 impl Scripted {
@@ -93,14 +100,22 @@ impl Scripted {
             ep: "cpu".to_string(),
             served: Arc::new(Mutex::new(Vec::new())),
             formulas: Arc::new(Mutex::new(Vec::new())),
+            tables: Arc::new(Mutex::new(Vec::new())),
             gate: None,
             formula_regions: 0,
+            table_regions: 0,
         }
     }
 
     /// 输出里附带 `count` 条公式区域（M5 的契约用例）。
     fn with_formula_regions(mut self, count: usize) -> Self {
         self.formula_regions = count;
+        self
+    }
+
+    /// 输出里附带 `count` 条表格区域（E16.2/E16.3 的契约用例）。
+    fn with_table_regions(mut self, count: usize) -> Self {
+        self.table_regions = count;
         self
     }
 
@@ -120,6 +135,14 @@ impl Scripted {
     /// 最近的 `n` 次识别收到的公式策略（时间顺序）。
     fn formulas(&self) -> Vec<FormulaPolicy> {
         self.formulas
+            .lock()
+            .expect("the scripted recorder is not poisoned")
+            .clone()
+    }
+
+    /// 每次识别收到的表格策略（时间顺序；E16.2）。
+    fn tables(&self) -> Vec<TablePolicy> {
+        self.tables
             .lock()
             .expect("the scripted recorder is not poisoned")
             .clone()
@@ -149,6 +172,11 @@ impl OcrBackend for ScriptedBackend {
             .expect("the scripted recorder is not poisoned")
             .push(request.formula.clone());
         self.state
+            .tables
+            .lock()
+            .expect("the scripted recorder is not poisoned")
+            .push(request.table.clone());
+        self.state
             .served
             .lock()
             .expect("the scripted recorder is not poisoned")
@@ -170,6 +198,7 @@ impl OcrBackend for ScriptedBackend {
             self.state.regions,
             self.state.text_bytes,
             self.state.formula_regions,
+            self.state.table_regions,
         ))
     }
 
@@ -185,7 +214,53 @@ impl OcrBackend for ScriptedBackend {
 ///
 /// `pub(crate)`：`results.rs` 的单元测试也用它构造成功载荷（同一份样例，避免两处各写一套）。
 pub(crate) fn scripted_output(regions: usize, text_bytes: usize) -> OcrOutput {
-    scripted_output_with(regions, text_bytes, 0)
+    scripted_output_with(regions, text_bytes, 0, 0)
+}
+
+/// 一份可用的表格区域结果（E16.2/E16.3 的契约用例）。
+///
+/// `html` 里**故意**带一个注入型单元格文本：网页侧的 `sanitizeTableHtml` 与
+/// 服务端侧的 `TableTextPolicy::Escape` 都必须让它变成惰性文本。夹具本身不净化，
+/// 因为"模型产物可能带标签"正是这条链路的真实输入。
+fn scripted_table_outcome() -> TableOutcome {
+    TableOutcome {
+        html: "<html><body><table><tr><td>a</td><td><script>alert(1)</script></td></tr></table></body></html>"
+            .to_string(),
+        table_html:
+            "<table><tr><td>a</td><td><script>alert(1)</script></td></tr></table>".to_string(),
+        markdown: "| a | <script>alert(1)</script> |\n| --- | --- |\n".to_string(),
+        rows: 1,
+        cols: 2,
+        confidence: TableStructureConfidence::Low,
+        degradations: vec![TableDegradation::GridHoles { holes: 1 }],
+        holes: 1,
+        cells: vec![
+            TableCellOutcome {
+                row: 0,
+                col: 0,
+                rowspan: 1,
+                colspan: 1,
+                text: "a".to_string(),
+                score: Some(0.9),
+                match_kind: TableCellMatch::Single,
+                polygon: Some(Polygon {
+                    points: [[1.0, 1.0], [5.0, 1.0], [5.0, 3.0], [1.0, 3.0]],
+                }),
+            },
+            TableCellOutcome {
+                row: 0,
+                col: 1,
+                rowspan: 1,
+                colspan: 1,
+                text: "<script>alert(1)</script>".to_string(),
+                score: None,
+                match_kind: TableCellMatch::BlankBox,
+                polygon: None,
+            },
+        ],
+        source_line_indices: vec![0],
+        model_id: "scripted-table".to_string(),
+    }
 }
 
 /// 同上，另外附带 `formula_regions` 条 [`RegionKind::Formula`] 区域（M5 的契约用例）。
@@ -196,6 +271,7 @@ pub(crate) fn scripted_output_with(
     regions: usize,
     text_bytes: usize,
     formula_regions: usize,
+    table_regions: usize,
 ) -> OcrOutput {
     let provider = ProviderResolutionInfo {
         requested: GenericProviderPreference::Cpu,
@@ -244,6 +320,21 @@ pub(crate) fn scripted_output_with(
                 model_id: "scripted-formula".to_string(),
                 token_ids: None,
             }),
+            // 表格区域刻意**不带** `recognition`（同公式：表格区域的文本来自单元格回填，
+            // 不是 CTC 逐字置信度）。
+            table: None,
+        }))
+        .chain((0..table_regions).map(|index| {
+            OcrRegion::table(
+                RegionSource::Detected {
+                    detector_index: regions + formula_regions + index,
+                },
+                Some(Polygon {
+                    points: [[1.0, 1.0], [30.0, 1.0], [30.0, 12.0], [1.0, 12.0]],
+                }),
+                Some(DetectionOutcome { score: 0.85 }),
+                scripted_table_outcome(),
+            )
         }))
         .collect();
     OcrOutput {
@@ -288,6 +379,9 @@ struct TestOptions {
     /// 路由与"该哈希谁"都由 `ModelPlan::resolve` 从这一条路径唯一解析（单一的运行计划），
     /// 测试因此不再自己拼一份 `FormulaDetectorSpec`——那正是"报告一份、加载另一份"的形状。
     formula_detector: Option<PathBuf>,
+    /// `--table-model`（E16.2）的 **CLI 路径**，与 `formula_detector` 同一条规则：
+    /// 路由与"该哈希谁"都由 `ModelPlan::resolve` 从这一条路径唯一解析。
+    table_model: Option<PathBuf>,
     /// `--eval-root` 沙箱（评审 P2-3）：默认指向测试模型目录（评估夹具就写在那里）。
     eval_root: Option<EvalRoot>,
     engine_factory: EngineFactory,
@@ -317,6 +411,7 @@ impl TestOptions {
             allow_download_hosts: Vec::new(),
             allow_provider_fallback: false,
             formula_detector: None,
+            table_model: None,
             eval_root,
             engine_factory: scripted.factory(),
             downloader: ScriptedDownload::default().factory(),
@@ -357,6 +452,18 @@ impl TestOptions {
         self
     }
 
+    /// 打开表格路由（E16.2）：给出 `--table-model` 的路径，`?table=1` 因此可达。
+    ///
+    /// 与 [`TestOptions::with_formula_routing`] 完全同形，包括"文件必须真的在磁盘上、
+    /// 而且必须像 ONNX"这一条：集合之外的结构模型没有声明摘要，准入因此按文档化规则
+    /// （存在 + 可读 + 像 ONNX）判定，而 `run.rs` 在启动期就拒绝"配置了结构模型但文件不在"。
+    fn with_table_routing(mut self, model: &Path) -> Self {
+        std::fs::write(model, plausible_onnx_bytes("table structure fixture"))
+            .expect("write the table structure fixture");
+        self.table_model = Some(model.to_path_buf());
+        self
+    }
+
     /// 关闭评估沙箱（评审 P2-3：不给 `--eval-root` 时端点必须拒绝）。
     fn without_eval_root(mut self) -> Self {
         self.eval_root = None;
@@ -370,7 +477,7 @@ impl TestOptions {
     }
 }
 
-/// 与 `OCR-Model/test-config-small.yaml` 一致的文本管线选择（PP-OCRv6 small / multi+ch）。
+/// 与 `models/configs/test-config-small.yaml` 一致的文本管线选择（PP-OCRv6 small / multi+ch）。
 ///
 /// 用它而不是 `EngineConfig::default()`：`/api/models` 的集合由这个选择决定，而
 /// 默认表的 v4 条目没有 `size_bytes`（M0a 记录），会让"每个文件都报告体积"的断言
@@ -415,6 +522,7 @@ impl TestServer {
             &options.model_dir,
             &startup.plan.engine,
             options.formula_detector.as_deref(),
+            options.table_model.as_deref(),
         )
         .expect("model plan");
         let snapshot = model_plan.snapshot();
@@ -466,7 +574,7 @@ impl TestServer {
             path,
             &[
                 ("Host", self.host.as_str()),
-                ("X-RapidOCR-Token", self.token.as_str()),
+                ("X-RapidStructure-Token", self.token.as_str()),
             ],
             None,
         )
@@ -476,7 +584,7 @@ impl TestServer {
     fn post(&self, path: &str, headers: &[(&str, &str)], body: &[u8]) -> RawResponse {
         let mut all = vec![
             ("Host", self.host.as_str()),
-            ("X-RapidOCR-Token", self.token.as_str()),
+            ("X-RapidStructure-Token", self.token.as_str()),
             ("Origin", self.origin.as_str()),
         ];
         all.extend_from_slice(headers);
@@ -1032,6 +1140,37 @@ fn test_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/m1-serve-tests")
 }
 
+/// 与 [`complete_model_dir`] 相同，但**清单声明了表格结构模型**（`role = table_structure`）。
+///
+/// 单独一个夹具而不是往 [`model_fixture_files`] 里加一个文件：那张清单的四个文件被
+/// M1/M2/M4 的许多断言按名字与数量钉住，往里加一个会让那些数字全部漂移。
+/// E16 要证明的命题是"**集合声明的**摘要真的流到了 `TablePolicy.expected_model_sha256`"，
+/// 因此这个夹具必须让清单真的声明它——否则断言两侧同为 `None`，什么也没证明。
+fn complete_model_dir_with_table(name: &str) -> PathBuf {
+    let dir = test_root().join(format!("complete-table-{name}-{}", unique()));
+    std::fs::create_dir_all(&dir).expect("create the model dir");
+    let mut files: Vec<(&'static str, &'static str)> = model_fixture_files().to_vec();
+    files.push(("slanet-plus.onnx", "table_structure"));
+    let mut manifest = String::from(
+        "{\"schema_version\":1,\"id\":\"test-set\",\"family\":\"PP-OCR\",\"version\":\"v-test\",\
+         \"files\":[",
+    );
+    for (index, (file, role)) in files.iter().enumerate() {
+        let path = dir.join(file);
+        std::fs::write(&path, format!("test model file {file}")).expect("write the model file");
+        let sha = sha256_file(&path).expect("hash the model file");
+        if index > 0 {
+            manifest.push(',');
+        }
+        manifest.push_str(&format!(
+            "{{\"name\":\"{file}\",\"role\":\"{role}\",\"sha256\":\"{sha}\",\"size_bytes\":18}}"
+        ));
+    }
+    manifest.push_str("]}");
+    std::fs::write(dir.join("manifest.json"), manifest).expect("write the manifest");
+    dir
+}
+
 fn unique() -> u64 {
     use std::sync::atomic::AtomicU64;
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1140,11 +1279,62 @@ fn the_token_is_required_on_every_api_route() {
         "/api/status",
         &[
             ("Host", server.host.as_str()),
-            ("X-RapidOCR-Token", "not-the-token"),
+            ("X-RapidStructure-Token", "not-the-token"),
         ],
         None,
     );
     assert_eq!(response.status, 401);
+}
+
+/// `GET /static/*`：公式渲染引擎的同源资源。**不带令牌**也可获取（不在 `/api/*`
+/// 边界内，§7.2），响应带正确 MIME 与 `no-store`；未知路径、目录穿越形状与
+/// 编码变体全部落到和其它未知路径同一个 404；POST → 405。
+#[test]
+fn static_formula_assets_are_served_same_origin_without_the_token() {
+    let server = TestServer::start(TestOptions::new(
+        empty_model_dir("static"),
+        Scripted::fast(),
+    ));
+    for (path, mime) in [
+        (
+            "/static/katex/katex.min.js",
+            "application/javascript; charset=utf-8",
+        ),
+        ("/static/katex/katex.min.css", "text/css; charset=utf-8"),
+        ("/static/katex/fonts/KaTeX_Main-Regular.woff2", "font/woff2"),
+        (
+            "/static/mathjax/tex-svg.js",
+            "application/javascript; charset=utf-8",
+        ),
+    ] {
+        let response = server.request("GET", path, &[("Host", server.host.as_str())], None);
+        assert_eq!(response.status, 200, "{path}: {}", response.text());
+        assert_eq!(response.header("Content-Type"), Some(mime), "{path}");
+        assert_eq!(response.header("Cache-Control"), Some("no-store"), "{path}");
+        assert!(!response.body.is_empty(), "{path} must not be empty");
+    }
+
+    // 表外路径 / 穿越形状 / 编码变体 / 前缀本身：与任意未知路径同一个 404。
+    for path in [
+        "/static/nope.js",
+        "/static/",
+        "/static/../Cargo.toml",
+        "/static/katex/../../Cargo.toml",
+        "/static/%2e%2e%2f%2e%2e%2fCargo.toml",
+    ] {
+        let response = server.request("GET", path, &[("Host", server.host.as_str())], None);
+        assert_eq!(response.status, 404, "{path}: {}", response.text());
+        assert_eq!(response.code(), "not_found", "{path}");
+    }
+
+    let response = server.request(
+        "POST",
+        "/static/katex/katex.min.js",
+        &[("Host", server.host.as_str())],
+        None,
+    );
+    assert_eq!(response.status, 405);
+    assert_eq!(response.header("Allow"), Some("GET"));
 }
 
 #[test]
@@ -1161,7 +1351,7 @@ fn the_host_header_is_validated_for_dns_rebinding() {
         let response = server.request(
             "GET",
             "/api/status",
-            &[("Host", host), ("X-RapidOCR-Token", token.as_str())],
+            &[("Host", host), ("X-RapidStructure-Token", token.as_str())],
             None,
         );
         assert_eq!(response.status, 421, "Host: {host} → {}", response.text());
@@ -1171,7 +1361,7 @@ fn the_host_header_is_validated_for_dns_rebinding() {
     let response = server.request(
         "GET",
         "/api/status",
-        &[("X-RapidOCR-Token", token.as_str())],
+        &[("X-RapidStructure-Token", token.as_str())],
         None,
     );
     assert_eq!(response.status, 421);
@@ -1193,7 +1383,7 @@ fn state_changing_requests_require_a_matching_origin() {
         "/api/ocr",
         &[
             ("Host", host.as_str()),
-            ("X-RapidOCR-Token", token.as_str()),
+            ("X-RapidStructure-Token", token.as_str()),
             ("Content-Type", "application/octet-stream"),
         ],
         Some(body),
@@ -1207,7 +1397,7 @@ fn state_changing_requests_require_a_matching_origin() {
         "/api/ocr",
         &[
             ("Host", host.as_str()),
-            ("X-RapidOCR-Token", token.as_str()),
+            ("X-RapidStructure-Token", token.as_str()),
             ("Origin", "null"),
             ("Content-Type", "application/octet-stream"),
         ],
@@ -1221,7 +1411,7 @@ fn state_changing_requests_require_a_matching_origin() {
         "/api/ocr",
         &[
             ("Host", host.as_str()),
-            ("X-RapidOCR-Token", token.as_str()),
+            ("X-RapidStructure-Token", token.as_str()),
             ("Origin", "http://127.0.0.1:1"),
             ("Content-Type", "application/octet-stream"),
         ],
@@ -1235,7 +1425,7 @@ fn state_changing_requests_require_a_matching_origin() {
         "/api/ocr",
         &[
             ("Host", host.as_str()),
-            ("X-RapidOCR-Token", token.as_str()),
+            ("X-RapidStructure-Token", token.as_str()),
             ("Origin", "http://127.0.0.1:1/"),
             ("Content-Type", "application/octet-stream"),
         ],
@@ -1272,7 +1462,7 @@ fn an_over_long_content_length_is_rejected_before_the_body_is_read() {
         "/api/ocr",
         &[
             ("Host", server.host.as_str()),
-            ("X-RapidOCR-Token", server.token.as_str()),
+            ("X-RapidStructure-Token", server.token.as_str()),
             ("Origin", server.origin.as_str()),
             ("Content-Type", "application/octet-stream"),
             ("Content-Length", "4194304"),
@@ -1606,7 +1796,7 @@ fn a_full_queue_rejects_every_concurrent_request_without_reading_a_body() {
                 "/api/ocr",
                 &[
                     ("Host", host.as_str()),
-                    ("X-RapidOCR-Token", token.as_str()),
+                    ("X-RapidStructure-Token", token.as_str()),
                     ("Origin", origin.as_str()),
                     ("Content-Type", "application/octet-stream"),
                     ("Content-Length", "1048576"),
@@ -2040,7 +2230,7 @@ fn run_flood(
             while !stop.load(Ordering::SeqCst) {
                 let raw = format!(
                     "POST {url} HTTP/1.1\r\nConnection: close\r\nHost: {host}\r\nOrigin: {origin}\r\n\
-                     X-RapidOCR-Token: {token}\r\nContent-Type: application/octet-stream\r\n\
+                     X-RapidStructure-Token: {token}\r\nContent-Type: application/octet-stream\r\n\
                      Content-Length: 5\r\n\r\nimage"
                 );
                 let response = send(addr, raw.as_bytes());
@@ -2311,6 +2501,1135 @@ fn removing_the_formula_model_turns_the_route_into_a_409() {
     assert_eq!(server.submit_ocr(b"text").status, 202);
 }
 
+// ---------------------------------------------------------------- E16.2：表格路由
+
+/// `?table=1` 在表格路由关闭时是 **400**（不是静默按文本处理）。
+///
+/// 静默忽略会让页面以为表格在跑、结果却是一份没有表格的载荷——那正是"两个开关互相
+/// 矛盾"的经典形状。路由关闭的**理由**必须能从 `/api/models` 与 `/api/status` 读到，
+/// 页面据此禁用选项（§9.4：不只靠颜色）。
+#[test]
+fn the_table_switch_is_refused_when_table_routing_is_off() {
+    let server = TestServer::start(TestOptions::new(
+        complete_model_dir("notable"),
+        Scripted::fast(),
+    ));
+
+    for query in ["?table=1", "?queue=text&table=1", "?queue=formula&table=1"] {
+        let response = server.post(
+            &format!("/api/ocr{query}"),
+            &[("Content-Type", "application/octet-stream")],
+            b"image",
+        );
+        assert_eq!(response.status, 400, "{query}: {}", response.text());
+        assert_eq!(response.code(), "bad_request");
+    }
+
+    // 关闭表格路由不影响任何既有路径：不带参数、`?table=0`、公式队列都照旧。
+    assert_eq!(server.submit_ocr(b"image").status, 202);
+    assert_eq!(
+        server
+            .post(
+                "/api/ocr?table=0",
+                &[("Content-Type", "application/octet-stream")],
+                b"image",
+            )
+            .status,
+        202
+    );
+
+    let models = server.get("/api/models").json();
+    assert_eq!(models["table"]["routing"], false);
+    let reason = models["table"]["disabled_reason"]
+        .as_str()
+        .expect("a textual reason");
+    assert!(reason.contains("--table-model"), "{reason}");
+    assert!(reason.contains("ordinary OCR"), "{reason}");
+    assert_eq!(models["table"]["structure"]["configured"], false);
+    assert_eq!(models["table"]["structure"]["file"], Value::Null);
+    assert_eq!(models["table"]["in_plan"], false);
+    // 表格是**第三条**管线：文本组仍然齐备，页面据此只禁用表格选项。
+    assert_eq!(models["complete"], true, "{models}");
+    assert_eq!(models["pipelines"]["table"]["routing"], false);
+    assert_eq!(models["pipelines"]["table"]["in_plan"], false);
+    assert_eq!(models["pipelines"]["table"]["complete"], false);
+
+    let status = server.get("/api/status").json();
+    assert_eq!(status["table"]["routing"], false);
+    assert_eq!(
+        status["table"]["disabled_reason"],
+        models["table"]["disabled_reason"]
+    );
+}
+
+/// `?table=` 的取值面只有 `1` / `0` / 缺省；其它任何写法都是 400，且**不建任务**。
+#[test]
+fn the_table_switch_rejects_anything_but_one_and_zero() {
+    let dir = complete_model_dir("e16-table-values");
+    let model = dir.join("slanet-plus.onnx");
+    let scripted = Scripted::fast();
+    let server = TestServer::start(
+        TestOptions::new(dir.clone(), scripted.clone()).with_table_routing(&model),
+    );
+
+    for raw in ["2", "true", "yes", "", "TRUE", "-1"] {
+        let response = server.post(
+            &format!("/api/ocr?table={raw}"),
+            &[("Content-Type", "application/octet-stream")],
+            b"image",
+        );
+        assert_eq!(response.status, 400, "`?table={raw}`: {}", response.text());
+        assert_eq!(response.code(), "bad_request");
+    }
+    // 一个任务都没建：取值校验发生在建任务之前。
+    assert_eq!(
+        scripted.calls.load(Ordering::SeqCst),
+        0,
+        "a rejected request must not reach the backend"
+    );
+}
+
+/// E16.2 的核心：`?table=1` 真的把表格阶段接上了，而且接的是**启动期解析出的那一份**
+/// `TablePolicy`（路径 + **集合声明的** SHA-256 + `Escape` 文本策略）。
+///
+/// 脚本化后端不加载模型，但它在 `OcrRequest.table` 上看到的正是生产路径组装的那一份，
+/// 因此"路由真的接上了表格管线"不是靠猜测：字段逐个断言。
+///
+/// 夹具用 [`complete_model_dir_with_table`]：清单**真的声明了** `table_structure` role。
+/// 这一点是必要的——如果清单不声明它，`expected_model_sha256` 与"集合里声明的摘要"
+/// 会同时是 `None`，断言恒真而什么也没证明。
+#[test]
+fn the_table_stage_runs_from_the_model_set_when_requested() {
+    let dir = complete_model_dir_with_table("e16-table-on");
+    let model = dir.join("slanet-plus.onnx");
+    let detector = dir.join("pix2text-mfd-1.5.onnx");
+    let scripted = Scripted::fast().with_table_regions(1);
+    let server = TestServer::start(
+        TestOptions::new(dir.clone(), scripted.clone())
+            // 集合已经把结构模型声明在模型目录里，因此**不需要** `--table-model`：
+            // "清单声明即启用"这条规则与公式识别模型是同一条（E16.1.3 显示的就是这条计划）。
+            .with_formula_routing(&detector),
+    );
+
+    // 路由可用：`/api/models` 与 `/api/status` 都报告它，且逐文件状态可见。
+    let models = server.get("/api/models").json();
+    assert_eq!(models["table"]["routing"], true);
+    assert_eq!(models["table"]["disabled_reason"], Value::Null);
+    assert_eq!(models["table"]["complete"], true, "{models}");
+    assert_eq!(models["table"]["structure"]["configured"], true);
+    assert_eq!(models["table"]["structure"]["file"], "slanet-plus.onnx");
+    assert_eq!(models["table"]["in_plan"], true);
+    assert_eq!(
+        models["table"]["required_roles"],
+        json!(["table_structure"])
+    );
+    assert_eq!(models["pipelines"]["table"]["complete"], true);
+    assert_eq!(
+        models["pipelines"]["table"]["pipeline"], "table",
+        "the pipeline label is the documented one"
+    );
+    // E16.1.3 的数据源：逐管线的**逐文件计划项**（role + 声明摘要 + 状态），
+    // 页面据此回答"哪个文件的哪个角色被哪条管线使用"，不需要自己拼路径。
+    let plan = models["pipelines"]["table"]["plan"]
+        .as_array()
+        .expect("the table pipeline publishes its plan");
+    assert_eq!(plan.len(), 1, "{plan:?}");
+    assert_eq!(plan[0]["name"], "slanet-plus.onnx");
+    assert_eq!(plan[0]["role"], "table_structure");
+    assert_eq!(plan[0]["pipeline"], "table");
+    assert_eq!(plan[0]["state"], "present");
+    assert_eq!(plan[0]["has_declared_digest"], true);
+    let text_plan = models["pipelines"]["text"]["plan"]
+        .as_array()
+        .expect("the text pipeline publishes its plan");
+    assert_eq!(
+        text_plan
+            .iter()
+            .map(|file| file["role"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>(),
+        ["detector", "recognizer", "dictionary"]
+    );
+    // 集合声明（清单里的 `family`/`version`）与磁盘状态分开显示。
+    assert_eq!(models["sets"][0]["id"], "test-set");
+    assert_eq!(models["sets"][0]["family"], "PP-OCR");
+    assert_eq!(models["sets"][0]["version"], "v-test");
+    assert_eq!(models["sets"][0]["complete"], true);
+    assert!(
+        !models.to_string().contains(&dir.display().to_string()),
+        "no absolute path may leak: {models}"
+    );
+
+    // 四种模式各提交一次：`queue` 决定排哪条队，`table` 决定那条队是否跑表格阶段。
+    let plain = server.submit_ocr(b"plain");
+    assert_eq!(plain.status, 202, "{}", plain.text());
+    assert_eq!(plain.json()["queue"], "text");
+    let text_table = server.post(
+        "/api/ocr?queue=text&table=1",
+        &[("Content-Type", "application/octet-stream")],
+        b"text+table",
+    );
+    assert_eq!(text_table.status, 202, "{}", text_table.text());
+    assert_eq!(text_table.json()["queue"], "text");
+    let formula_table = server.post(
+        "/api/ocr?queue=formula&table=1",
+        &[("Content-Type", "application/octet-stream")],
+        b"formula+table",
+    );
+    assert_eq!(formula_table.status, 202, "{}", formula_table.text());
+    assert_eq!(formula_table.json()["queue"], "formula");
+    let explicit_off = server.post(
+        "/api/ocr?table=0",
+        &[("Content-Type", "application/octet-stream")],
+        b"explicit off",
+    );
+    assert_eq!(explicit_off.status, 202, "{}", explicit_off.text());
+
+    for response in [&plain, &text_table, &formula_table, &explicit_off] {
+        let id = response.json()["job_id"].as_str().expect("id").to_string();
+        let view = server.wait_terminal(&id, Duration::from_secs(20));
+        assert_eq!(view["state"], "succeeded", "{view}");
+    }
+
+    // 策略逐条断言：**只有** `?table=1` 的那两次开启了表格阶段。
+    let policies = scripted.tables();
+    assert_eq!(policies.len(), 4, "one request per job");
+    assert!(!policies[0].enabled, "absent means off");
+    assert!(!policies[3].enabled, "`?table=0` is an explicit off");
+    // 清单声明的那份摘要（断言两侧都必须真的有值——否则这条断言恒真）。
+    let declared = models["sets"][0]["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| file["role"] == "table_structure")
+        .and_then(|file| file["sha256"].as_str())
+        .expect("the fixture manifest declares the table structure model")
+        .to_string();
+    for (index, label) in [(1usize, "?table=1"), (2, "?queue=formula&table=1")] {
+        let policy = &policies[index];
+        assert!(policy.enabled, "{label} must enable the table stage");
+        assert_eq!(
+            policy.model_path.as_deref(),
+            Some(model.as_path()),
+            "{label}: the structure model comes from the startup-resolved path"
+        );
+        assert_eq!(
+            policy.expected_model_sha256.as_deref(),
+            Some(declared.as_str()),
+            "{label}: the declared hash comes from the model set"
+        );
+        // §7.4：面向用户的路径必须转义，绝不把模型产物当标记。
+        assert_eq!(policy.text_policy, TableTextPolicy::Escape);
+    }
+}
+
+/// 结构模型缺失/损坏：`?table=1` 是 **409**（可定位、指向要下载的文件），
+/// 而普通 OCR 完全不受影响。
+#[test]
+fn an_incomplete_table_set_is_409_while_text_ocr_keeps_working() {
+    let dir = manifest_model_dir("e16-table-incomplete", &text_fixture_files(), None);
+    let model = dir.join("slanet-plus.onnx");
+    let server = TestServer::start(
+        TestOptions::new(dir.clone(), Scripted::fast()).with_table_routing(&model),
+    );
+    // `with_table_routing` 已经把结构模型写进磁盘（它必须存在，否则启动期就拒绝）。
+    // 这里再把它删掉，模拟"启动之后模型被移走"——路由仍然是打开的。
+    std::fs::remove_file(&model).expect("remove the structure model");
+
+    let models = server.get("/api/models").json();
+    assert_eq!(models["table"]["routing"], true);
+    assert_eq!(models["table"]["complete"], false, "{models}");
+    assert_eq!(models["table"]["missing"], json!(["slanet-plus.onnx"]));
+    assert_eq!(
+        models["pipelines"]["table"]["blocked"],
+        json!(["slanet-plus.onnx"])
+    );
+    assert_eq!(models["complete"], true, "the text pipeline is unaffected");
+
+    let refused = server.post(
+        "/api/ocr?table=1",
+        &[("Content-Type", "application/octet-stream")],
+        b"table image",
+    );
+    assert_eq!(refused.status, 409, "{}", refused.text());
+    assert_eq!(refused.code(), "models_missing");
+    assert_eq!(refused.json()["detail"]["scope"], "table");
+    assert_eq!(
+        refused.json()["detail"]["missing"],
+        json!(["slanet-plus.onnx"])
+    );
+
+    // 表格路由的 409 不影响其它任何模式。
+    assert_eq!(server.submit_ocr(b"text").status, 202);
+    assert_eq!(
+        server
+            .post(
+                "/api/ocr?table=0",
+                &[("Content-Type", "application/octet-stream")],
+                b"text",
+            )
+            .status,
+        202
+    );
+}
+
+/// 表格区域的载荷真的走到了 `/api/jobs/{id}/result`，并且页面契约字段齐备。
+#[test]
+fn the_table_region_round_trips_through_the_result_endpoint() {
+    let dir = complete_model_dir("e16-table-result");
+    let model = dir.join("slanet-plus.onnx");
+    let server = TestServer::start(
+        TestOptions::new(dir.clone(), Scripted::fast().with_table_regions(1))
+            .with_table_routing(&model),
+    );
+
+    let accepted = server.post(
+        "/api/ocr?table=1",
+        &[("Content-Type", "application/octet-stream")],
+        b"table image",
+    );
+    assert_eq!(accepted.status, 202, "{}", accepted.text());
+    let id = accepted.json()["job_id"].as_str().expect("id").to_string();
+    let view = server.wait_terminal(&id, Duration::from_secs(20));
+    assert_eq!(view["state"], "succeeded", "{view}");
+
+    let result = server.get(&format!("/api/jobs/{id}/result")).json();
+    let regions = result["regions"].as_array().expect("regions");
+    assert_eq!(regions.len(), 4, "three text regions plus one table");
+    let table = regions
+        .iter()
+        .find(|region| region["kind"] == "table")
+        .expect("a table region");
+    assert!(
+        table["recognition"].is_null(),
+        "a table region has no CTC text"
+    );
+    assert!(table["formula"].is_null());
+    let outcome = &table["table"];
+    assert_eq!(outcome["rows"], 1);
+    assert_eq!(outcome["cols"], 2);
+    assert_eq!(outcome["confidence"], "low");
+    assert_eq!(outcome["holes"], 1);
+    assert_eq!(outcome["degradations"][0]["kind"], "grid_holes");
+    assert_eq!(outcome["source_line_indices"], json!([0]));
+    assert_eq!(outcome["model_id"], "scripted-table");
+    assert_eq!(outcome["cells"].as_array().expect("cells").len(), 2);
+    // 服务端**不**净化 `table.html`（它是模型产物的忠实副本，净化是输出层的职责）；
+    // 网页侧必须在渲染前再过一次 `sanitizeTableHtml`（E16.3.2 / 门禁 G8）。
+    assert!(
+        outcome["html"].as_str().expect("html").contains("<script>"),
+        "the wire format carries the model's own HTML"
+    );
+}
+
+// ---------------------------------------------- E16.2 / E16.3：页面侧的三项优化
+
+/// 页面必须真的带上 E16.2 的模式选择器与 E16.3 的表格渲染入口。
+///
+/// 页面是**冻结契约**的一部分（docs/05 §9：nonce 属性 ×3、占位符与令牌计数固定），
+/// 所以这里同时断言"新元素没有破坏那三条不变量"：没有内联 `onclick=`/`style=`。
+///
+/// 为什么断言"`sanitizeTableHtml` 出现在页面里"还不够：**净化必须是唯一入口**。
+/// 因此这里还断言渲染路径上不存在任何"把模型 HTML 直接塞进 `innerHTML`"的写法 ——
+/// 那条路径一旦出现，白名单就成了摆设。
+#[test]
+fn the_page_carries_the_mode_selector_and_the_table_renderer() {
+    let server = TestServer::start(TestOptions::new(
+        empty_model_dir("page-e16-markup"),
+        Scripted::fast(),
+    ));
+    let page = server.get("/").text();
+
+    // E16.2.1：四态模式选择器取代了原来的单个 `#fxToggle` 复选框。
+    for anchor in [
+        "id=\"modeRow\"",
+        "id=\"modeOpts\"",
+        "id=\"modeCap\"",
+        "role=\"radiogroup\"",
+    ] {
+        assert!(page.contains(anchor), "the mode selector needs {anchor}");
+    }
+    assert!(
+        !page.contains("id=\"fxToggle\""),
+        "the single formula checkbox is gone: the mode selector replaces it (E16.2.1)"
+    );
+    // 四个模式 id 必须都在源码里（选项由 JS 渲染，所以断言的是 MODES 表）。
+    for mode in [
+        "\"text\"",
+        "\"formula\"",
+        "\"text-table\"",
+        "\"formula-table\"",
+    ] {
+        assert!(
+            page.contains(mode),
+            "the mode table must carry the {mode} mode"
+        );
+    }
+    assert!(
+        page.contains("modeAvailability") && page.contains("renderModeRow"),
+        "the modes must be gated by readiness, not rendered unconditionally"
+    );
+
+    // E16.2.1 的请求表达：`?table=1` 与 `queue` 是**两个**独立的参数。
+    assert!(
+        page.contains(r#""/api/ocr?queue=" + queue + (mode.table ? "&table=1" : "")"#),
+        "the table switch must ride on the documented query parameter"
+    );
+
+    // E16.1.5：表格队列就绪状态与公式行同形。
+    assert!(
+        page.contains("id=\"qReadyTable\"") && page.contains("表格队列 · "),
+        "the queue panel must report the table queue as a third line"
+    );
+
+    // E16.3.1/E16.3.2：表格渲染走净化函数，且净化是白名单重建。
+    assert!(
+        page.contains("sanitizeTableHtml") && page.contains("DOMParser"),
+        "the table renderer must parse and rebuild, not paste (E16.3.2)"
+    );
+    assert!(
+        page.contains("TABLE_ALLOWED_TAGS") && page.contains("TABLE_ALLOWED_ATTRS"),
+        "the sanitizer must be driven by an explicit whitelist"
+    );
+    assert!(
+        page.contains(r#"wrap.innerHTML = sanitizeTableHtml("#),
+        "the only way a table reaches the DOM is through the sanitizer"
+    );
+    // E24：表格默认**不渲染** —— 只有 HTML 原文 + 一个「渲染表格」按钮。
+    assert!(
+        page.contains(r#"data-table-render="1""#)
+            && page.contains("渲染表格")
+            && page.contains("收起表格"),
+        "each table region needs its own render toggle (E24)"
+    );
+    assert!(
+        page.contains(r#"<div class="rt-wrap" hidden></div>"#)
+            && page.contains(r#"<pre class="rt-raw""#),
+        "a table must start collapsed, showing its HTML source instead (E24)"
+    );
+    assert!(
+        page.contains(r#"btn.getAttribute("data-table-html")"#)
+            && page.contains(r#"data-table-html="${esc(html)}""#),
+        "the render input must be the same string the source line shows (E24)"
+    );
+    assert!(
+        page.contains(r#"const tbtn = e.target.closest("[data-table-render]")"#),
+        "the toggle must be intercepted before the region-selection handler (E24)"
+    );
+    // 模型 HTML 绝不能被直接赋给 `innerHTML`：出现一次就绕过整个白名单。
+    assert!(
+        !page.contains("innerHTML = t.html")
+            && !page.contains("innerHTML = table.html")
+            && !page.contains("innerHTML = r.table"),
+        "the model's own HTML must never be assigned to innerHTML"
+    );
+    // 净化不得用正则实现（docs/11 §4.3 E16.3.2 明确禁止）。
+    assert!(
+        !page.contains("replace(/</g") && !page.contains("replace(/<script"),
+        "a regex sanitizer cannot be correct for HTML (E16.3.2)"
+    );
+
+    // 低置信必须**文字可见**，不能只靠颜色（docs/11 §4.3 E16.3.3）。
+    assert!(
+        page.contains("低置信（网格空洞或截断）"),
+        "a low-confidence table must say so in words"
+    );
+
+    // 冻结不变量：新标记没有引入内联处理器或内联样式。
+    assert!(
+        !page.contains("onclick=") && !page.contains(" style=\""),
+        "no inline handlers or styles under the page's nonce CSP"
+    );
+}
+
+/// E22：表格模式的就绪判定必须读**服务端的表格路由块**，不能去 `sets[].files[]` 里按
+/// `table_structure` 角色找文件。
+///
+/// 为什么这条断言存在（它是**绊线**，不是行为测试）：`--table-model` 指定的结构模型按设计
+/// 可以完全不在任何模型集合里（`models/serve/manifest.json` 声明的五个 role 里就没有
+/// `table_structure`），于是"集合里找不到这个角色"会被误读成"模型缺失"，把一个服务端明明
+/// 回 `routing: true` 的模式永久置灰 —— 这就是 m12799 用户看到的那颗灰按钮。
+/// 真正跑 JS 的行为测试在 `tools/check_web_model_gating.js`（Node 抽函数 + 真实 /api/models）；
+/// 这里只钉住"这段代码还在、且排在角色扫描之前"。
+#[test]
+fn the_page_gates_the_table_mode_on_the_server_route_block() {
+    let server = TestServer::start(TestOptions::new(
+        empty_model_dir("page-e22-table-gate"),
+        Scripted::fast(),
+    ));
+    let page = server.get("/").text();
+
+    let marker = "服务端未返回表格路由状态（/api/models.table）";
+    let scan = "const need = QUEUE_ROLES[queue]";
+    let marker_at = page.find(marker).unwrap_or_else(|| {
+        panic!("the table readiness branch must exist (E22): {marker}");
+    });
+    let scan_at = page
+        .find(scan)
+        .unwrap_or_else(|| panic!("the shared role scan must still exist: {scan}"));
+    assert!(
+        marker_at < scan_at,
+        "the table branch must run **before** the shared role scan, otherwise the role lookup \
+         reports `表格结构` missing and greys the mode out (E22)"
+    );
+    assert!(
+        page.contains("if (queue === \"table\")"),
+        "the table queue needs its own readiness branch (E22)"
+    );
+    // 反向：角色表里**不得**再声明 table，否则同一个角色查找会回来。
+    assert!(
+        !page.contains("table: [\"table_structure\"]"),
+        "QUEUE_ROLES must not require table_structure from a model set (E22)"
+    );
+    // 离线预览：演示数据也必须带表格路由块，否则演示模式里表格模式不可选（E16.3.8）。
+    assert!(
+        page.contains("function planRow(")
+            && page.contains("required_roles: [\"table_structure\"]"),
+        "the demo models need a table route block and plan rows (E22/E16.3.8)"
+    );
+}
+
+/// E16.1：横幅从"只报错"改成**常驻模型清单面板**，并显示本机解析出的模型计划。
+#[test]
+fn the_page_carries_the_model_manifest_panel() {
+    let server = TestServer::start(TestOptions::new(
+        empty_model_dir("page-e16-manifest"),
+        Scripted::fast(),
+    ));
+    let page = server.get("/").text();
+
+    assert!(
+        page.contains("function planRowsHtml") && page.contains("管线"),
+        "the panel must render the resolved model plan (E16.1.3)"
+    );
+    assert!(
+        page.contains("const pipes = m && m.pipelines") && page.contains("p.plan.forEach"),
+        "the plan must come from the server's own pipelines payload, not a path built in the page"
+    );
+    assert!(
+        page.contains("命令行指定"),
+        "a model given on the command line is not in any set: the panel must say so"
+    );
+    assert!(
+        page.contains("data-reverify=\"1\"") && page.contains("重新校验"),
+        "a complete set still needs a reverify button (E16.1.1)"
+    );
+    assert!(
+        page.contains(r#"e.target.closest("[data-reverify]")"#),
+        "the reverify button must be wired through delegation, not a per-set listener"
+    );
+    assert!(
+        page.contains("function fileStateCell") && page.contains("bf-sha-row"),
+        "every file needs a three-state icon and an expandable sha256 (E16.1.2)"
+    );
+    assert!(
+        page.contains("表格管线："),
+        "the reverify verdict must carry the table pipeline as well"
+    );
+    assert!(
+        !page.contains("onclick=") && !page.contains(" style=\""),
+        "no inline handlers or styles under the page's nonce CSP"
+    );
+}
+
+/// 门禁 G8：注入型单元格文本经 `sanitizeTableHtml` 后**不产生可执行节点**。
+///
+/// # 为什么需要真的开一个浏览器
+///
+/// 净化的正确性完全取决于 **HTML 解析器怎么切分输入**（`<svg/onload=…>`、
+/// `<td onclick=…>`、未闭合标签…），而这正是正则写不对、手写 DOM 也无法替代的部分。
+/// 因此本用例把**服务端实际返回的页面**里那段主脚本抽出来，在一个空白文档里执行，
+/// 直接调用页面自己的 `sanitizeTableHtml`，再把结果原样带回 Rust 断言。
+///
+/// 只有抽取脚本与暴露函数两步是测试自己做的（插一行 `globalThis.__RROCR_SANITIZE__ =`），
+/// 被断言的函数体与线上逐字节相同。
+///
+/// 本机没有浏览器时**跳过**（与仓库里"真实模型不在仓库内就 skip"同一口径），
+/// 而不是让 CI 因为缺一个可选工具而变红。
+#[test]
+fn the_table_sanitizer_produces_no_executable_nodes() {
+    let Some(browser) = test_browser() else {
+        eprintln!(
+            "skipping: no headless browser found; set RAPID_STRUCTURE_TEST_BROWSER to run gate G8"
+        );
+        return;
+    };
+
+    let server = TestServer::start(TestOptions::new(
+        empty_model_dir("page-e16-g8"),
+        Scripted::fast(),
+    ));
+    let page = server.get("/").text();
+    let script = main_inline_script(&page).expect("the page must carry its main inline script");
+
+    // 函数声明在 IIFE 作用域里被提升，所以在 `"use strict";` 之后立刻暴露是安全的 ——
+    // 也必须在**脚本开头**，因为脚本尾部的 `renderVerify()` 在空白文档里会抛。
+    let exposed = script.replacen(
+        "\"use strict\";",
+        "\"use strict\";\n        globalThis.__RROCR_SANITIZE__ = sanitizeTableHtml;",
+        1,
+    );
+    assert!(
+        exposed.contains("__RROCR_SANITIZE__"),
+        "the exposure seam must land: the main script must open with \"use strict\";"
+    );
+
+    // 每个 payload 都包在**真实的 `<table><tr>` 里**。
+    //
+    // 不是装饰：裸 `<td>` 会被 HTML 解析器按 "foster parenting" 规则丢掉标签、只把内容留在
+    // body 里，于是 `colspan`/`rowspan` 根本到不了净化函数 —— 那条"合法跨度必须留下"的
+    // 反向对照会**因为属性压根不存在而失败**（本轮实测：`sanitized[7]` 只剩 `"spanned"`）。
+    // 真实输入永远是整表，测试也应当用整表。
+    let payloads = [
+        r#"<table><tr><td><script>alert(1)</script></td></tr></table>"#,
+        r#"<table><tr><td><img src=x onerror="alert(1)"></td></tr></table>"#,
+        r#"<table><tr><td><a href="javascript:alert(1)">click</a></td></tr></table>"#,
+        r#"<table><tr><td onclick="alert(1)">tap</td></tr></table>"#,
+        r#"<table><tr><td><iframe src="javascript:alert(1)"></iframe></td></tr></table>"#,
+        r#"<table><tr><td><svg/onload=alert(1)></td></tr></table>"#,
+        r#"<table><tr><td style="background:url(javascript:alert(1))">styled</td></tr></table>"#,
+        r#"<table><tr><td colspan="2" rowspan="3">spanned</td></tr></table>"#,
+        r#"<table><tr><td colspan="0">zero</td><td colspan="abc">nan</td><td colspan="1e9">huge</td></tr></table>"#,
+        r#"<table><tr><td><b>bold</b><sub>2</sub><sup>+</sup><br>next</td></tr></table>"#,
+        r#"<table><tr><td>&lt;script&gt;alert(1)&lt;/script&gt;</td></tr></table>"#,
+    ];
+    // `</script>` 一旦出现在 `<script>` 元素里就会**提前结束脚本**，即使它只是 JS 字符串里
+    // 的一段文本。第 0 个 payload 恰恰带着 `</script>`，不转义的话驱动脚本被 HTML 解析器
+    // 腰斩：`<pre>` 从不出现，而 `--dump-dom` 也再也等不到页面加载完成
+    // （实测：同一份 HTML 少这个转义就 60 s 没有任何输出，加上它 400 ms 就有）。
+    // `<\/` 在 JSON 里与 `/` 等价，所以字符串内容一个字节都没变。
+    let payload_json = serde_json::to_string(&payloads)
+        .expect("payloads serialize")
+        .replace("</", "<\\/");
+
+    let driver = format!(
+        r#"<script>
+        const payloads = {payload_json};
+        const out = payloads.map((p) => {{
+          const fn = globalThis.__RROCR_SANITIZE__;
+          if (typeof fn !== "function") return "__MISSING__";
+          return fn(p);
+        }});
+        const bytes = new TextEncoder().encode(JSON.stringify(out));
+        let hex = "";
+        for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+        const pre = document.createElement("pre");
+        pre.id = "sanitizer-out";
+        pre.textContent = hex;
+        document.body.appendChild(pre);
+        </script>"#
+    );
+
+    let html = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>\n\
+         <script>{exposed}</script>\n{driver}\n</body></html>"
+    );
+    let dir = std::env::temp_dir().join(format!("rrocr-g8-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("g8.html");
+    std::fs::write(&file, html).expect("write harness");
+
+    // 把孩子的 stdout/stderr 接到**文件**上，而不是管道。
+    //
+    // 两条理由，都是本轮实测逼出来的：① 缺 `--user-data-dir` 时 `msedge.exe` 会把这次启动
+    // **交给已经在跑的那个 Edge 实例**，于是既没有 stdout 也没有退出码，测试会一直等下去
+    // （整条 `cargo test` 因此挂住 28 分钟）；② 管道形态下浏览器（及其若干孙子进程）的行为
+    // 与重定向到文件不同，同一组参数在 `Start-Process -RedirectStandardOutput` 下 0.5 s 退出、
+    // 在 `Stdio::piped()` 下 60 s 不退出。落盘既避开了这两个坑，也让失败时能留下证据。
+    let stdout_path = dir.join("dom.txt");
+    let stderr_path = dir.join("browser.log");
+    let stdout_file = std::fs::File::create(&stdout_path).expect("stdout file");
+    let stderr_file = std::fs::File::create(&stderr_path).expect("stderr file");
+
+    let profile = dir.join("profile");
+    let mut child = match std::process::Command::new(&browser)
+        .args([
+            "--headless=new",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--allow-file-access-from-files",
+            "--virtual-time-budget=4000",
+            "--dump-dom",
+        ])
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .arg(&file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(stdout_file))
+        .stderr(std::process::Stdio::from(stderr_file))
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            eprintln!("skipping: cannot launch {browser:?}: {error}");
+            return;
+        }
+    };
+
+    // 完成判定看**输出**，不看进程退出。
+    //
+    // 实测事实（三次独立探针一致）：`msedge.exe --headless=new --dump-dom` 在 400 ms 左右
+    // 就把完整 DOM 写进了 stdout，但**进程之后还要再活很久**（文件已经 186,002 B 时
+    // `HasExited` 仍是 false，在 Rust 侧 60 s 都没有退出）。等退出会让一条可选工具的用例
+    // 决定整条套件的时长，所以这里等输出变非空，然后主动收掉进程。
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut ready = false;
+    while Instant::now() < deadline {
+        let written = std::fs::metadata(&stdout_path)
+            .map(|meta| meta.len() > 0)
+            .unwrap_or(false);
+        if written {
+            ready = true;
+            break;
+        }
+        match child.try_wait() {
+            // 进程退出了却什么都没写出来：不再等，走下面的失败分支。
+            Ok(Some(_)) => break,
+            Ok(None) => std::thread::sleep(Duration::from_millis(200)),
+            Err(error) => {
+                eprintln!("skipping: cannot poll {browser:?}: {error}");
+                break;
+            }
+        }
+    }
+    // 无论走哪条路径都要收掉进程：它可能还会活很久（见上）。
+    let _ = child.kill();
+    let _ = child.wait();
+    if !ready {
+        let log = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!(
+            "skipping: {browser:?} wrote no DOM within 60s; \
+             the sanitizer is not verified on this machine (browser log: {})",
+            log.trim()
+        );
+        return;
+    }
+
+    let dom = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let browser_log = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let hex = extract_pre_hex(&dom, "sanitizer-out").unwrap_or_else(|| {
+        panic!(
+            "the harness produced no output (browser log: {})",
+            browser_log.trim()
+        )
+    });
+    let json = decode_hex(&hex).expect("the harness output must be hex-encoded UTF-8");
+    let sanitized: Vec<String> =
+        serde_json::from_str(&json).expect("the harness output must be a JSON array");
+
+    assert_eq!(
+        sanitized.len(),
+        payloads.len(),
+        "every payload must come back"
+    );
+    for (input, output) in payloads.iter().zip(sanitized.iter()) {
+        assert_ne!(
+            output, "__MISSING__",
+            "the page's sanitizer must be reachable: {input}"
+        );
+        let lowered = output.to_lowercase();
+        for forbidden in [
+            "<script",
+            "<img",
+            "<iframe",
+            "<svg",
+            "<a ",
+            "onerror",
+            "onclick",
+            "onload",
+            "javascript:",
+            "style=",
+        ] {
+            assert!(
+                !lowered.contains(forbidden),
+                "gate G8: {forbidden:?} survived sanitizing {input:?} -> {output:?}"
+            );
+        }
+    }
+
+    // 反向对照：白名单里的东西必须**留下**，否则"什么都删掉"也能通过上面的断言。
+    let spanned = &sanitized[7];
+    assert!(
+        spanned.contains("colspan=\"2\"") && spanned.contains("rowspan=\"3\""),
+        "a legal span must survive: {spanned:?}"
+    );
+    let inline = &sanitized[9];
+    for kept in ["<b>", "<sub>", "<sup>", "<br>"] {
+        assert!(
+            inline.contains(kept),
+            "{kept} is on the whitelist and must survive: {inline:?}"
+        );
+    }
+    // 越界的 `colspan` 一律丢弃（`1` 等价于没写，`0`/`abc`/`1e9` 不是合法跨度）。
+    let spans = &sanitized[8];
+    assert!(
+        !spans.contains("colspan"),
+        "out-of-range spans must be dropped, not clamped: {spans:?}"
+    );
+    // 转义后的标签是**文本**，必须原样留下（净化器不做二次转义）。
+    assert!(
+        sanitized[10].contains("&lt;script&gt;"),
+        "already-escaped text must survive as text: {:?}",
+        sanitized[10]
+    );
+}
+
+/// 表格的渲染按钮（E24）：默认只显示原文，点击才渲染，且渲染仍只走净化入口。
+///
+/// 驱动的是**页面自己的** `tableRegionHtml` + `toggleTableRender`。
+///
+/// 为什么不是"在真页面上点一下"：`regionList` 的委托处理器在页面尾部才注册（空白文档里
+/// `renderVerify()` 会先抛），所以这里直接调函数；而"按钮必须被委托拦在选中区域之前"
+/// 由 `the_page_carries_the_mode_selector_and_the_table_renderer` 的结构断言把守。
+///
+/// 原文行（`.rt-raw > code`）由 `renderRegions()` 用 `getAttribute("data-table-html")` 写回，
+/// 那条委托同样在页面尾部，本用例不驱动它 —— 这里断言的是更硬的属性：**`esc()` 之后
+/// `getAttribute` 必须逐字节还原模型 HTML**（含引号），原文行才可能与渲染输入同源。
+///
+/// 本机没有浏览器时**跳过**（与 G8 的净化用例同一口径）。
+#[test]
+fn the_table_render_toggle_is_lazy_and_stays_sanitized() {
+    let Some(browser) = test_browser() else {
+        eprintln!(
+            "skipping: no headless browser found; set RAPID_STRUCTURE_TEST_BROWSER to run the E24 toggle"
+        );
+        return;
+    };
+
+    let server = TestServer::start(TestOptions::new(
+        empty_model_dir("page-e24-toggle"),
+        Scripted::fast(),
+    ));
+    let page = server.get("/").text();
+    let script = main_inline_script(&page).expect("the page must carry its main inline script");
+    let exposed = script.replacen(
+        "\"use strict\";",
+        "\"use strict\";\n        globalThis.__RROCR_SANITIZE__ = sanitizeTableHtml;\n        \
+         globalThis.__RROCR_TABLE_HTML__ = tableRegionHtml;\n        \
+         globalThis.__RROCR_TOGGLE__ = toggleTableRender;",
+        1,
+    );
+    assert!(
+        exposed.contains("__RROCR_TOGGLE__") && exposed.contains("__RROCR_TABLE_HTML__"),
+        "the exposure seam must land: the main script must open with \"use strict\";"
+    );
+    assert!(
+        page.contains("function tableRegionHtml(") && page.contains("function toggleTableRender("),
+        "the toggle harness drives page functions that must exist"
+    );
+
+    // E24：表格的渲染按钮。见函数文档：这里驱动页面自己的两个函数。
+    let payloads = [
+        r#"<table><tr><th>甲</th><th>乙</th></tr><tr><td>1</td><td colspan="2">2</td></tr></table>"#,
+        r#"<table><tr><td><script>alert(1)</script></td><td><img src=x onerror="alert(1)"></td></tr></table>"#,
+    ];
+    let payload_json = serde_json::to_string(&payloads)
+        .expect("payloads serialize")
+        .replace("</", "<\\/");
+    let driver = format!(
+        r#"<script>
+        const payloads = {payload_json};
+        const make = globalThis.__RROCR_TABLE_HTML__;
+        const toggle = globalThis.__RROCR_TOGGLE__;
+        const out = [];
+        for (const payload of payloads) {{
+          const host = document.createElement("div");
+          document.body.appendChild(host);
+          if (typeof make !== "function" || typeof toggle !== "function") {{
+            out.push({{ missing: true }});
+            continue;
+          }}
+          host.innerHTML = make(
+            {{
+              kind: "table",
+              table: {{
+                html: payload,
+                rows: 2,
+                cols: 3,
+                holes: 1,
+                confidence: "low",
+                degradations: [{{ kind: "grid_holes", holes: 1 }}],
+                cells: [{{ match_kind: "single" }}, {{ match_kind: "unmatched" }}],
+                sourceLineIndices: [0, 1],
+              }},
+            }},
+            0,
+            "1,2 3,4 5,6 7,8",
+            "1,2 → 7,8",
+          );
+          const btn = host.querySelector("[data-table-render]");
+          const wrap = host.querySelector(".rt-wrap");
+          const raw = host.querySelector(".rt-raw");
+          const fold = host.querySelector(".ri-fold");
+          const row = {{}};
+          row.attr = btn ? (btn.getAttribute("data-table-html") === payload ? "same" : "diff") : "__NO_BUTTON__";
+          row.collapsed = wrap && wrap.hidden ? "yes" : "no";
+          row.rawShown = raw && !raw.hidden ? "yes" : "no";
+          row.label = btn ? btn.textContent : "";
+          row.expanded = btn ? String(btn.getAttribute("aria-expanded")) : "";
+          row.rendered = wrap ? wrap.innerHTML.length : -1;
+          if (btn) toggle(btn);
+          row.afterHidden = wrap && wrap.hidden ? "hidden" : "shown";
+          row.afterHtml = wrap ? wrap.innerHTML.toLowerCase() : "";
+          row.afterLabel = btn ? btn.textContent : "";
+          row.afterExpanded = btn ? String(btn.getAttribute("aria-expanded")) : "";
+          row.afterRaw = raw && raw.hidden ? "hidden" : "shown";
+          if (btn) toggle(btn);
+          row.backHidden = wrap && wrap.hidden ? "hidden" : "shown";
+          row.backCleared = wrap && wrap.innerHTML === "" ? "cleared" : "kept";
+          row.backLabel = btn ? btn.textContent : "";
+          row.backRaw = raw && !raw.hidden ? "shown" : "hidden";
+          row.span = payload.indexOf("colspan") >= 0 ? "yes" : "no";
+          row.folded = fold ? "yes" : "no";
+          out.push(row);
+        }}
+        const bytes = new TextEncoder().encode(JSON.stringify(out));
+        let hex = "";
+        for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+        const pre = document.createElement("pre");
+        pre.id = "table-render-out";
+        pre.textContent = hex;
+        document.body.appendChild(pre);
+        </script>"#
+    );
+    let html = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>\n\
+         <script>{exposed}</script>\n{driver}\n</body></html>"
+    );
+    let (dom, browser_log) = match run_headless_dom(&browser, &html, "e24-toggle") {
+        Ok(result) => result,
+        Err(reason) => {
+            eprintln!(
+                "skipping: {reason}; the table render toggle is not verified on this machine"
+            );
+            return;
+        }
+    };
+    let hex = extract_pre_hex(&dom, "table-render-out").unwrap_or_else(|| {
+        panic!(
+            "the toggle harness produced no output (browser log: {})",
+            browser_log.trim()
+        )
+    });
+    let json = decode_hex(&hex).expect("the toggle harness output must be hex-encoded UTF-8");
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&json).expect("the toggle harness output must be a JSON array");
+    assert_eq!(rows.len(), payloads.len(), "every payload must come back");
+    for row in &rows {
+        assert!(
+            row["missing"].as_bool() != Some(true),
+            "the exposed page functions must be reachable: {row}"
+        );
+        assert_ne!(
+            row["attr"], "__NO_BUTTON__",
+            "every table card needs its own render button (E24)"
+        );
+        assert_eq!(
+            row["attr"], "same",
+            "esc() + getAttribute must round-trip the model HTML byte for byte"
+        );
+        assert_eq!(
+            row["collapsed"], "yes",
+            "a table must start collapsed (E24)"
+        );
+        assert_eq!(row["rawShown"], "yes", "the source must be shown instead");
+        assert_eq!(row["label"], "渲染表格");
+        assert_eq!(row["expanded"], "false");
+        assert_eq!(
+            row["rendered"], 0,
+            "nothing may be rendered before the click"
+        );
+        assert_eq!(row["afterHidden"], "shown", "the click renders the table");
+        assert_eq!(row["afterLabel"], "收起表格");
+        assert_eq!(row["afterExpanded"], "true");
+        assert_eq!(row["afterRaw"], "hidden");
+        let rendered = row["afterHtml"]
+            .as_str()
+            .expect("rendered html is a string");
+        assert!(
+            rendered.contains("<table"),
+            "the rendered DOM must be a real table: {rendered}"
+        );
+        // 反向对照：源里有合法跨度时，跨度必须活下来（净化不能把合法内容一起删掉）。
+        if row["span"] == "yes" {
+            assert!(
+                rendered.contains("colspan"),
+                "a legal span in the source must survive sanitizing: {rendered}"
+            );
+        } else {
+            assert_eq!(
+                row["span"], "no",
+                "every payload must report whether it carries a span"
+            );
+        }
+        for forbidden in ["<script", "<img", "onerror", "onload"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "gate G8 on the lazy path: {forbidden:?} survived -> {rendered}"
+            );
+        }
+        assert_eq!(
+            row["backHidden"], "hidden",
+            "the second click collapses again"
+        );
+        assert_eq!(
+            row["backCleared"], "cleared",
+            "collapsing must drop the rendered DOM (a big table must not stay resident)"
+        );
+        assert_eq!(row["backLabel"], "渲染表格");
+        assert_eq!(row["backRaw"], "shown");
+        assert_eq!(
+            row["folded"], "no",
+            "the table card is not a folded row; it must not gain a details element"
+        );
+    }
+}
+
+/// 用无头浏览器跑一段独立 HTML，返回（序列化后的 DOM，浏览器日志）。
+///
+/// `Err(reason)` 表示**这台机器上没跑成**（启动失败 / 60 s 内没有 DOM）：调用方按"跳过"处理，
+/// 与仓库里"真实模型不在仓库内就 skip"同一口径，而不是让 CI 因为缺一个可选工具变红。
+///
+/// 启动参数里的两条都是实测逼出来的：① 缺 `--user-data-dir` 时 `msedge.exe` 会把这次启动
+/// **交给已经在跑的那个 Edge 实例**，于是既没有 stdout 也没有退出码，测试会一直等下去
+/// （整条 `cargo test` 因此挂住 28 分钟）；② stdout/stderr 必须接到**文件**而不是管道 ——
+/// 管道形态下浏览器（及其若干孙子进程）的句柄行为不同，同一组参数重定向到文件 0.5 s 退出、
+/// 用 `Stdio::piped()` 60 s 不退出。落盘既避开这两个坑，也让失败时留下证据。
+fn run_headless_dom(browser: &Path, html: &str, tag: &str) -> Result<(String, String), String> {
+    let dir = std::env::temp_dir().join(format!("rrocr-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|error| format!("temp dir: {error}"))?;
+    let file = dir.join("harness.html");
+    std::fs::write(&file, html).map_err(|error| format!("write harness: {error}"))?;
+    let stdout_path = dir.join("dom.txt");
+    let stderr_path = dir.join("browser.log");
+    let stdout_file = std::fs::File::create(&stdout_path).map_err(|error| error.to_string())?;
+    let stderr_file = std::fs::File::create(&stderr_path).map_err(|error| error.to_string())?;
+    let profile = dir.join("profile");
+    let mut child = match std::process::Command::new(browser)
+        .args([
+            "--headless=new",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--allow-file-access-from-files",
+            "--virtual-time-budget=4000",
+            "--dump-dom",
+        ])
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .arg(&file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(stdout_file))
+        .stderr(std::process::Stdio::from(stderr_file))
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(format!("cannot launch {browser:?}: {error}"));
+        }
+    };
+
+    // 完成判定看**输出**，不看进程退出。
+    //
+    // 实测事实（三次独立探针一致）：`msedge.exe --headless=new --dump-dom` 在 400 ms 左右
+    // 就把完整 DOM 写进了 stdout，但**进程之后还要再活很久**（文件已经 186,002 B 时
+    // `HasExited` 仍是 false，在 Rust 侧 60 s 都没有退出）。等退出会让一条可选工具的用例
+    // 决定整条套件的时长，所以这里等输出变非空，然后主动收掉进程。
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut ready = false;
+    while Instant::now() < deadline {
+        let written = std::fs::metadata(&stdout_path)
+            .map(|meta| meta.len() > 0)
+            .unwrap_or(false);
+        if written {
+            ready = true;
+            break;
+        }
+        match child.try_wait() {
+            // 进程退出了却什么都没写出来：不再等，走下面的失败分支。
+            Ok(Some(_)) => break,
+            Ok(None) => std::thread::sleep(Duration::from_millis(200)),
+            Err(error) => {
+                eprintln!("warning: cannot poll {browser:?}: {error}");
+                break;
+            }
+        }
+    }
+    // 无论走哪条路径都要收掉进程：它可能还会活很久（见上）。
+    let _ = child.kill();
+    let _ = child.wait();
+    let dom = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let log = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    if !ready {
+        return Err(format!("wrote no DOM within 60s: {}", log.trim()));
+    }
+    Ok((dom, log))
+}
+
+/// 找一个可用的无头浏览器：环境变量优先，其次 Edge、Chrome 的默认安装位置。
+fn test_browser() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("RAPID_STRUCTURE_TEST_BROWSER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|path| path.is_file())
+}
+
+/// 取出页面里**最后**一段内联 `<script nonce=...>` 的脚本体。
+///
+/// 不能按 `<script` 文本搜索：页面里还有注释与模板字符串中的假命中，因此按行定位
+/// 最后一个带 `nonce=` 的开标签与它之后的第一个 `</script>`。
+fn main_inline_script(page: &str) -> Option<String> {
+    let lines: Vec<&str> = page.lines().collect();
+    let open = lines
+        .iter()
+        .rposition(|line| line.contains("<script nonce="))?;
+    let close = lines
+        .iter()
+        .skip(open + 1)
+        .position(|line| line.trim() == "</script>")?
+        + open
+        + 1;
+    Some(lines[open + 1..close].join("\n"))
+}
+
+/// 从序列化后的 DOM 里取出 `<pre id="...">` 的文本内容。
+fn extract_pre_hex(dom: &str, id: &str) -> Option<String> {
+    let needle = format!("<pre id=\"{id}\">");
+    let start = dom.find(&needle)? + needle.len();
+    let rest = &dom[start..];
+    let end = rest.find("</pre>")?;
+    Some(rest[..end].trim().to_string())
+}
+
+/// 十六进制 → UTF-8 字符串（测试自己解码，避免为了一个用例引入 base64 依赖）。
+fn decode_hex(hex: &str) -> Option<String> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    String::from_utf8(bytes).ok()
+}
 // ------------------------------------------------- M1 评审：检测模型完整性 / 校验缓存
 
 /// 一个带 `formula_detector` role 的本地清单目录（评审 P1-1 的夹具）。
@@ -2420,7 +3739,7 @@ fn a_corrupt_formula_detector_is_reported_and_refused_before_the_body() {
         "/api/ocr?queue=formula",
         &[
             ("Host", server.host.as_str()),
-            ("X-RapidOCR-Token", server.token.as_str()),
+            ("X-RapidStructure-Token", server.token.as_str()),
             ("Origin", server.origin.as_str()),
             ("Content-Type", "application/octet-stream"),
             ("Content-Length", "1048576"),
@@ -2501,7 +3820,7 @@ fn a_cli_formula_detector_is_verified_by_the_same_rule() {
         "/api/ocr?queue=formula",
         &[
             ("Host", server.host.as_str()),
-            ("X-RapidOCR-Token", server.token.as_str()),
+            ("X-RapidStructure-Token", server.token.as_str()),
             ("Origin", server.origin.as_str()),
             ("Content-Type", "application/octet-stream"),
             ("Content-Length", "1048576"),
@@ -2620,7 +3939,7 @@ fn the_page_carries_the_reverify_button_without_inline_handlers_or_styles() {
         "the button must go through the documented endpoint"
     );
     assert!(
-        page.contains("$('verifyBtn').addEventListener('click', reverifyModels)"),
+        page.contains(r#"$("verifyBtn").addEventListener("click", reverifyModels)"#),
         "the handler must be attached with addEventListener (no inline onclick under the nonce CSP)"
     );
     assert!(
@@ -2633,7 +3952,7 @@ fn the_page_carries_the_reverify_button_without_inline_handlers_or_styles() {
     );
     // 页面里那个唯一的空请求体入口（有 body 就是 400）。
     assert!(
-        page.contains("xhrSend('POST', '/api/models/reverify', '')"),
+        page.contains(r#"xhrSend("POST", "/api/models/reverify", "")"#),
         "the request body must be empty, exactly as the endpoint requires"
     );
     // A2 的逐管线结论必须被显示：否则"文本就绪、公式损坏"在页面上又会退化回一句笼统的
@@ -2659,7 +3978,7 @@ fn the_page_carries_the_reverify_button_without_inline_handlers_or_styles() {
 // **进程边界**那一条在 `tests/serve_startup.rs`。
 //
 // 为什么不在这个文件里跑子进程：本模块的测试二进制在 `target/<profile>/deps/` 下，
-// cargo 在那里不保证注入 `CARGO_BIN_EXE_rapidocr`，靠"猜上一级目录"可能拿到
+// cargo 在那里不保证注入 `CARGO_BIN_EXE_rapidstruct`，靠"猜上一级目录"可能拿到
 // `cargo build` 留下的、**没有** `serve` feature 的旧可执行文件——那会让断言对象
 // 与本次构建无关。集成测试里有 cargo 的保证。
 
@@ -3036,7 +4355,7 @@ fn concurrent_reverifications_are_single_flight_and_never_run_on_the_accept_thre
         .expect("read timeout");
     let head = format!(
         "POST /api/models/reverify HTTP/1.1\r\nConnection: close\r\nHost: {}\r\n\
-         X-RapidOCR-Token: {}\r\nOrigin: {}\r\nContent-Length: 0\r\n\r\n",
+         X-RapidStructure-Token: {}\r\nOrigin: {}\r\nContent-Length: 0\r\n\r\n",
         server.host, server.token, server.origin
     );
     stream
@@ -3174,7 +4493,7 @@ fn reverify_cold_verifies_the_formula_detector_and_reports_it_per_pipeline() {
         "/api/ocr?queue=formula",
         &[
             ("Host", server.host.as_str()),
-            ("X-RapidOCR-Token", server.token.as_str()),
+            ("X-RapidStructure-Token", server.token.as_str()),
             ("Origin", server.origin.as_str()),
             ("Content-Type", "application/octet-stream"),
             ("Content-Length", "1048576"),
@@ -3356,7 +4675,7 @@ fn an_external_detector_is_reported_honestly_without_a_declared_digest() {
         "/api/ocr?queue=formula",
         &[
             ("Host", server.host.as_str()),
-            ("X-RapidOCR-Token", server.token.as_str()),
+            ("X-RapidStructure-Token", server.token.as_str()),
             ("Origin", server.origin.as_str()),
             ("Content-Type", "application/octet-stream"),
             ("Content-Length", "1048576"),
@@ -3381,7 +4700,8 @@ fn every_entry_point_reads_the_same_run_plan() {
     // 进程级校验缓存：本用例会清缓存或断言精确的重算次数，必须与同类用例串行。
     let _serial = cache_serial();
     let fixture = detector_model_dir("plan-identity");
-    let plan = ModelPlan::resolve(&fixture.dir, &test_engine_config(), None).expect("model plan");
+    let plan =
+        ModelPlan::resolve(&fixture.dir, &test_engine_config(), None, None).expect("model plan");
     let expected: Vec<&str> = plan
         .plan_files()
         .iter()
@@ -3447,7 +4767,7 @@ fn every_entry_point_reads_the_same_run_plan() {
     assert_eq!(
         policy.model_path.as_deref(),
         Some(
-            plan.plan_file(rapid_ocr_rs::ModelRole::FormulaRecognizer)
+            plan.plan_file(rapid_structure_rs::ModelRole::FormulaRecognizer)
                 .expect("planned")
                 .path
                 .as_path()
@@ -3455,14 +4775,14 @@ fn every_entry_point_reads_the_same_run_plan() {
     );
     assert_eq!(
         policy.expected_model_sha256,
-        plan.plan_file(rapid_ocr_rs::ModelRole::FormulaRecognizer)
+        plan.plan_file(rapid_structure_rs::ModelRole::FormulaRecognizer)
             .expect("planned")
             .declared_sha256
     );
     assert_eq!(
         policy.detector_path.as_deref(),
         Some(
-            plan.plan_file(rapid_ocr_rs::ModelRole::FormulaDetector)
+            plan.plan_file(rapid_structure_rs::ModelRole::FormulaDetector)
                 .expect("planned")
                 .path
                 .as_path()
@@ -3470,7 +4790,7 @@ fn every_entry_point_reads_the_same_run_plan() {
     );
     assert_eq!(
         policy.expected_detector_sha256,
-        plan.plan_file(rapid_ocr_rs::ModelRole::FormulaDetector)
+        plan.plan_file(rapid_structure_rs::ModelRole::FormulaDetector)
             .expect("planned")
             .declared_sha256
     );
@@ -3545,7 +4865,7 @@ fn the_evaluate_endpoint_returns_the_library_summary() {
         (report["mean_cer"].as_f64().expect("mean_cer") - f64::from(expected_mean)).abs() < 1e-6
     );
     assert_eq!(report["exact_match_rate"], 0.5);
-    // 与 `rapidocr evaluate` 的报告字段逐字段相同（同一份实现）。
+    // 与 `rapidstruct evaluate` 的报告字段逐字段相同（同一份实现）。
     assert_eq!(report["iou_threshold"], 0.5);
     assert_eq!(report["manifest_file"], "manifest.json");
     assert!(report["peak_working_set_bytes"].as_u64().unwrap_or(0) > 0);
@@ -3830,7 +5150,7 @@ fn a_second_evaluation_is_refused_while_one_is_running() {
             "/api/evaluate",
             &[
                 ("Host", host.as_str()),
-                ("X-RapidOCR-Token", token.as_str()),
+                ("X-RapidStructure-Token", token.as_str()),
                 ("Origin", origin.as_str()),
                 ("Content-Type", "application/json"),
             ],
@@ -3861,10 +5181,10 @@ fn a_second_evaluation_is_refused_while_one_is_running() {
 
 /// 评估的逐例文本 → 期望 CER（与库同一个公式：字符级编辑距离 / 参考长度）。
 fn cer(reference: &str, hypothesis: &str) -> f32 {
-    rapid_ocr_rs::evaluation::ocr::character_error_rate(reference, hypothesis)
+    rapid_structure_rs::evaluation::ocr::character_error_rate(reference, hypothesis)
 }
 
-/// 写一份 `rapidocr evaluate --manifest` 格式的清单 + 对应的小图片文件。
+/// 写一份 `rapidstruct evaluate --manifest` 格式的清单 + 对应的小图片文件。
 ///
 /// 图片内容不重要（脚本化后端不解码），但**文件必须存在**：端点读不到文件时是 400。
 fn eval_manifest(dir: &Path, label: &str, cases: &[(&str, &str)]) -> PathBuf {
@@ -4645,7 +5965,7 @@ fn a_bodyless_reload_keeps_the_accept_loop_live() {
             "/api/engine/reload",
             &[
                 ("Host", host.as_str()),
-                ("X-RapidOCR-Token", token.as_str()),
+                ("X-RapidStructure-Token", token.as_str()),
                 ("Origin", origin.as_str()),
                 ("Content-Length", "0"),
             ],
@@ -5252,7 +6572,7 @@ fn switching_the_provider_rebuilds_the_session_and_queues_requests_meanwhile() {
             "/api/engine/reload",
             &[
                 ("Host", host.as_str()),
-                ("X-RapidOCR-Token", token.as_str()),
+                ("X-RapidStructure-Token", token.as_str()),
                 ("Origin", origin.as_str()),
                 ("Content-Type", "application/json"),
             ],
@@ -5506,15 +6826,15 @@ fn requesting_a_provider_that_is_not_compiled_in_is_a_400_and_changes_nothing() 
 
 // ---------------------------------------------------------------- M2：真实网络（opt-in）
 
-/// opt-in 真实网络测试的门禁：只有 `RAPID_OCR_ALLOW_NETWORK=1` 时才真的联网。
+/// opt-in 真实网络测试的门禁：只有 `RAPID_STRUCTURE_ALLOW_NETWORK=1` 时才真的联网。
 ///
 /// 这不是"把测试弱化"，而是**网络测试的门禁**：绿/红只在显式要求时才成立，
 /// 默认运行时打印一行 `skipping`（CI 与本机都可能没有网络）。
 fn network_tests_enabled() -> bool {
-    if std::env::var("RAPID_OCR_ALLOW_NETWORK").as_deref() == Ok("1") {
+    if std::env::var("RAPID_STRUCTURE_ALLOW_NETWORK").as_deref() == Ok("1") {
         return true;
     }
-    eprintln!("skipping the real-network test: set RAPID_OCR_ALLOW_NETWORK=1 to run it");
+    eprintln!("skipping the real-network test: set RAPID_STRUCTURE_ALLOW_NETWORK=1 to run it");
     false
 }
 
@@ -5742,7 +7062,7 @@ fn a_real_network_weight_download_through_the_cdn_redirect_lands_and_verifies() 
          max_hops={} expected_weight_host={cdn_host}",
         view["download"]["bytes_total"],
         view["elapsed_ms"],
-        rapid_ocr_rs::MAX_REDIRECT_HOPS,
+        rapid_structure_rs::MAX_REDIRECT_HOPS,
     );
 
     let after = server.get("/api/models").json();
@@ -5789,7 +7109,7 @@ fn a_real_network_weight_download_through_the_cdn_redirect_lands_and_verifies() 
 /// （字典 = 来源主机，权重 = CDN），`expect_redirect` 说明这条用例是否**必须**发生跳转。
 ///
 /// 这两个事实不是从下载器的日志里读的，而是下载器**自己记录的观测量**
-/// （`rapid_ocr_rs::redirect_observation`：跳数 + 最终 host）加上一次独立的
+/// （`rapid_structure_rs::redirect_observation`：跳数 + 最终 host）加上一次独立的
 /// `curl.exe` 复核（`docs/06` M2b 记录）互相印证。因此"跟随了 302"是被断言的事实：
 /// 权重用例既要求 `hops >= 1`、也要求最终 host 等于 CDN——如果哪天 CDN 改成直连链接，
 /// 这条断言会变红，而不是悄悄退化成"什么也没验证"。
@@ -5833,14 +7153,14 @@ fn real_default_table_download_lands_and_verifies(
         view["download"]["bytes_done"],
         view["download"]["bytes_total"],
         view["elapsed_ms"],
-        rapid_ocr_rs::MAX_REDIRECT_HOPS,
+        rapid_structure_rs::MAX_REDIRECT_HOPS,
     );
     // 跳数是库**外部**的独立观测（`curl.exe -w "%{http_code} %{num_redirects} %{redirect_url}"`，
     // 见 `docs/06` 的 M2b 记录）。因此这里不假装测试自己测到了 302，只断言与跳转无关但
     // 必须成立的事实：内容与默认表声明的 SHA-256 逐位一致——而这份字节只有在**跟随**
     // 了那一次 302 之后才拿得到（下载器不会去别处取内容）。
     assert_eq!(
-        rapid_ocr_rs::MAX_REDIRECT_HOPS,
+        rapid_structure_rs::MAX_REDIRECT_HOPS,
         5,
         "the documented hop limit must not drift"
     );
@@ -5943,7 +7263,7 @@ fn the_flow_log_is_silent_until_it_is_asked_for() {
     let _ = server.get(&format!("/api/jobs/{id}/result"));
     assert!(
         server.flow_lines().is_empty(),
-        "flow logging must be off unless --log-level/RAPID_OCR_SERVE_LOG asks for it: {:#?}",
+        "flow logging must be off unless --log-level/RAPID_STRUCTURE_SERVE_LOG asks for it: {:#?}",
         server.flow_lines()
     );
 }
@@ -6109,8 +7429,8 @@ fn a_failed_job_carries_its_code_and_detail_in_the_flow_log() {
 /// 左列是字段路径，右列是页面里**必须逐字存在**的那段代码。
 const PAGE_RESULT_CONTRACT: [(&str, &str); 11] = [
     ("regions", "Array.isArray(r.regions)"),
-    ("kind", "pget(x, 'kind')"),
-    ("polygon.points", "pget(r.polygon, 'points')"),
+    ("kind", r#"pget(x, "kind")"#),
+    ("polygon.points", r#"pget(r.polygon, "points")"#),
     (
         "polygon.points 恰好四点",
         "!Array.isArray(pts) || pts.length !== 4",
@@ -6120,9 +7440,9 @@ const PAGE_RESULT_CONTRACT: [(&str, &str); 11] = [
         "!Array.isArray(p) || p.length !== 2",
     ),
     ("recognition", "const rec = r && r.recognition;"),
-    ("recognition.text", "pget(rec, 'text')"),
-    ("recognition.score", "pget(rec, 'score')"),
-    ("formula.latex", "pget(f, 'latex')"),
+    ("recognition.text", r#"pget(rec, "text")"#),
+    ("recognition.score", r#"pget(rec, "score")"#),
+    ("formula.latex", r#"pget(f, "latex")"#),
     ("plain_text", "r.plain_text"),
     ("timing_ledger", "r.timing_ledger"),
 ];
@@ -6139,11 +7459,13 @@ fn assert_result_satisfies_page_contract(value: &Value) -> usize {
         .unwrap_or_else(|| panic!("the page reads `regions` as an array: {value}"));
     for (index, region) in regions.iter().enumerate() {
         let kind = region["kind"].as_str().unwrap_or_else(|| {
-            panic!("regions[{index}].kind must be a string (`text` | `formula`): {region}")
+            panic!(
+                "regions[{index}].kind must be a string (`text` | `formula` | `table`): {region}"
+            )
         });
         assert!(
-            matches!(kind, "text" | "formula"),
-            "regions[{index}].kind must be `text` or `formula`, got {kind}"
+            matches!(kind, "text" | "formula" | "table"),
+            "regions[{index}].kind must be `text`, `formula` or `table`, got {kind}"
         );
         let points = region["polygon"]["points"].as_array().unwrap_or_else(|| {
             panic!("regions[{index}].polygon.points must be an array (exactly four pairs)")
@@ -6182,10 +7504,26 @@ fn assert_result_satisfies_page_contract(value: &Value) -> usize {
                     .is_some_and(f64::is_finite),
                 "regions[{index}].recognition.score must be a finite number: {region}"
             );
-        } else {
+        } else if kind == "formula" {
             assert!(
                 region["formula"]["latex"].is_string(),
                 "regions[{index}].formula.latex must be a string for a formula region: {region}"
+            );
+        } else {
+            /* 表格区域（E16.3）：页面读的是 `table.html`（真表格渲染）与
+            `table.cells[].text`（单元格文本）。**刻意不要求** `recognition` —— 表格区域
+            和公式区域一样，语义上不携带 CTC 文本结果（`RegionKind::Table`）。 */
+            assert!(
+                region["table"]["html"].is_string(),
+                "regions[{index}].table.html must be a string for a table region: {region}"
+            );
+            assert!(
+                region["table"]["cells"].is_array(),
+                "regions[{index}].table.cells must be an array: {region}"
+            );
+            assert!(
+                region["recognition"].is_null(),
+                "a table region must not carry a CTC recognition result: {region}"
             );
         }
     }
@@ -6261,7 +7599,7 @@ fn the_page_reads_exactly_the_pinned_result_paths() {
     }
     // `plain_text`（复制全文）与 `timings`（逐阶段耗时表）同样在页面里。
     assert!(
-        page.contains("typeof r.plain_text === 'string'"),
+        page.contains(r#"typeof r.plain_text === "string""#),
         "the page's copy-all must keep reading `plain_text`"
     );
     assert!(
@@ -6283,11 +7621,11 @@ fn the_page_reads_exactly_the_pinned_result_paths() {
     }
     // 队列契约（docs/05 §2.2）：**只有** `?queue=` 一个表达。
     assert!(
-        page.contains("'/api/ocr?queue=' + queue"),
+        page.contains(r#""/api/ocr?queue=" + queue"#),
         "the page must express the pipeline choice as `?queue=` on POST /api/ocr"
     );
     assert!(
-        !page.contains("'/api/ocr',"),
+        !page.contains(r#""/api/ocr","#),
         "the page must not post to /api/ocr without the documented queue parameter"
     );
 }
@@ -6307,7 +7645,7 @@ fn the_captured_real_result_body_still_satisfies_the_page_contract() {
         )
     });
     assert_eq!(
-        rapid_ocr_rs::sha256_file(&path).expect("hash the captured body"),
+        rapid_structure_rs::sha256_file(&path).expect("hash the captured body"),
         "fda2f71337aa8b03f147d5fb4b0065981fe0444703c30dfb74573439f691fd27",
         "the captured body must be exactly the bytes the reporter's server returned"
     );

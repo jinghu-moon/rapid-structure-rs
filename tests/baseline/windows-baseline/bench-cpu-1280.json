@@ -1,46 +1,206 @@
 {
   "memory": {
-    "peak_working_set_bytes": 944357376,
+    "peak_working_set_bytes": 941637632,
     "source": "windows:GetProcessMemoryInfo.PeakWorkingSetSize"
   },
   "meta": {
     "benchmark": {
-      "auto_tune_threads": {
-        "cls": false,
-        "det": false,
-        "rec": false
-      },
       "build_profile": "release",
-      "inter_threads": {
-        "cls": 1,
-        "det": 1,
-        "rec": 1
-      },
-      "intra_threads": {
-        "cls": 16,
-        "det": 16,
-        "rec": 16
-      },
       "max_side_len": 1280,
+      "runtime": {
+        "auto_tune_threads": false,
+        "enable_cpu_mem_arena": true,
+        "fail_if_provider_unavailable": false,
+        "formula_batch": 16,
+        "inter_threads": 1,
+        "intra_threads": 16,
+        "provider_preference": "cpu",
+        "rayon_threads": null
+      },
       "timing_scope": {
         "ocr_total_ms": "ocr_pipeline_only",
         "wall_ms": "file_read_plus_ocr"
       }
     },
     "image_count": 12,
-    "images_dir": "D:\\100_Projects\\110_Daily\\SnapClip\\OCR-test-image",
-    "init_ms": 148.98520000000002,
+    "images_dir": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\datasets\\text",
+    "init_ms": 128.0911,
+    "ort_runtime": {
+      "api_version": "1.28.0",
+      "link": {
+        "base_dir": "C:\\Users\\seeyuer\\AppData\\Local\\ort.pyke.io\\dfbin\\x86_64-pc-windows-msvc",
+        "file_name": "onnxruntime.lib",
+        "size_bytes": 341152186
+      },
+      "link_reason": null,
+      "provider_dlls": [
+        {
+          "loaded": true,
+          "name": "DirectML.dll",
+          "path": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\target\\release\\DirectML.dll",
+          "size_bytes": 18527776
+        },
+        {
+          "loaded": false,
+          "name": "onnxruntime_providers_cuda.dll",
+          "path": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\target\\release\\onnxruntime_providers_cuda.dll",
+          "size_bytes": 62276096
+        }
+      ],
+      "provider_reason": null,
+      "runtime_module": {
+        "path": "C:\\Users\\seeyuer\\AppData\\Local\\ort.pyke.io\\dfbin\\x86_64-pc-windows-msvc\\f7c654b3729cb9e5ad2a36a0c38e5b48e63bf4eed22968931aed33a0ad0b527d\\onnxruntime.lib",
+        "reason": null,
+        "sha256": "c3f5bb800fd19c05d3bd13614654f0c37ea3db1fbfba4d10963fa678cdb6cdd0",
+        "size_bytes": 341152186
+      },
+      "runtime_source": "static_link"
+    },
+    "ort_runtime_version": "1.28.0",
+    "provider_resolution": {
+      "classifier": null,
+      "detector": {
+        "fallback_to_cpu": false,
+        "requested": "Cpu",
+        "selected_ep": "Cpu"
+      },
+      "model_id": "PP-OCRv6-small-ch",
+      "recognizer": {
+        "fallback_to_cpu": false,
+        "requested": "Cpu",
+        "selected_ep": "Cpu"
+      }
+    },
     "rounds": 3,
+    "thread_plan": {
+      "budget": 14,
+      "ort_inter": 1,
+      "ort_intra": 16,
+      "rayon": null,
+      "sessions": 2,
+      "source": "explicit"
+    },
     "warmup_rounds": 1
+  },
+  "stages": {
+    "classifier": {
+      "infer_ms": {
+        "count": 0
+      },
+      "postprocess_ms": {
+        "count": 0
+      },
+      "preprocess_ms": {
+        "count": 0
+      }
+    },
+    "detector": {
+      "infer_ms": {
+        "avg": 249.62302907307944,
+        "count": 36,
+        "max": 288.7590026855469,
+        "min": 203.89891052246094,
+        "p50": 249.58499145507812,
+        "p90": 272.4639892578125
+      },
+      "postprocess_ms": {
+        "avg": 2.3029833171102734,
+        "count": 36,
+        "max": 4.382400035858154,
+        "min": 1.6442999839782715,
+        "p50": 2.094599962234497,
+        "p90": 2.9029998779296875
+      },
+      "preprocess_ms": {
+        "avg": 0.6479055550363328,
+        "count": 36,
+        "max": 1.6354999542236328,
+        "min": 0.4414999783039093,
+        "p50": 0.5728999972343445,
+        "p90": 0.8788999915122986
+      }
+    },
+    "input": {
+      "crop_ms": {
+        "avg": 0.4485749995542897,
+        "count": 36,
+        "max": 0.910099983215332,
+        "min": 0.23070000112056732,
+        "p50": 0.40119999647140503,
+        "p90": 0.6462000012397766
+      },
+      "decode_ms": {
+        "avg": 0.0004166666864572714,
+        "count": 36,
+        "max": 0.0006000000284984708,
+        "min": 0.00020000000949949026,
+        "p50": 0.0004000000189989805,
+        "p90": 0.0006000000284984708
+      },
+      "resize_ms": {
+        "avg": 2.1892750130759344,
+        "count": 36,
+        "max": 3.203900098800659,
+        "min": 1.7927000522613525,
+        "p50": 2.1178998947143555,
+        "p90": 2.6115000247955322
+      }
+    },
+    "page_total": {
+      "postprocess_ms": {
+        "avg": 0.02258333346496026,
+        "count": 36,
+        "max": 0.03619999811053276,
+        "min": 0.009700000286102295,
+        "p50": 0.022700000554323196,
+        "p90": 0.03060000017285347
+      },
+      "preprocess_ms": {
+        "avg": 80.06497213575575,
+        "count": 36,
+        "max": 102.62110137939453,
+        "min": 62.87830352783203,
+        "p50": 78.75239562988281,
+        "p90": 88.70059967041016
+      }
+    },
+    "recognizer": {
+      "infer_ms": {
+        "avg": 256.6149444580078,
+        "count": 36,
+        "max": 400.76898193359375,
+        "min": 98.51509857177734,
+        "p50": 268.4078063964844,
+        "p90": 349.22967529296875
+      },
+      "postprocess_ms": {
+        "avg": 38.3250003390842,
+        "count": 36,
+        "max": 57.75979995727539,
+        "min": 14.925899505615234,
+        "p50": 40.43729782104492,
+        "p90": 50.86980056762695
+      },
+      "preprocess_ms": {
+        "avg": 2.5520972079700894,
+        "count": 36,
+        "max": 4.012500286102295,
+        "min": 1.1932001113891602,
+        "p50": 2.6621999740600586,
+        "p90": 3.5236001014709473
+      }
+    },
+    "samples": 36,
+    "unit": "ms"
   },
   "stats": {
     "ocr_total_ms": {
-      "avg": 644.1852366129557,
+      "avg": 633.650868733724,
       "count": 36,
-      "max": 828.11669921875,
-      "min": 459.9036865234375,
-      "p50": 664.3169555664062,
-      "p90": 753.505859375
+      "max": 820.7772827148438,
+      "min": 429.0732116699219,
+      "p50": 644.9581298828125,
+      "p90": 761.9999389648438
     },
     "regions": {
       "avg": 33.416666666666664,
@@ -51,12 +211,138 @@
       "p90": 57.0
     },
     "wall_ms": {
-      "avg": 644.8895972222222,
+      "avg": 634.3016388888889,
       "count": 36,
-      "max": 828.8394999999999,
-      "min": 460.78380000000004,
-      "p50": 665.0204,
-      "p90": 754.4742
+      "max": 821.5313,
+      "min": 429.7225,
+      "p50": 645.5305999999999,
+      "p90": 762.5726999999999
     }
+  },
+  "timing_ledger": {
+    "basis": "per-sample ledger, then per-field mean (each component counted exactly once)",
+    "components": {
+      "classifier_infer_ms": 0.0,
+      "classifier_postprocess_ms": 0.0,
+      "classifier_preprocess_ms": 0.0,
+      "detector_infer_ms": 249.62302907307944,
+      "detector_postprocess_ms": 2.3029833171102734,
+      "detector_preprocess_ms": 0.6479055550363328,
+      "formula_ms": 0.0,
+      "input_crop_ms": 0.4485749995542897,
+      "input_decode_ms": 0.0004166666864572714,
+      "input_named_within_ms": 2.6382666793166814,
+      "input_other_ms": 77.42670545643907,
+      "input_overflow_ms": 0.0,
+      "input_preprocess_ms": 80.06497213575575,
+      "input_resize_ms": 2.1892750130759344,
+      "page_postprocess_ms": 0.02258333346496026,
+      "recognizer_infer_ms": 256.6149444580078,
+      "recognizer_postprocess_ms": 38.3250003390842,
+      "recognizer_preprocess_ms": 2.5520972079700894,
+      "table_backfill_ms": 0.0,
+      "table_detect_ms": 0.0,
+      "table_structure_infer_ms": 0.0,
+      "total_ms": 633.650868733724,
+      "unattributed_ms": 3.4973533142151103
+    },
+    "conservation": {
+      "attributed_ms": 630.1535154195088,
+      "conserved": false,
+      "excess_ms": 3.497353314215161,
+      "interpretation": "NOT a strict partition, and NOT a wrong total either: this is a SCOPE difference between total_ms and the sum of its named parts. residual_ms = -3.497353, i.e. the named components sum to 3.497353 ms (0.55% of total_ms) LESS than total_ms. The two timing windows are SEQUENTIAL and do not overlap: the outer OcrTimings::preprocess_ms window runs from rapid_structure.rs:619 to :719 and inner.run() is only entered at :720, whose own end-to-end window runs from rapid_structure.rs:106 to :130; total_ms is their sum (total_ms = exec.e2e_ms + preprocess_ms, rapid_structure.rs:910). No wall-clock interval is therefore counted twice. What the residual measures is the part of inner.run()'s own window that falls outside every named stage window and therefore has no component in this ledger: the resize inside prepare_image (rapid_structure.rs:156-162), apply_vertical_padding (rapid_structure.rs:189-195), crop_text_regions (rapid_structure.rs:210-212), and the recognizer's batch assembly (rec/recognizer.rs:89-98, 222-231). total_ms is a single wall-clock measurement and is unaffected by how the parts are named; conversely, because the parts were measured independently, this ledger alone cannot decide which side is closer to the real elapsed time, so it does NOT claim that total_ms overstates. This ledger is a DIAGNOSTIC instrument, not acceptance evidence: every share is valid only to within 3.497353 ms (0.55% of total_ms), and the stage-6 conclusion (ONNX Runtime inference is an order of magnitude larger than every Rust component) is not affected by a residual of this size.",
+      "residual_ms": -3.497353314215161,
+      "tolerance_ms": 0.000633650868733724,
+      "total_ms": 633.650868733724
+    },
+    "per_sample_residual_ms": {
+      "avg": -3.4973533142151103,
+      "count": 36,
+      "max": -3.0437145018950105,
+      "min": -4.861827990040183,
+      "p50": -3.345576809719205,
+      "p90": -3.092989480122924
+    },
+    "per_sample_unattributed_ms": {
+      "avg": 3.4973533142151103,
+      "count": 36,
+      "max": 4.861827990040183,
+      "min": 3.0437145018950105,
+      "p50": 3.313426233828068,
+      "p90": 4.245519243180752
+    },
+    "samples": 36,
+    "shares": {
+      "classifier_infer_share": 0.0,
+      "classifier_postprocess_share": 0.0,
+      "detector_infer_share": 0.3939441124288544,
+      "detector_postprocess_share": 0.0036344672291107436,
+      "formula_share": 0.0,
+      "inference_share": 0.7989225589522883,
+      "input_crop_share": 0.0007079213833490255,
+      "input_decode_share": 6.575650835765921e-7,
+      "input_other_share": 0.122191429503075,
+      "input_resize_share": 0.0034550177725644732,
+      "input_share": 0.12635502622407208,
+      "model_postprocess_share": 0.06411730127883304,
+      "model_preprocess_share": 0.0050501039624568774,
+      "page_postprocess_share": 0.000035640026044768736,
+      "recognizer_infer_share": 0.4049784465234338,
+      "recognizer_postprocess_share": 0.0604828340497223,
+      "rust_share": 0.19555807149140678,
+      "table_backfill_share": 0.0,
+      "table_detect_share": 0.0,
+      "table_structure_infer_share": 0.0,
+      "unattributed_share": 0.005519369556304966
+    },
+    "totals": {
+      "attributed_ms": 630.1535154195088,
+      "formula_ms": 0.0,
+      "inference_ms": 506.2379735310873,
+      "input_ms": 80.06497213575575,
+      "input_overflow_ms": 0.0,
+      "input_preprocess_ms": 80.06497213575575,
+      "model_postprocess_ms": 40.62798365619447,
+      "model_preprocess_ms": 3.200002763006422,
+      "page_postprocess_ms": 0.02258333346496026,
+      "rust_ms": 123.91554188842161,
+      "table_backfill_ms": 0.0,
+      "table_detect_ms": 0.0,
+      "table_structure_infer_ms": 0.0,
+      "unattributed_ms": 3.4973533142151103
+    },
+    "unit": "ms"
+  },
+  "timing_split": {
+    "attributed_ms": 630.1535154195088,
+    "attributed_share": 0.994480630443695,
+    "basis": "per-sample ledger mean; the same samples back stats.ocr_total_ms",
+    "classifier_infer_share": 0.0,
+    "denominator_ms": 633.650868733724,
+    "detector_infer_share": 0.3939441124288544,
+    "identity": "ort_inference_ms + rust_ms + input_overflow_ms + unattributed_ms == denominator_ms",
+    "identity_residual_ms": -1.1368683772161603e-13,
+    "input_overflow_ms": 0.0,
+    "input_overflow_share": 0.0,
+    "ort_inference_ms": 506.2379735310873,
+    "ort_inference_share": 0.7989225589522883,
+    "recognizer_infer_share": 0.4049784465234338,
+    "rust_input_ms": 80.06497213575575,
+    "rust_input_share": 0.12635502622407208,
+    "rust_model_postprocess_ms": 40.62798365619447,
+    "rust_model_postprocess_share": 0.06411730127883304,
+    "rust_model_preprocess_ms": 3.200002763006422,
+    "rust_model_preprocess_share": 0.0050501039624568774,
+    "rust_ms": 123.91554188842161,
+    "rust_page_postprocess_ms": 0.02258333346496026,
+    "rust_page_postprocess_share": 0.000035640026044768736,
+    "rust_share": 0.19555807149140678,
+    "rust_table_backfill_ms": 0.0,
+    "rust_table_backfill_share": 0.0,
+    "rust_table_detect_ms": 0.0,
+    "rust_table_detect_share": 0.0,
+    "table_structure_infer_share": 0.0,
+    "unattributed_ms": 3.4973533142151103,
+    "unattributed_share": 0.005519369556304966
   }
 }

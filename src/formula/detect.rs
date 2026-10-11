@@ -123,7 +123,7 @@ impl FormulaDetector {
             return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
         }
         crate::model_verify::verify_sha256(model_path, expected_sha256)?;
-        let inner = OrtSession::open_unchecked(model_path, runtime_cfg)?;
+        let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
         // 公式域契约：请求了加速器却只拿到 CPU 回退时必须失败，不能静默降级。
         require_requested_provider(inner.provider_resolution())?;
         let probe = inner.probe_io()?;
@@ -732,7 +732,7 @@ mod tests {
     }
 
     /// 模型定位统一走 `crate::test_support`：环境变量解析、缺失资产处理与
-    /// `RAPID_OCR_REQUIRE_EXTERNAL_ASSETS` 语义只有一份实现，避免测试之间语义分叉。
+    /// `RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS` 语义只有一份实现，避免测试之间语义分叉。
     fn detect_model_path() -> Option<PathBuf> {
         crate::test_support::formula_detector_path()
     }
@@ -1147,12 +1147,7 @@ mod tests {
     #[test]
     fn contract_validation_accepts_the_real_signature_and_rejects_mismatches() {
         fn spec(name: &str, dims: Vec<i64>, element_type: TensorElementType) -> TensorSpec {
-            TensorSpec {
-                name: name.to_string(),
-                rank: dims.len(),
-                dims,
-                element_type,
-            }
+            TensorSpec::new(name, dims, element_type)
         }
         fn probe(input_dims: Vec<i64>, output_dims: Vec<i64>) -> ModelIoProbe {
             ModelIoProbe {

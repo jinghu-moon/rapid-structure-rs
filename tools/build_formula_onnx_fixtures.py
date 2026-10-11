@@ -9,14 +9,14 @@
 ```powershell
 python tools/build_formula_onnx_fixtures.py
 # 只重建 formula_recognizer_ok / formula_recognizer_bad_token 需要真实 tokenizer metadata：
-$env:RAPID_OCR_MODEL_ROOT = "<workspace>/OCR-Model"
+$env:RAPID_STRUCTURE_MODEL_ROOT = "<workspace>/models"
 python tools/build_formula_onnx_fixtures.py
 ```
 
 - 10 个 fixture 完全由本脚本确定性生成，不需要任何外部模型。
 - `formula_recognizer_ok.onnx` / `formula_recognizer_bad_token.onnx` 内嵌真实模型的
   `character` metadata（含真实 `fast_tokenizer_file`），必须能从
-  `RAPID_OCR_FORMULA_MODEL` 或 `RAPID_OCR_MODEL_ROOT` 指向的模型读取；
+  `RAPID_STRUCTURE_FORMULA_MODEL` 或 `RAPID_STRUCTURE_MODEL_ROOT` 指向的模型读取；
   缺失时脚本跳过这两个文件并返回非零退出码，不会写出伪造 tokenizer。
 """
 
@@ -80,10 +80,10 @@ def synthetic_character_metadata() -> str:
 
 def find_real_model() -> Path | None:
     candidates = []
-    if os.environ.get("RAPID_OCR_FORMULA_MODEL"):
-        candidates.append(Path(os.environ["RAPID_OCR_FORMULA_MODEL"]))
-    if os.environ.get("RAPID_OCR_MODEL_ROOT"):
-        root = Path(os.environ["RAPID_OCR_MODEL_ROOT"])
+    if os.environ.get("RAPID_STRUCTURE_FORMULA_MODEL"):
+        candidates.append(Path(os.environ["RAPID_STRUCTURE_FORMULA_MODEL"]))
+    if os.environ.get("RAPID_STRUCTURE_MODEL_ROOT"):
+        root = Path(os.environ["RAPID_STRUCTURE_MODEL_ROOT"])
         candidates.append(root)
         candidates.append(root / FORMULA_MODEL_RELATIVE)
     for candidate in candidates:
@@ -149,7 +149,7 @@ def build_cast_flatten_model(
         ]
 
     graph = helper.make_graph(nodes, "formula_contract_fixture", inputs, outputs)
-    model = helper.make_model(graph, producer_name="rapid-ocr-rs-fixtures")
+    model = helper.make_model(graph, producer_name="rapid-structure-rs-fixtures")
     model.ir_version = 10
     model.opset_import[0].version = 18
     if metadata is not None:
@@ -182,7 +182,7 @@ def build_token_row_model(token_row: list[int], metadata: str) -> onnx.ModelProt
         [helper.make_tensor_value_info("fetch_name_0", TensorProto.INT64, ["N", length])],
         initializer=initializers,
     )
-    model = helper.make_model(graph, producer_name="rapid-ocr-rs-fixtures")
+    model = helper.make_model(graph, producer_name="rapid-structure-rs-fixtures")
     model.ir_version = 10
     model.opset_import[0].version = 18
     entry = model.metadata_props.add()
@@ -204,7 +204,7 @@ def build_rank1_output_model() -> onnx.ModelProto:
         [helper.make_tensor_value_info("fetch_name_0", TensorProto.INT64, ["Dyn"])],
         initializer=initializers,
     )
-    model = helper.make_model(graph, producer_name="rapid-ocr-rs-fixtures")
+    model = helper.make_model(graph, producer_name="rapid-structure-rs-fixtures")
     model.ir_version = 10
     model.opset_import[0].version = 18
     return model
@@ -217,7 +217,7 @@ def build_float_output_model() -> onnx.ModelProto:
         [float_input()],
         [helper.make_tensor_value_info("fetch_name_0", TensorProto.FLOAT, ["Dyn", "Dyn"])],
     )
-    model = helper.make_model(graph, producer_name="rapid-ocr-rs-fixtures")
+    model = helper.make_model(graph, producer_name="rapid-structure-rs-fixtures")
     model.ir_version = 10
     model.opset_import[0].version = 18
     return model
@@ -294,7 +294,7 @@ def main() -> int:
         if model_path is None:
             print(
                 "error: 需要真实模型读取 `character` metadata；请设置 "
-                "RAPID_OCR_MODEL_ROOT 或 RAPID_OCR_FORMULA_MODEL，"
+                "RAPID_STRUCTURE_MODEL_ROOT 或 RAPID_STRUCTURE_FORMULA_MODEL，"
                 "或使用 --only-deterministic 只重建确定性 fixture。",
                 file=sys.stderr,
             )

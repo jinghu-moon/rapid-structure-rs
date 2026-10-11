@@ -207,7 +207,7 @@ impl Detector {
     }
 }
 
-fn resolve_limit_side_len_like_python(
+pub(crate) fn resolve_limit_side_len_like_python(
     limit_type: &str,
     configured_limit_side_len: usize,
     max_wh: usize,

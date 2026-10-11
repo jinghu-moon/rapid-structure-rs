@@ -666,7 +666,7 @@ mod tests {
     fn file_input_is_rejected_before_full_read_when_too_large() {
         let bytes = corrupted_png(8, 8);
         let path = std::env::temp_dir().join(format!(
-            "rapid_ocr_rs_pixel_limit_{}.png",
+            "rapid_structure_rs_pixel_limit_{}.png",
             std::process::id()
         ));
         std::fs::write(&path, &bytes).expect("test image should be written");
@@ -717,7 +717,7 @@ mod tests {
     fn file_input_is_rejected_before_read_when_encoded_too_large() {
         let bytes = corrupted_png(8, 8);
         let path = std::env::temp_dir().join(format!(
-            "rapid_ocr_rs_encoded_limit_{}.png",
+            "rapid_structure_rs_encoded_limit_{}.png",
             std::process::id()
         ));
         std::fs::write(&path, &bytes).expect("test image should be written");

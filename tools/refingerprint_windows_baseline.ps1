@@ -30,10 +30,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# 默认从 crate 位置推导仓库根（`<root>/crates/rapid-ocr-rs`），避免把开发机绝对路径写进工具。
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $Crate)
-if (-not $Config) { $Config = Join-Path $RepoRoot 'OCR-Model\test-config-small.yaml' }
-if (-not $ImagesDir) { $ImagesDir = Join-Path $RepoRoot 'OCR-test-image' }
+# 默认从 crate 位置推导仓库根（`$Crate` 即仓库根），避免把开发机绝对路径写进工具。
+if (-not $Config) { $Config = Join-Path $Crate 'models\configs\test-config-small.yaml' }
+if (-not $ImagesDir) { $ImagesDir = Join-Path $Crate 'datasets\text' }
 if (-not $GoldenManifest) { $GoldenManifest = Join-Path $ImagesDir 'golden-manifest.json' }
 $OutDir = Join-Path $Crate 'tests\baseline\windows-baseline'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -124,14 +123,14 @@ if ($LASTEXITCODE -ne 0) { throw 'failed to rebuild the default-feature binaries
 
 Write-Host '=== 12-image evaluation (with ORT fingerprint) ==='
 $evalOut = Join-Path $OutDir 'evaluation-cpu-ortfp.json'
-$rapidocr = Join-Path $Crate 'target\release\rapidocr.exe'
-$evalProcess = Start-Process -FilePath $rapidocr -ArgumentList @(
+$rapidstruct = Join-Path $Crate 'target\release\rapidstruct.exe'
+$evalProcess = Start-Process -FilePath $rapidstruct -ArgumentList @(
     'evaluate', '--manifest', $GoldenManifest, '--config', $Config, '--output', $evalOut
 ) -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $WorkDir 'eval-stdout.txt') `
     -RedirectStandardError (Join-Path $WorkDir 'eval-stderr.txt')
 $evalProcess.WaitForExit()
 if ($evalProcess.ExitCode -ne 0) {
-    throw "rapidocr evaluate failed (exit $($evalProcess.ExitCode)); see $WorkDir\eval-stderr.txt"
+    throw "rapidstruct evaluate failed (exit $($evalProcess.ExitCode)); see $WorkDir\eval-stderr.txt"
 }
 $evaluation = Get-Content $evalOut -Raw -Encoding UTF8 | ConvertFrom-Json
 Write-Host ("  mean CER={0} exact={1} cases={2} ort={3}" -f `

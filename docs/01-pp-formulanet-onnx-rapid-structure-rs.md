@@ -1,6 +1,6 @@
-# PP-FormulaNet_plus-M ONNX 转换、部署与 rapid-ocr-rs 集成方案
+# PP-FormulaNet_plus-M ONNX 转换、部署与 rapid-structure-rs 集成方案
 
-> 目标：把 `PP-FormulaNet_plus-M` 公式识别模型接入 `rapid-ocr-rs`。  
+> 目标：把 `PP-FormulaNet_plus-M` 公式识别模型接入 `rapid-structure-rs`。  
 > 原则：不重新训练；不把公式模型塞进现有 CTC OCR 流程；优先复用有明确来源、固定哈希和工程实现的 ONNX 模型，并对本地模型重新回归。
 
 ---
@@ -29,7 +29,7 @@
 - Paddle 与 ONNX 的算子数值差异；
 - 输出是 `INT64` token 序列，而不是普通 OCR 的 `FLOAT` 特征图。
 
-### 1.2 对 rapid-ocr-rs 的最终推荐
+### 1.2 对 rapid-structure-rs 的最终推荐
 
 推荐采用“三层次方案”：
 
@@ -45,7 +45,7 @@
 
 1. 使用本地 Paddle 模型作为基准：
    ```text
-   OCR-Model/Formula-Recognition-Models/PP-FormulaNet_plus-M_infer.tar
+   models/formula/recognition/PP-FormulaNet_plus-M_infer.tar
    ```
 2. 优先下载并评估 RapidDoc 的 `PP-FormulaNet_plus-M` ONNX。
 3. 同时下载 MinerU M ONNX，作为交叉验证模型。
@@ -189,7 +189,7 @@ EOS = 2
 
 - [https://github.com/RapidAI/RapidDoc](https://github.com/RapidAI/RapidDoc)
 
-你的判断基本正确：如果目标是把 `PP-FormulaNet_plus-M` 接入 `rapid-ocr-rs`，RapidDoc 比 MinerU 更适合作为第一实现参考。
+你的判断基本正确：如果目标是把 `PP-FormulaNet_plus-M` 接入 `rapid-structure-rs`，RapidDoc 比 MinerU 更适合作为第一实现参考。
 
 但应复用它的公式模型、预处理和后处理设计，而不是把整个 Python RapidDoc 引入 Rust。
 
@@ -278,7 +278,7 @@ SHA-256: 20a32595c2b30282dcd069e6295e9fad96115697beb66acb9b681b814006d193
 - RapidDoc 模型更适合复用其既有 Python 预处理和 tokenizer 逻辑；
 - MinerU 模型拥有更完整的 153 张图片逐 token / LaTeX 验证报告。
 
-#### RapidDoc 对 rapid-ocr-rs 的适配性
+#### RapidDoc 对 rapid-structure-rs 的适配性
 
 RapidDoc 的公式 ONNX 很适合单文件 Rust 接入：
 
@@ -339,7 +339,7 @@ RapidDoc 软件仓库使用 Apache-2.0，ModelScope 的 `RapidAI/RapidDoc` 模�
 | 验证     | 153 张真实图片，token 和 LaTeX 均 153/153 匹配               |
 | 限制     | 生成到第 1536 个 token 时强制 EOS                            |
 
-它最适合先接入 `rapid-ocr-rs` 的单文件方案，因为 Rust 只需要：
+它最适合先接入 `rapid-structure-rs` 的单文件方案，因为 Rust 只需要：
 
 ```text
 图像预处理 -> ONNX 推理 -> token_ids -> tokenizer -> LaTeX
@@ -374,7 +374,7 @@ PP-FormulaNet_plus-M_tokenizer.json     约 2.14 MB
 - Rust 主程序控制 EOS、最大长度、取消和超时；
 - 不依赖 ONNX 图内部 `Loop`。
 
-它与 `rapid-ocr-rs` 的长期架构更匹配，但实现量明显大于 MinerU 单文件方案。
+它与 `rapid-structure-rs` 的长期架构更匹配，但实现量明显大于 MinerU 单文件方案。
 
 ### 3.4 其他模型与项目评价
 
@@ -464,14 +464,14 @@ p2o inference.json inference.pdiparams output.onnx --opset 17
 
 ---
 
-## 四、rapid-ocr-rs 集成设计
+## 四、rapid-structure-rs 集成设计
 
 ### 4.1 目标架构
 
 建议新增独立模块：
 
 ```text
-rapid-ocr-rs
+rapid-structure-rs
 └── FormulaRecognizer
     ├── FormulaSession
     ├── FormulaTokenizer
@@ -594,7 +594,7 @@ numpy==1.26.4
 你本地已经有：
 
 ```text
-OCR-Model/formula_recognition_models/
+models/formula_recognition_models/
 └── PP-FormulaNet_plus-M_pretrained.pdparams
 ```
 
@@ -791,7 +791,7 @@ PAD = 1
 EOS = 2
 ```
 
-### rapid-ocr-rs 新增模块
+### rapid-structure-rs 新增模块
 
 ```text
 FormulaRecognizer
@@ -801,7 +801,7 @@ FormulaTokenizer
 
 ### 最终推荐一句话
 
-> **RapidDoc 更适合作为 `rapid-ocr-rs` 第一版公式识别的模型和算法参考；MinerU 更适合作为有强验证证据的交叉验证模型；docparser-rs 更适合作为后续性能优化的拆分解码方案。**
+> **RapidDoc 更适合作为 `rapid-structure-rs` 第一版公式识别的模型和算法参考；MinerU 更适合作为有强验证证据的交叉验证模型；docparser-rs 更适合作为后续性能优化的拆分解码方案。**
 
 ---
 
@@ -870,7 +870,7 @@ FormulaTokenizer
 - `tests/fixtures/**/*.onnx` 随仓库提交（`.gitignore` 例外
   `!tests/fixtures/**/*.onnx`），干净 clone 可运行全部契约测试；
 - 所有开发机绝对路径已删除，外部模型/测试集通过
-  `RAPID_OCR_MODEL_ROOT` / `RAPID_OCR_FORMULA_TEST_ROOT` /
-  `RAPID_OCR_FORMULA_MODEL` / `RAPID_OCR_FORMULA_DETECT_MODEL` /
-  `RAPID_OCR_TEST_IMAGES` 引用，缺失时显式 skip；
-- `RAPID_OCR_REQUIRE_EXTERNAL_ASSETS=1` 可把 skip 变为失败，供已准备资产的环境使用。
+  `RAPID_STRUCTURE_MODEL_ROOT` / `RAPID_STRUCTURE_FORMULA_TEST_ROOT` /
+  `RAPID_STRUCTURE_FORMULA_MODEL` / `RAPID_STRUCTURE_FORMULA_DETECT_MODEL` /
+  `RAPID_STRUCTURE_TEST_IMAGES` 引用，缺失时显式 skip；
+- `RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS=1` 可把 skip 变为失败，供已准备资产的环境使用。

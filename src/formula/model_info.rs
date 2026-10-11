@@ -36,7 +36,7 @@ impl FormulaModelInfo {
             return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
         }
 
-        let session = OrtSession::open_unchecked(model_path, runtime_cfg)?;
+        let session = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
         let io = session.probe_io()?;
         validate_formula_contract(&io, model_path)?;
         let input = &io.inputs[0];
@@ -254,8 +254,8 @@ mod real_model_tests {
             return;
         };
         let rt = RuntimeConfig::default();
-        let mut session =
-            crate::runtime::session::OrtSession::open_unchecked(&path, &rt).expect("open session");
+        let mut session = crate::runtime::session::OrtSession::open_unchecked(&path, &rt, &[])
+            .expect("open session");
         use ndarray::Array4;
         let batch = 2usize;
         let input = Array4::<f32>::zeros((batch, 1, 384, 384));

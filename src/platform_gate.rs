@@ -27,7 +27,7 @@
 
 #[cfg(not(all(windows, target_arch = "x86_64", target_env = "msvc")))]
 compile_error!(
-    "rapid-ocr-rs only supports x86_64-pc-windows-msvc (Windows x64 + MSVC ABI); other targets \
+    "rapid-structure-rs only supports x86_64-pc-windows-msvc (Windows x64 + MSVC ABI); other targets \
      (Windows x86/i686, Windows ARM64, Windows GNU ABI, Wine/WSL, Linux, macOS) are explicit \
      non-goals. See the crate documentation for the platform plan."
 );

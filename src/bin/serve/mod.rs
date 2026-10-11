@@ -1,17 +1,17 @@
-//! `rapidocr serve` 的服务端核心：HTTP 层、静态页、任务层与模型下载（M2）。
+//! `rapidstruct serve` 的服务端核心：HTTP 层、静态页、任务层与模型下载（M2）。
 //!
 //! # 分层（§2.1）
 //!
 //! HTTP 依赖只允许出现在二进制侧，库保持零网络/零 UI 依赖：
 //!
 //! ```text
-//! rapidocr (bin)
+//! rapidstruct (bin)
 //!   └── serve 子命令（feature = "serve"，非 default）
 //!         ├── http 层：路由 / 准入顺序 / ServeError → 状态码 / 安全头     ← http.rs
 //!         ├── 静态页：include_str!("web/index.html") + nonce/token 注入    ← run.rs
 //!         ├── job 层：双队列 + 固定 worker + 有界结果存储 + tombstone       ← queue/jobs/server
 //!         ├── download 层：独立 worker + 可注入执行体 + 文件边界取消        ← download.rs
-//!         └── rapid-ocr-rs（库，零 HTTP 依赖）
+//!         └── rapid-structure-rs（库，零 HTTP 依赖）
 //!               ModelSet / model_store（加固） / ImageInput → OcrRequest → OcrOutput
 //! ```
 //!
@@ -26,6 +26,7 @@
 //! | [`jobs`] | 有界任务存储、TTL、tombstone、404/410、下载进度与取消 | §4.3、§4.5、§6.6 |
 //! | [`security`] | 硬编码 loopback、Host/Origin、令牌、注入契约 | §7.1–§7.3、§9 |
 //! | [`admit`] | 准入顺序、有界读取、字节账本 | §4.4 |
+//! | [`assets`] | `GET /static/*`：编译期嵌入的公式渲染引擎（表由 build.rs 生成） | §4.2、§9.5 |
 //! | [`cli`] | `serve` 的选项面与默认值（无行为） | §3 |
 //! | [`model_plan`] | 模型集的单一来源解析、逐文件状态、引擎路径绑定 | §5.3、§5.4、§7.6 |
 //! | [`engine`] | `OcrBackend` + 引擎工厂（测试可替换） | §8.2 |
@@ -33,7 +34,7 @@
 //! | [`export`] | 标注 PNG、base64、JSON/Markdown/HTML 导出文档与时间账本 | §4.2、§9.5 |
 //! | [`download`] | 独立下载 worker + 可注入执行体 + `--allow-download-host` 校验 | §8.1、§6 |
 //! | [`evaluate`] | `POST /api/evaluate`：复用库的 `evaluation`（CER/精确匹配） | §4.2、§12 |
-//! | [`flowlog`] | 流动日志：请求行 + 任务生命周期行（`--log-level`/`RAPID_OCR_SERVE_LOG`，默认关闭） | §17 |
+//! | [`flowlog`] | 流动日志：请求行 + 任务生命周期行（`--log-level`/`RAPID_STRUCTURE_SERVE_LOG`，默认关闭） | §17 |
 //! | [`server`] | 运行期核心：共享状态、worker、TTL 清理、端点语义、惰性建引擎 | §4、§7.6、§8 |
 //! | [`http`] | `tiny_http` 接线：路由、准入、响应头 | §4.2、§4.4、§7 |
 //! | [`run`] | 启动编排、静态页注入、启动日志、`--open` | §3、§7.1、§7.6、§9 |
@@ -42,7 +43,7 @@
 //! # M2 的范围（模型管理）
 //!
 //! `POST /api/models/download` 现在是**真实**任务：集合严格按 `set_id` 解析（无 `sets[0]`
-//! 回落），库的加固下载器（[`rapid_ocr_rs::download_model_set_observed`]）逐文件下载，
+//! 回落），库的加固下载器（[`rapid_structure_rs::download_model_set_observed`]）逐文件下载，
 //! 进度写进任务存储，取消在**文件边界**生效（§6.6）；`POST /api/engine/reload` 是
 //! `EngineStateMachine::{begin_loading, models_still_missing}` 的生产者，下载完成后**不**
 //! 自动建引擎，而是在下一次 `POST /api/ocr` 或显式 reload 时惰性创建。
@@ -55,6 +56,7 @@
 //! 引入——§12 的"依赖隔离"因此有编译期与源码级两条独立证据。
 
 mod admit;
+mod assets;
 mod cli;
 mod download;
 mod engine;
@@ -73,9 +75,9 @@ mod security;
 mod server;
 mod state;
 
-/// `serve` 子命令的选项面（rapidocr.rs 的子命令表要用）。
+/// `serve` 子命令的选项面（rapidstruct.rs 的子命令表要用）。
 pub(crate) use cli::ServeArgs;
-/// `serve` 的启动入口与启动期错误（rapidocr.rs 只负责把错误打印出来）。
+/// `serve` 的启动入口与启动期错误（rapidstruct.rs 只负责把错误打印出来）。
 pub(crate) use run::run as serve_main;
 
 #[cfg(test)]

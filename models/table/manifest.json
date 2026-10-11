@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "rapidtable-slanet-plus",
+  "family": "SLANet",
+  "version": "v2.0.0",
+  "languages": [],
+  "files": [
+    {
+      "name": "slanet-plus.onnx",
+      "role": "table_structure",
+      "sha256": "d57a942af6a2f57d6a4a0372573c696a2379bf5857c45e2ac69993f3b334514b",
+      "size_bytes": 7758305,
+      "source_url": "https://www.modelscope.cn/models/RapidAI/RapidTable/resolve/v2.0.0/slanet-plus.onnx"
+    }
+  ]
+}

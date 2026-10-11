@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "pp-ocrv6-medium-plus-formula",
+  "family": "PP-OCR",
+  "version": "PP-OCRv6",
+  "languages": ["ch", "en", "ja", "latin"],
+  "files": [
+    {
+      "name": "PP-OCRv6_det_medium.onnx",
+      "role": "detector",
+      "sha256": "92078b7355007ccfffcd4c8cd441a3afd4538904d06881b29a155e1e679907c2",
+      "size_bytes": 62119454,
+      "source_url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.1/onnx/PP-OCRv6/det/PP-OCRv6_det_medium.onnx"
+    },
+    {
+      "name": "PP-OCRv6_rec_medium.onnx",
+      "role": "recognizer",
+      "sha256": "eef444829dbbe18d7fea59a3f6eb75647518d2b3a9568d27c92e42940204894b",
+      "size_bytes": 76629984,
+      "source_url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.1/onnx/PP-OCRv6/rec/PP-OCRv6_rec_medium.onnx"
+    },
+    {
+      "name": "ppocrv6_dict.txt",
+      "role": "dictionary",
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+      "size_bytes": 74947,
+      "source_url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.1/paddle/PP-OCRv6/rec/PP-OCRv6_rec_medium/ppocrv6_dict.txt"
+    },
+    {
+      "name": "pp_formulanet_plus_m.onnx",
+      "role": "formula_recognizer",
+      "sha256": "71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b",
+      "size_bytes": 593915961,
+      "source_url": "https://www.modelscope.cn/models/RapidAI/RapidDoc/resolve/v1.0.0/formula/PP-FormulaNet_plus-M/pp_formulanet_plus_m.onnx"
+    },
+    {
+      "name": "pix2text-mfd-1.5.onnx",
+      "role": "formula_detector",
+      "sha256": "40d4fc852d99bcbf25a9478897d2f49fbbb8f7fdd6569c088cd1c31386293bd7",
+      "size_bytes": 80311115,
+      "source_url": "https://huggingface.co/breezedeus/pix2text-mfd-1.5/resolve/main/pix2text-mfd-1.5.onnx"
+    }
+  ]
+}

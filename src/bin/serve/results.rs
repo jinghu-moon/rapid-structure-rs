@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 
-use rapid_ocr_rs::OcrOutput;
+use rapid_structure_rs::OcrOutput;
 use serde::Serialize;
 
 use super::error::ErrorBody;

@@ -33,12 +33,13 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     ALLOWED_DOWNLOAD_HOSTS, DetectionPolicy, DownloadError, FormulaPolicy, ImageInput,
-    ModelFileState, ModelRole, OcrOutput, OcrRequest, OrtRuntimeFingerprint, OutputPolicy,
-    PreprocessPolicy, ProviderPreference, RapidOcrError, RecognitionPolicy, StagePlan,
-    WordOutputMode, available_disk_bytes, clear_verification_cache, ort_runtime_fingerprint,
-    ort_runtime_version, peak_memory_source, peak_working_set_bytes, verification_stats,
+    ModelFileState, ModelRole, ModelSet, OcrOutput, OcrRequest, OrtRuntimeFingerprint,
+    OutputPolicy, PreprocessPolicy, ProviderPreference, RapidOcrError, RecognitionPolicy,
+    StagePlan, TablePolicy, TableTextPolicy, WordOutputMode, available_disk_bytes,
+    clear_verification_cache, ort_runtime_fingerprint, ort_runtime_version, peak_memory_source,
+    peak_working_set_bytes, verification_stats,
 };
 use serde_json::{Value, json};
 
@@ -84,7 +85,7 @@ pub(super) fn monotonic_ms() -> Millis {
     start.elapsed().as_millis() as Millis
 }
 
-/// OCR 的队列路由（§8.1、§10.8）。
+/// OCR 的队列路由与**页面级可选阶段**的路由（§8.1、§10.8；E16.2 加表格）。
 ///
 /// M4 起公式路由是**真实**的：`queue=formula` 会被路由到公式管线并在公式队列里排队。
 /// 判据只有一条（[`routing_for`]）：服务端必须有一个公式**检测**模型
@@ -95,12 +96,24 @@ pub(super) fn monotonic_ms() -> Millis {
 /// 没有这种区域，于是公式队列会稳定地返回零个公式区域——一个"看起来成功但没有做任何事"
 /// 的路径。宁可明确拒绝（400，理由写在 `disabled_reason` 里，页面据此禁用开关），
 /// 也不提供一条静默无效的路由。
+///
+/// # 表格为什么是**正交开关**而不是第三个队列类别
+///
+/// 表格阶段跑在**页面管线内部**（`OcrRequest.table`，见 `TablePolicy`），它没有自己的
+/// worker、没有自己的容量、也不改变请求的排队归属。把它做成第三个 `QueueClass` 会让
+/// 调度器、配额与公平性计数为一个"不占独立资源"的阶段凭空长出一份副本。因此
+/// `?table=` 是一个**布尔**参数，与 `?queue=` 正交：`queue` 决定排哪条队，
+/// `table` 决定那条队里的页面管线是否额外跑表格阶段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct OcrRouting {
     pub formula: bool,
+    /// 表格路由可用（结构模型已经在场）。
+    pub table: bool,
     /// 公式路由不可用时给用户的**文字**理由（进 `/api/models` 的 `formula.disabled_reason`
     /// 与 `/api/status`；页面把它显示在公式开关旁，不只靠颜色/禁用态）。
     pub disabled_reason: Option<String>,
+    /// 表格路由不可用时给用户的文字理由（同上，进 `/api/models` 的 `table.disabled_reason`）。
+    pub table_disabled_reason: Option<String>,
 }
 
 impl OcrRouting {
@@ -108,7 +121,9 @@ impl OcrRouting {
     pub const fn formula_enabled() -> Self {
         Self {
             formula: true,
+            table: false,
             disabled_reason: None,
+            table_disabled_reason: None,
         }
     }
 
@@ -116,8 +131,16 @@ impl OcrRouting {
     pub fn text_only(reason: impl Into<String>) -> Self {
         Self {
             formula: false,
+            table: false,
             disabled_reason: Some(reason.into()),
+            table_disabled_reason: None,
         }
+    }
+
+    /// 表格路由可用（结构模型已经在场）。
+    pub fn with_table(mut self, enabled: bool) -> Self {
+        self.table = enabled;
+        self
     }
 
     /// 查询参数里的 `queue` 取值 → 队列类别。
@@ -129,14 +152,28 @@ impl OcrRouting {
             Some(_) => Err(ServeError::BadRequest),
         }
     }
+
+    /// 查询参数里的 `table` 取值 → 是否启用表格阶段。
+    ///
+    /// **只有 `1` 与 `0` 两个合法取值**（`None` = 不启用）。与 `queue` 是同一个口径：
+    /// 路由没打开时给 `1` 是 **400**，不是静默忽略——静默忽略会让页面以为表格在跑，
+    /// 而结果是"成功返回了一份没有表格的结果"。
+    pub fn table_requested(&self, requested: Option<&str>) -> Result<bool, ServeError> {
+        match requested {
+            None | Some("0") => Ok(false),
+            Some("1") if self.table => Ok(true),
+            Some("1") => Err(ServeError::BadRequest),
+            Some(_) => Err(ServeError::BadRequest),
+        }
+    }
 }
 
-/// 启动期决定公式路由是否可用（**唯一**判据）。
+/// 启动期决定公式与表格路由是否可用（**唯一**判据）。
 ///
-/// 参数是已经解析好的检测模型（`--formula-detector` 优先，其次是模型集里声明的
-/// `formula_detector` role，见 `run.rs`）。理由文案里点名用户真正要做的动作。
-pub(super) fn routing_for(detector: Option<&Path>) -> OcrRouting {
-    match detector {
+/// 两个参数是已经解析好的模型（CLI 优先，其次是模型集声明的 role，见 `run.rs`）。
+/// 理由文案里点名用户真正要做的动作。
+pub(super) fn routing_for(detector: Option<&Path>, table_model: Option<&Path>) -> OcrRouting {
+    let mut routing = match detector {
         Some(_) => OcrRouting::formula_enabled(),
         None => OcrRouting::text_only(
             "formula routing is not enabled on this server: no page formula detector is \
@@ -145,16 +182,30 @@ pub(super) fn routing_for(detector: Option<&Path>) -> OcrRouting {
              pix2text-mfd-1.5.onnx) to enable the formula queue; ordinary OCR is unaffected \
              (docs/05 §4.2, §10.8)",
         ),
+    };
+    if table_model.is_none() {
+        routing.table_disabled_reason = Some(
+            "table routing is not enabled on this server: no table structure model is configured. \
+             Pass --table-model <ONNX> (slanet-plus.onnx, declared by models/table/manifest.json) \
+             to enable `?table=1`; ordinary OCR and the formula queue are unaffected \
+             (docs/11 §4.2)"
+                .to_string(),
+        );
     }
+    routing.with_table(table_model.is_some())
 }
 
 impl OcrRouting {
-    /// 由**运行计划**唯一决定（§4.2、§10.8）：解析出页面公式检测模型 ⇔ 公式管线属于这次运行。
+    /// 由**运行计划**唯一决定（§4.2、§10.8；E16.2 加表格）：解析出页面公式检测模型 ⇔
+    /// 公式管线属于这次运行；解析出结构模型 ⇔ 表格管线属于这次运行。
     ///
     /// 这是路由的唯一来源：`run.rs` 的启动日志与 [`ServeShared`] 都调用它，因此不存在
-    /// "计划里有检测模型、路由却按另一个判据算"的分叉。
+    /// "计划里有模型、路由却按另一个判据算"的分叉。
     pub fn from_plan(plan: &ModelPlan) -> Self {
-        routing_for(plan.formula_detector().map(|spec| spec.path.as_path()))
+        routing_for(
+            plan.formula_detector().map(|spec| spec.path.as_path()),
+            plan.table_model().map(|spec| spec.path.as_path()),
+        )
     }
 }
 
@@ -223,6 +274,10 @@ pub(super) struct ServeContext {
 struct RetainedOcr {
     bytes: Arc<[u8]>,
     max_side: Option<u32>,
+    /// 这个任务提交时请求的 `?table=`（E16.2）。**随任务一起保留**而不是在 worker 里
+    /// 重新读查询串：worker 只看得到任务，看不到那次 HTTP 请求，而"跑不跑表格阶段"
+    /// 必须在提交那一刻就被固定下来（否则重试或重新调度会静默换语义）。
+    table: bool,
 }
 
 /// 任务存储 + 调度器 + 结果存储 + 保留的原图（同一把锁下的一个整体）。
@@ -469,6 +524,26 @@ impl ServeShared {
         })
     }
 
+    /// 表格阶段任务的 `TablePolicy`（E16.2）：结构模型（路径 + 声明哈希）来自**运行计划**，
+    /// 因此只可能是启动期解析的那一个文件。
+    ///
+    /// 返回 `None` 只有一种情况：表格管线不属于这次运行（路由未启用时 `?table=1` 已经在
+    /// `table_requested` 里被 400 拒绝，因此这条路径在运行期不可达）。
+    ///
+    /// `text_policy` **显式**取 `Escape`（而不是依赖 `TablePolicy::default()` 的实现细节）：
+    /// serve 是面向用户的路径，单元格文本是模型产物，原样拼进 HTML 就是注入面
+    /// （`TableTextPolicy` 的文档；E15.4 定案）。评测路径才用 `Raw`。
+    pub fn table_policy(&self) -> Option<TablePolicy> {
+        let structure = self.model_plan.plan_file(ModelRole::TableStructure)?;
+        Some(TablePolicy {
+            enabled: true,
+            model_path: Some(structure.path.clone()),
+            expected_model_sha256: structure.declared_sha256.clone(),
+            text_policy: TableTextPolicy::Escape,
+            ..TablePolicy::default()
+        })
+    }
+
     /// 公式队列的准入判定（§4.4 第 4 步之后、读 body 之前）：公式管线计划里的文件是否**可用**。
     ///
     /// 判定用的是与 `/api/models` 的 `pipelines` 块、A1/A2 **同一份**逐文件状态
@@ -566,6 +641,89 @@ impl ServeShared {
         let status = self.formula_detector_status();
         json!({
             "configured": self.model_plan.formula_in_plan(),
+            "file": status.as_ref().map(|status| status.name.clone()),
+            "sha256": planned.and_then(|file| file.declared_sha256.clone()),
+            "state": status.as_ref().map(|status| status.state.as_str()),
+        })
+    }
+
+    /// 表格阶段的准入判定（与 [`Self::formula_models_ready`] 同一条规则、同一处调用点：
+    /// 读 body 之前）。
+    ///
+    /// 表格只有**一个**文件，所以这里的判据就是"计划里那个文件此刻可用"。用的是
+    /// [`super::model_plan::PlanFile::state`]——与 `/api/models` 的 `pipelines.table` 块
+    /// 和 `--reverify-models` 完全同一份证据，因此"报告损坏"与"拒绝请求"不可能分叉。
+    pub fn table_models_ready(&self) -> bool {
+        self.model_plan.plan_blocking(Pipeline::Table).is_empty()
+    }
+
+    /// 上面那条预检的响应体（与 `/api/models` 的 `pipelines.table` 块同源同序）。
+    pub fn table_blocked_body(&self) -> Body {
+        Body::json(409, render_error_body(&self.table_missing_failure()))
+    }
+
+    /// 上面那条预检的 `(code, detail)`（流动日志用），与响应体读同一份结论。
+    pub fn table_blocked_reason(&self) -> (&'static str, String) {
+        let body = self.table_missing_failure();
+        (body.code, body.detail.to_string())
+    }
+
+    /// 表格阶段的 409 载荷（`code` 由磁盘上的哈希结论决定，`detail` 是表格作用域）。
+    fn table_missing_failure(&self) -> ErrorBody {
+        let (_, corrupt) = self.table_blocking_lists();
+        ErrorBody {
+            code: if corrupt.is_empty() {
+                "models_missing"
+            } else {
+                "models_corrupt"
+            },
+            message: "the table structure model is missing or corrupt".to_string(),
+            detail: self.table_detail(),
+        }
+    }
+
+    /// 表格管线的阻塞清单 `(missing, corrupt)`：**运行计划**里表格管线的文件。
+    ///
+    /// 结构模型可能来自 `--table-model`（不在任何集合里），因此它由计划单独携带。
+    fn table_blocking_lists(&self) -> (Vec<String>, Vec<String>) {
+        let blocking = self.model_plan.plan_blocking(Pipeline::Table);
+        (missing_names(&blocking), corrupt_names(&blocking))
+    }
+
+    /// 计划里的表格结构模型在磁盘上的状态（`None` = 没有配置结构模型）。
+    pub fn table_model_status(&self) -> Option<PlanFileStatus> {
+        self.model_plan
+            .plan_file(ModelRole::TableStructure)
+            .map(|file| file.status())
+    }
+
+    /// 表格阶段 409 的 `detail`（**表格**作用域；与 `/api/models` 的 `pipelines.table` 同值）。
+    pub fn table_detail(&self) -> Value {
+        let blocking = self.model_plan.plan_blocking(Pipeline::Table);
+        let missing = missing_names(&blocking);
+        let corrupt = corrupt_names(&blocking);
+        let blocked = blocked_names(&blocking);
+        json!({
+            "scope": "table",
+            "missing": missing,
+            "corrupt": corrupt,
+            "blocked": blocked,
+            "in_plan": self.model_plan.table_in_plan(),
+            "source": source_label(self.model_plan.source()),
+            "model_dir": REDACTED_MODEL_DIR,
+            "structure": self.table_model_detail(),
+        })
+    }
+
+    /// `detail.structure` / `/api/models` 的 `table.structure` 的**同一份**取值。
+    ///
+    /// `sha256` 为 `null` 表示没有可信摘要（`--table-model` 指向一个模型集没有声明过的
+    /// 文件），与公式检测器的口径一致。
+    fn table_model_detail(&self) -> Value {
+        let planned = self.model_plan.plan_file(ModelRole::TableStructure);
+        let status = self.table_model_status();
+        json!({
+            "configured": self.model_plan.table_in_plan(),
             "file": status.as_ref().map(|status| status.name.clone()),
             "sha256": planned.and_then(|file| file.declared_sha256.clone()),
             "state": status.as_ref().map(|status| status.state.as_str()),
@@ -671,6 +829,7 @@ impl ServeShared {
             "queues": queues,
             "retention": retention,
             "formula": self.formula_status_json(&self.models()),
+            "table": self.table_status_json(),
             "limits": {
                 "max_body_bytes": self.limits.max_body_bytes,
                 "max_result_bytes": self.limits.max_result_bytes,
@@ -734,9 +893,14 @@ impl ServeShared {
             "corrupt": corrupt_names(&blocking),
             "blocked": blocked_names(&blocking),
             "formula": self.formula_status_json(&report),
+            "table": self.table_status_json(),
             "pipelines": self.pipelines_json(None, self.engine_state_name()),
             "verification": verification_json(report.cold_this_call()),
-            "sets": report.statuses().iter().map(set_status_json).collect::<Vec<_>>(),
+            "sets": report
+                .statuses()
+                .iter()
+                .map(|status| set_status_json(status, self.model_plan.set_by_id(&status.set_id)))
+                .collect::<Vec<_>>(),
         })
     }
 
@@ -757,6 +921,36 @@ impl ServeShared {
             "disabled_reason": routing.disabled_reason,
             "required_roles": ["formula_recognizer"],
             "detector": self.formula_detector_detail(),
+        })
+    }
+
+    /// `/api/models` 与 `/api/status` 的 `table` 块。
+    ///
+    /// # 为什么它没有 `formula` 那种"库存口径"
+    ///
+    /// 公式的库存口径回答的是"模型集里声明的公式 role 齐不齐"（识别模型来自默认表，
+    /// 566 MB，默认不下载——所以"集合里有没有"是一个真问题）。表格只有一个文件，
+    /// 而且它**可以完全在模型目录之外**（`--table-model D:\models\table\slanet-plus.onnx`
+    /// 而模型目录是 `models/serve`），此时"模型集里声明的表格 role"是个空集——
+    /// 用它做判据会把"路由已经打开、模型就在那儿"报成不齐备。
+    ///
+    /// 因此表格块**只有运行计划口径**：`in_plan` + 计划里那个文件的此刻状态。
+    /// `complete` 的定义与 `pipelines.table.complete` 逐字相同（`in_plan && 无阻塞`），
+    /// 两个块因此不可能分叉。
+    pub fn table_status_json(&self) -> Value {
+        let routing = self.routing();
+        let blocking = self.model_plan.plan_blocking(Pipeline::Table);
+        let in_plan = self.model_plan.table_in_plan();
+        json!({
+            "complete": in_plan && blocking.is_empty(),
+            "routing": routing.table,
+            "disabled_reason": routing.table_disabled_reason,
+            "in_plan": in_plan,
+            "missing": missing_names(&blocking),
+            "corrupt": corrupt_names(&blocking),
+            "blocked": blocked_names(&blocking),
+            "required_roles": ["table_structure"],
+            "structure": self.table_model_detail(),
         })
     }
 
@@ -787,6 +981,45 @@ impl ServeShared {
                     .collect(),
             }
         };
+        // 逐文件计划项（页面用它回答"哪个文件被哪条管线使用"）。
+        //
+        // **不给出绝对路径**（与 `/api/models` 的其余部分同一脱敏口径）：`name` + `role` +
+        // `pipeline` 已经足够让页面把计划文件与 `sets[].files[]` 对上；文件不在任何集合里
+        // （命令行显式指定的 `--formula-detector` / `--table-model`）时页面按名字找不到它，
+        // 这正是它要显示的第三种来源，而不是靠猜路径。
+        let plan_detail = |pipeline: Pipeline| -> Vec<Value> {
+            match verified {
+                Some(report) => report
+                    .files_in(pipeline)
+                    .iter()
+                    .map(|file| {
+                        json!({
+                            "name": file.name,
+                            "role": file.role.as_str(),
+                            "pipeline": file.pipeline.as_str(),
+                            "state": file.state.as_str(),
+                            "declared_sha256": file.declared_sha256,
+                            "has_declared_digest": file.declared_sha256.is_some(),
+                        })
+                    })
+                    .collect(),
+                None => self
+                    .model_plan
+                    .plan_files_in(pipeline)
+                    .into_iter()
+                    .map(|file| {
+                        json!({
+                            "name": file.name,
+                            "role": file.role.as_str(),
+                            "pipeline": file.pipeline.as_str(),
+                            "state": file.state().as_str(),
+                            "declared_sha256": file.declared_sha256,
+                            "has_declared_digest": file.has_declared_digest(),
+                        })
+                    })
+                    .collect(),
+            }
+        };
         let verdict = |files: &[(String, ModelFileState)]| {
             let names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
             let missing: Vec<String> = files
@@ -809,8 +1042,11 @@ impl ServeShared {
         let formula_files = pipeline_files(Pipeline::Formula);
         let (formula_names, formula_missing, formula_corrupt, formula_blocked) =
             verdict(&formula_files);
+        let table_files = pipeline_files(Pipeline::Table);
+        let (table_names, table_missing, table_corrupt, table_blocked) = verdict(&table_files);
         let routing = self.routing();
         let formula_in_plan = self.model_plan.formula_in_plan();
+        let table_in_plan = self.model_plan.table_in_plan();
         // "齐备"的唯一判据在计划里（`plan_complete`）；冷验证给的是同一份计划的**这一次**
         // 读盘结论，两者都是"计划里没有阻塞文件"，因此只在措辞上区分。
         let complete = |pipeline: Pipeline, blocked: &[String]| match verified {
@@ -819,6 +1055,7 @@ impl ServeShared {
         };
         let text_complete = complete(Pipeline::Text, &text_blocked);
         let formula_complete = formula_in_plan && complete(Pipeline::Formula, &formula_blocked);
+        let table_complete = table_in_plan && complete(Pipeline::Table, &table_blocked);
 
         json!({
             "text": {
@@ -830,6 +1067,7 @@ impl ServeShared {
                 "missing": text_missing,
                 "corrupt": text_corrupt,
                 "blocked": text_blocked,
+                "plan": plan_detail(Pipeline::Text),
             },
             "formula": {
                 "pipeline": Pipeline::Formula.as_str(),
@@ -841,7 +1079,21 @@ impl ServeShared {
                 "missing": formula_missing,
                 "corrupt": formula_corrupt,
                 "blocked": formula_blocked,
+                "plan": plan_detail(Pipeline::Formula),
                 "detector": self.formula_detector_detail(),
+            },
+            "table": {
+                "pipeline": Pipeline::Table.as_str(),
+                "routing": routing.table,
+                "disabled_reason": routing.table_disabled_reason,
+                "in_plan": table_in_plan,
+                "complete": table_complete,
+                "files": table_names,
+                "missing": table_missing,
+                "corrupt": table_corrupt,
+                "blocked": table_blocked,
+                "plan": plan_detail(Pipeline::Table),
+                "structure": self.table_model_detail(),
             },
         })
     }
@@ -931,6 +1183,7 @@ impl ServeShared {
         bytes: Vec<u8>,
         class: QueueClass,
         max_side: Option<u32>,
+        table: bool,
         reservation: Option<QueueReservation>,
         flow: &RequestFlow,
     ) -> Result<Value, ServeError> {
@@ -974,6 +1227,7 @@ impl ServeShared {
             RetainedOcr {
                 bytes: Arc::from(bytes.into_boxed_slice()),
                 max_side,
+                table,
             },
         );
         // 新任务可能把字节预算推过上限：`insert` 内部已经按"先释放原图、再淘汰任务"处理，
@@ -1412,11 +1666,14 @@ impl ServeShared {
     ///
     /// M3 起它**不**移除保留区里的字节（识别成功后 `/annotated.png` 还要用它）：
     /// 返回的是 `Arc` 克隆，图片本身一份都不复制。
-    fn retained_ocr(&self, id: &str) -> Option<(Arc<[u8]>, Option<u32>)> {
-        lock(&self.jobs)
-            .originals
-            .get(id)
-            .map(|retained| (Arc::clone(&retained.bytes), retained.max_side))
+    fn retained_ocr(&self, id: &str) -> Option<(Arc<[u8]>, Option<u32>, bool)> {
+        lock(&self.jobs).originals.get(id).map(|retained| {
+            (
+                Arc::clone(&retained.bytes),
+                retained.max_side,
+                retained.table,
+            )
+        })
     }
 
     /// OCR worker 用：登记终态载荷并结算任务状态。
@@ -1775,7 +2032,7 @@ impl ServeShared {
             .clone()
             .with_provider(requested, self.allow_provider_fallback)
             .map_err(|error| ServeError::ProviderRejected {
-                provider: rapid_ocr_rs::format_provider_preference(requested),
+                provider: rapid_structure_rs::format_provider_preference(requested),
                 reason: error.to_string(),
             })?;
 
@@ -2315,7 +2572,7 @@ fn ocr_worker(runtime: Arc<ServeShared>) {
         // 写出终态行）。`wait_ms` 是排队代价：入队 → 真正开跑。
         runtime.log_running(&scheduled);
         // M3：原图留在保留区里（`/annotated.png` 还要用它），这里只克隆引用。
-        let Some((bytes, max_side)) = runtime.retained_ocr(&scheduled.id) else {
+        let Some((bytes, max_side, table)) = runtime.retained_ocr(&scheduled.id) else {
             // 只有取消能走到这里；防御性记录，绝不把任务永久留在 `Running`。
             runtime.finish(
                 &scheduled.id,
@@ -2327,7 +2584,14 @@ fn ocr_worker(runtime: Arc<ServeShared>) {
         // M5：后端调用时长由**这里**实测，并原样写进终态行（日志与 `/api/status` 的
         // `engine_load_ms` 一样是实测值，不是估算）。
         let backend_started = Instant::now();
-        let outcome = recognize(&runtime, &scheduled.id, bytes, max_side, scheduled.class);
+        let outcome = recognize(
+            &runtime,
+            &scheduled.id,
+            bytes,
+            max_side,
+            scheduled.class,
+            table,
+        );
         let backend_ms = u64::try_from(backend_started.elapsed().as_millis()).unwrap_or(u64::MAX);
         runtime.finish(&scheduled.id, outcome, backend_ms);
     }
@@ -2379,12 +2643,17 @@ fn wait_for_work(runtime: &ServeShared) {
 /// 队列类别**就是**管线选择（§8.3：双队列正是"普通 OCR / 公式 OCR"两条管线）：请求里没有
 /// 第二个可能与之矛盾的开关。公式队列的 `FormulaPolicy` 全部由模型集与启动期解析给出
 /// （识别模型路径 + 集合声明的 SHA-256 + 检测模型路径），请求体里不允许出现任何路径。
+///
+/// E16.2 起 `table` 是一个**正交**的布尔量（不是第三个队列类别，理由见 [`OcrRouting`]）：
+/// `queue` 决定排哪条队，`table` 决定那条队里的页面管线是否额外跑表格阶段。两条管线的
+/// 表格语义完全相同（表格跑在**原图**上，与公式的抹白互不干扰，见 [`TablePolicy`] 的文档）。
 fn recognize(
     runtime: &ServeShared,
     job_id: &str,
     bytes: Arc<[u8]>,
     max_side: Option<u32>,
     class: QueueClass,
+    table: bool,
 ) -> Outcome {
     let formula = match class {
         QueueClass::Text => FormulaPolicy::default(),
@@ -2395,7 +2664,17 @@ fn recognize(
             None => return Outcome::Failed(409, runtime.formula_missing_failure()),
         },
     };
-    let request = text_request(bytes, max_side, formula);
+    // 表格阶段同理：路由可用（`?table=1` 已被准入层接受）却解析不到结构模型，说明模型集
+    // 在运行期被改动了。用同源同值的 409 如实失败，而不是静默返回一份没有表格的结果。
+    let table_policy = if table {
+        match runtime.table_policy() {
+            Some(policy) => policy,
+            None => return Outcome::Failed(409, runtime.table_missing_failure()),
+        }
+    } else {
+        TablePolicy::default()
+    };
+    let request = text_request(bytes, max_side, formula, table_policy);
 
     let output = match recognize_with(runtime, request) {
         Ok(output) => output,
@@ -2416,11 +2695,14 @@ fn recognize(
 /// `POST /api/evaluate` 的批量路径共用）。
 ///
 /// `stages`/`preprocess`/`detection`/`recognition`/`output` 都是内建默认值：serve 的输入面
-/// 只有图像字节、`?max_side=` 与队列类别（§4.2），没有第二个能改变管线形状的请求参数。
+/// 只有图像字节、`?max_side=`、队列类别与 `?table=`（§4.2），没有第二个能改变管线形状的
+/// 请求参数。`formula` 与 `table` 由调用方给出（都是"全部路径来自模型集与启动期解析"的
+/// 策略结构，请求体里不允许出现任何路径）。
 pub(super) fn text_request(
     bytes: Arc<[u8]>,
     max_side: Option<u32>,
     formula: FormulaPolicy,
+    table: TablePolicy,
 ) -> OcrRequest {
     OcrRequest {
         input: ImageInput::Encoded(bytes),
@@ -2437,6 +2719,7 @@ pub(super) fn text_request(
         },
         output: OutputPolicy::default(),
         formula,
+        table,
     }
 }
 
@@ -2577,9 +2860,17 @@ fn file_name(path: &str) -> String {
 
 /// `/api/models` 的单个集合（§5.4 的扁平形状：`state` 是字符串；`corrupt` 时额外给出
 /// `expected`/`actual`。库里 `ModelFileState` 的枚举序列化形状不进协议）。
-fn set_status_json(status: &rapid_ocr_rs::ModelSetStatus) -> Value {
+fn set_status_json(
+    status: &rapid_structure_rs::ModelSetStatus,
+    declared: Option<&ModelSet>,
+) -> Value {
     json!({
         "id": status.set_id,
+        // `family` / `version` 来自**清单声明**（`ModelSetStatus` 只描述磁盘状态）。
+        // 页面用它们把"这一集是什么"与"这一集齐不齐"分开显示；清单没声明时为 `null`，
+        // 而不是编一个占位字符串。
+        "family": declared.map(|set| set.family.clone()),
+        "version": declared.map(|set| set.version.clone()),
         "complete": status.complete,
         "download_bytes_total": status.download_bytes_total,
         "files": status.files.iter().map(|(file, state)| {
@@ -2591,7 +2882,7 @@ fn set_status_json(status: &rapid_ocr_rs::ModelSetStatus) -> Value {
                 "sha256": if file.has_hash() { Value::String(file.sha256.clone()) } else { Value::Null },
                 "source_url": if file.has_source_url() { Value::String(file.source_url.clone()) } else { Value::Null },
             });
-            if let rapid_ocr_rs::ModelFileState::Corrupt { expected, actual } = state
+            if let rapid_structure_rs::ModelFileState::Corrupt { expected, actual } = state
                 && let Value::Object(object) = &mut value
             {
                 object.insert("expected".to_string(), Value::String(expected.clone()));
@@ -2668,7 +2959,7 @@ fn verification_json(cold_this_call: usize) -> Value {
     json!({
         // 身份 = stat 身份 + 首尾各 64 KiB 的局部摘要（B 轮收窄的那一半）。
         "identity": "path + size + mtime + SHA-256 of the first and last 64 KiB",
-        "partial_window_bytes": rapid_ocr_rs::PARTIAL_DIGEST_WINDOW_BYTES,
+        "partial_window_bytes": rapid_structure_rs::PARTIAL_DIGEST_WINDOW_BYTES,
         "cold_this_call": cold_this_call,
         "cold_verifications": stats.cold_verifications,
         "cache_hits": stats.cache_hits,
@@ -2748,21 +3039,78 @@ mod tests {
     /// 公式路由的启动期判据（**唯一**）：有检测模型才打开，否则给出可定位理由。
     #[test]
     fn the_formula_routing_is_decided_by_the_detector_alone() {
-        let enabled = super::routing_for(Some(Path::new("D:\\m\\pix2text-mfd-1.5.onnx")));
+        let enabled = super::routing_for(Some(Path::new("D:\\m\\pix2text-mfd-1.5.onnx")), None);
         assert!(enabled.formula);
         assert_eq!(enabled.disabled_reason, None);
 
-        let disabled = super::routing_for(None);
+        let disabled = super::routing_for(None, None);
         assert!(!disabled.formula);
         let reason = disabled.disabled_reason.expect("a textual reason");
         assert!(reason.contains("--formula-detector"), "{reason}");
         assert!(reason.contains("ordinary OCR is unaffected"), "{reason}");
     }
 
+    /// E16.2：表格路由与公式路由**互相独立**，各自由自己的模型路径决定。
+    ///
+    /// 四种组合都要成立，因为它们对应四种真实启动方式：只配公式、只配表格、
+    /// 两个都配、两个都不配。特别地，`?table=1` 在表格路由关闭时是 400
+    /// （不是静默按文本处理），而这只取决于表格模型是否存在。
+    #[test]
+    fn the_table_routing_is_decided_by_the_structure_model_alone() {
+        let detector = Path::new("D:\\m\\pix2text-mfd-1.5.onnx");
+        let structure = Path::new("D:\\m\\slanet-plus.onnx");
+
+        let neither = super::routing_for(None, None);
+        assert!(!neither.table);
+        assert!(!neither.formula);
+        let reason = neither
+            .table_disabled_reason
+            .clone()
+            .expect("a textual reason");
+        assert!(reason.contains("--table-model"), "{reason}");
+        assert!(reason.contains("ordinary OCR"), "{reason}");
+        assert_eq!(
+            neither
+                .table_requested(Some("1"))
+                .unwrap_err()
+                .status_code(),
+            400
+        );
+        assert!(!neither.table_requested(None).expect("absent means off"));
+        assert!(!neither.table_requested(Some("0")).expect("explicit off"));
+
+        let table_only = super::routing_for(None, Some(structure));
+        assert!(table_only.table);
+        assert_eq!(table_only.table_disabled_reason, None);
+        assert!(!table_only.formula);
+        assert!(table_only.table_requested(Some("1")).expect("enabled"));
+
+        let formula_only = super::routing_for(Some(detector), None);
+        assert!(formula_only.formula);
+        assert!(!formula_only.table);
+
+        let both = super::routing_for(Some(detector), Some(structure));
+        assert!(both.formula);
+        assert!(both.table);
+        assert_eq!(both.table_disabled_reason, None);
+    }
+
+    /// `?table=` 的取值面只有 `1` / `0` / 缺省：其它任何写法都是 400。
+    #[test]
+    fn the_table_switch_rejects_anything_but_one_and_zero() {
+        let enabled = super::routing_for(None, Some(Path::new("D:\\m\\slanet-plus.onnx")));
+        for raw in ["2", "true", "yes", "", "TRUE", "1 ", "-1"] {
+            assert!(
+                enabled.table_requested(Some(raw)).is_err(),
+                "`?table={raw}` must be rejected"
+            );
+        }
+    }
+
     /// 指纹里的绝对路径绝不进响应：只留文件名。
     #[test]
     fn the_public_fingerprint_never_carries_a_directory() {
-        let fingerprint = rapid_ocr_rs::ort_runtime_fingerprint();
+        let fingerprint = rapid_structure_rs::ort_runtime_fingerprint();
         let public = public_fingerprint(&fingerprint);
         let text = public.to_string();
         let raw = &fingerprint.runtime_module.path;

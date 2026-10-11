@@ -1,4 +1,4 @@
-# rapid-ocr-rs 本地 Web 评估界面（`rapidocr serve`）里程碑执行记录
+# rapid-structure-rs 本地 Web 评估界面（`rapidstruct serve`）里程碑执行记录
 
 > 本文件按 `docs/05-local-web-demo-implementation.md` §12「证据要求」逐里程碑追加执行
 > 记录：**命令、关键输出、与验收标准对照、未覆盖风险**。记录格式沿用
@@ -46,8 +46,8 @@ feature、CLI 参数与加固下载器属于 **M0b/M0c/M1**，本阶段**不做*
 | OS | Microsoft Windows 11 IoT 企业版 LTSC 10.0.26100 |
 | 工具链 | rustc 1.98.1 (48a229cea 2026-09-01)，cargo 1.98.1 (797e8a9bc 2026-08-05) |
 | HTTP 客户端（仅用于取字典哈希） | curl 8.19.0 (Windows) libcurl/8.19.0 Schannel |
-| crate | `rapid-ocr-rs` 0.7.0（`crates/rapid-ocr-rs`，独立 git 仓库，本阶段未提交） |
-| 真实资产 | `OCR-Model/`（v6 tiny/small/medium + 公式模型）、`Formula-TestSet/` |
+| crate | `rapid-structure-rs` 0.7.0（`crates/rapid-structure-rs`，独立 git 仓库，本阶段未提交） |
+| 真实资产 | `models/`（v6 tiny/small/medium + 公式模型）、`datasets/formula/` |
 
 ---
 
@@ -207,9 +207,9 @@ impl ModelRegistry {
 | 清单文件哈希为空 / 名字越界 | 分别报 `empty sha256` 与 `not a bare relative file name` | `a_manifest_file_must_carry_a_hash_and_a_bare_name` |
 | 仓库内示例清单 | 能被当前加载器解析并转换（示例＝契约的一部分） | `the_shipped_manifest_example_matches_the_current_schema` |
 
-**真实文件端到端校验**（需要 `RAPID_OCR_MODEL_ROOT`）：
+**真实文件端到端校验**（需要 `RAPID_STRUCTURE_MODEL_ROOT`）：
 `the_default_table_set_is_complete_against_real_v6_medium_models` 用默认表构造
-`PP-OCRv6-medium-ch` 文本集合，对真实目录 `OCR-Model/medium` 逐文件算哈希：
+`PP-OCRv6-medium-ch` 文本集合，对真实目录 `models/text/medium` 逐文件算哈希：
 
 ```text
 test model_source::tests::the_default_table_set_is_complete_against_real_v6_medium_models ... ok
@@ -225,13 +225,13 @@ test model_source::tests::the_default_table_set_is_complete_against_real_v6_medi
 | 来源 | 两份权威并存（清单与默认表语义重叠，且**没有任何代码读清单**） | `manifest.json` 存在 → 唯一来源；否则默认表 | 无合并、无“可选覆盖” |
 | 缺 role | 无概念（固定字段决定一切） | `ModelSet::require_roles` 报错并列出缺失 role | 不静默降级 |
 | 默认表 → 清单 | `ModelRegistry::resolve_*` 只给单个 URL（无 role、无集合） | `text_model_set` / `formula_model_set` → `ModelSet`（含公式 role） | HTTP 层永不解析 YAML |
-| 公开 API | `ModelArtifact`、四字段 `ModelManifest`、未被使用的 `api::ModelSource` | 删除 `ModelArtifact` 与 `api::ModelSource`；`ModelManifest` 换新结构（导出路径仍是 `rapid_ocr_rs::ModelManifest`） | 开发期允许破坏性修改；删除死代码，避免与新 `ModelSource` 同名冲突 |
+| 公开 API | `ModelArtifact`、四字段 `ModelManifest`、未被使用的 `api::ModelSource` | 删除 `ModelArtifact` 与 `api::ModelSource`；`ModelManifest` 换新结构（导出路径仍是 `rapid_structure_rs::ModelManifest`） | 开发期允许破坏性修改；删除死代码，避免与新 `ModelSource` 同名冲突 |
 
 > **注意（破坏性修改的外部影响）**：`src-tauri/src/ocr/rapid.rs` 直接
-> `serde_json::from_slice::<rapid_ocr_rs::ModelManifest>` 并调用 `validate_files`。
+> `serde_json::from_slice::<rapid_structure_rs::ModelManifest>` 并调用 `validate_files`。
 > 它只用这两个符号（签名未变，因此**仍可编译**），但**运行期**要求磁盘上的清单是
 > `schema_version: 1` 形状。该调用点指向 `app_local_data_dir()/models/ocr/ppocrv6-medium`
-> （不是 `OCR-Model/`），本阶段没有那个目录的清单文件，因此无需改动调用方；
+> （不是 `models/`），本阶段没有那个目录的清单文件，因此无需改动调用方；
 > 若将来部署目录里放旧格式清单，会得到可定位的“旧格式”错误而不是静默通过。
 
 ---
@@ -299,17 +299,18 @@ Get-FileHash -Algorithm SHA256 -Path $dest      # → target\m0a-dicts\hashes.cs
 | `te_dict.txt` | 429 | `ee9946a60d7701977474e89883694a4ca20eaa3868a23334bf7940dcd008f0f9` | 1 |
 
 **独立交叉校验**（不是自己证明自己）：把下载结果与**本地已有文件**比对，
-6/6 命中，其中 `ppocrv6_dict.txt` 的哈希与 `OCR-Model/manifest.json`（旧格式清单，
-本阶段之前就存在的独立记录）**逐位相同**：
+6/6 命中，其中 `ppocrv6_dict.txt` 的哈希与 `models/configs/manifest.json`（旧格式清单，
+本阶段之前就存在的独立记录）**逐位相同**（**E18 后记**：该旧格式清单文件已被删除，
+见本档风险 6 的后记；这条交叉校验是它作为"独立记录"的最后一次用途）：
 
 | 文件 | 体积 | 结果 |
 | --- | ---: | --- |
-| `OCR-Model/medium/ppocrv6_dict.txt` | 74947 | MATCH（＝`b5f2bfe2…`，与旧清单一致） |
-| `OCR-Model/small/ppocrv6_dict.txt` | 74947 | MATCH |
-| `OCR-Model/tiny/ppocrv6_tiny_dict.txt` | 27156 | MATCH（＝下载值 `c5cbe34e…`） |
-| `OCR-Model/medium/PP-OCRv6_det_medium.onnx` | 62119454 | MATCH（表内既有哈希） |
-| `OCR-Model/medium/PP-OCRv6_rec_medium.onnx` | 76629984 | MATCH（表内既有哈希） |
-| `OCR-Model/Formula-Recognition-Models/onnx/pp_formulanet_plus_m.onnx` | 593915961 | MATCH（`71b6d389…d9493b`） |
+| `models/text/medium/ppocrv6_dict.txt` | 74947 | MATCH（＝`b5f2bfe2…`，与旧清单一致） |
+| `models/text/small/ppocrv6_dict.txt` | 74947 | MATCH |
+| `models/text/tiny/ppocrv6_tiny_dict.txt` | 27156 | MATCH（＝下载值 `c5cbe34e…`） |
+| `models/text/medium/PP-OCRv6_det_medium.onnx` | 62119454 | MATCH（表内既有哈希） |
+| `models/text/medium/PP-OCRv6_rec_medium.onnx` | 76629984 | MATCH（表内既有哈希） |
+| `models/formula/recognition/onnx/pp_formulanet_plus_m.onnx` | 593915961 | MATCH（`71b6d389…d9493b`） |
 
 **同时实测并写入的体积**：v6 的 6 个权重（tiny/small/medium × det/rec，哈希均已与本地文件
 比对 MATCH）与 30 个字典、1 个公式权重。v4/v5 的**权重**体积未测（没有下载几十个
@@ -326,7 +327,7 @@ Get-FileHash -Algorithm SHA256 -Path $dest      # → target\m0a-dicts\hashes.cs
 
 ### 验证命令与结果（`docs/05` §12 要求）
 
-在本 crate（`crates/rapid-ocr-rs`）执行，完整日志：`target/m0a-verify.log`。
+在本 crate（`crates/rapid-structure-rs`）执行，完整日志：`target/m0a-verify.log`。
 
 | # | 命令 | 结果 | 退出码 |
 | --- | --- | --- | --- |
@@ -334,9 +335,9 @@ Get-FileHash -Algorithm SHA256 -Path $dest      # → target\m0a-dicts\hashes.cs
 | 2 | `cargo fmt --all -- --check` | 无输出 | 0 |
 | 3 | `cargo clippy --all-targets -- -D warnings` | `Finished dev profile`，无 warning | 0 |
 | 4 | `cargo test --all-targets` | 334 + 2 + 4 + 14 + 0 = **354 passed, 0 failed** | 0 |
-| 5 | `cargo build --release --bins` | `Finished release profile [optimized] target(s) in 22.12s`；产出 `rapidocr.exe` 33,400,832 B、`bench_warm_e2e.exe` 33,250,304 B、`formula_eval.exe` 28,418,560 B、`formula_bench.exe` 27,724,288 B | 0 |
-| 6 | `cargo test --lib formula_integration_tests -- --test-threads=1`（`RAPID_OCR_MODEL_ROOT` / `RAPID_OCR_FORMULA_TEST_ROOT` 已设置） | **11 passed, 0 failed**（79.65 s；日志里 `skipping test` 出现 0 次 → 真的加载了真实模型与真实页面，不是被 skip 掉的“绿”） | 0 |
-| 7 | `cargo test --lib -- model_source:: model_registry:: model_set:: --nocapture`（真实资产，`RAPID_OCR_MODEL_ROOT` 已设置） | **34 passed, 0 failed** | 0 |
+| 5 | `cargo build --release --bins` | `Finished release profile [optimized] target(s) in 22.12s`；产出 `rapidstruct.exe` 33,400,832 B、`bench_warm_e2e.exe` 33,250,304 B、`formula_eval.exe` 28,418,560 B、`formula_bench.exe` 27,724,288 B | 0 |
+| 6 | `cargo test --lib formula_integration_tests -- --test-threads=1`（`RAPID_STRUCTURE_MODEL_ROOT` / `RAPID_STRUCTURE_FORMULA_TEST_ROOT` 已设置） | **11 passed, 0 failed**（79.65 s；日志里 `skipping test` 出现 0 次 → 真的加载了真实模型与真实页面，不是被 skip 掉的“绿”） | 0 |
+| 7 | `cargo test --lib -- model_source:: model_registry:: model_set:: --nocapture`（真实资产，`RAPID_STRUCTURE_MODEL_ROOT` 已设置） | **34 passed, 0 failed** | 0 |
 
 **基线对比（AGENTS.md §6：修改前建立基线 → 实施 → 验证）**
 
@@ -353,7 +354,7 @@ Get-FileHash -Algorithm SHA256 -Path $dest      # → target\m0a-dicts\hashes.cs
 （mean CER `0.44765135645866394`、区域均值 `34.833333333333336`）在数值上不可能变化。
 `src/ocr/rec/recognizer.rs` 唯一改动的分支是“未显式给出 `rec_keys_path` 时的下载路径”，
 而 12 图基准与 `formula_integration_tests` 都通过配置显式给出 `model_path` /
-`rec_keys_path`（`OCR-Model/test-config-small.yaml`、`formula_integration_tests::engine_config`），
+`rec_keys_path`（`models/configs/test-config-small.yaml`、`formula_integration_tests::engine_config`），
 不进入该分支。**结论：没有可测量的性能/质量影响；也未把“没跑基准”伪装成“基准通过”。**
 
 ---
@@ -384,7 +385,7 @@ Get-FileHash -Algorithm SHA256 -Path $dest      # → target\m0a-dicts\hashes.cs
 | 21:07–21:09 | 本阶段写完全部 `src/` 改动（`model_set.rs` 21:07、`model_source.rs`/`model_registry.rs` 21:09） |
 | 21:09–21:11:20 | 本阶段的 1–5 号命令（fmt / fmt --check / clippy / test / release build）全部通过，日志 `target/m0a-verify.log` |
 | 21:11:37 起 | 另一个工作流开始提交 `src/bin/serve/mod.rs`、`src/bin/serve/cli.rs`…（M0c 骨架） |
-| 21:11:50–21:12:08 | 同一个工作流修改了**共享文件**：`src/bin/rapidocr.rs`（`#[cfg(feature = "serve")] #[path = "serve/mod.rs"] mod serve;`）、`Cargo.toml`（空 feature `serve = []`）、`src/exports.rs`（导出 `format_provider_preference` / `resolve_execution_providers`）、`src/runtime/provider.rs` |
+| 21:11:50–21:12:08 | 同一个工作流修改了**共享文件**：`src/bin/rapidstruct.rs`（`#[cfg(feature = "serve")] #[path = "serve/mod.rs"] mod serve;`）、`Cargo.toml`（空 feature `serve = []`）、`src/exports.rs`（导出 `format_provider_preference` / `resolve_execution_providers`）、`src/runtime/provider.rs` |
 | 21:12:51 | 本阶段 6 号命令（公式集成测试）通过，日志 `target/m0a-formula-integration.log` |
 
 因此**在 21:12 之后再跑** `cargo fmt --all -- --check` 会看到新的失败，但那与本阶段无关：
@@ -421,7 +422,7 @@ Diff in …\src\exports.rs:85         ← M0c 工作流新增的那条 `pub use 
 4. **`download_bytes_total` 对 v4/v5 是 `None`**：未知体积按 §6.5 应由下载层按
    `max_bytes` 计入预算，该逻辑属于 M0b；本阶段只保证“未知即 `None`”，不猜数字。
 5. **并发工作流改到了共享文件**：另一个工作流在 21:11:50–21:12:08 修改了
-   `src/bin/rapidocr.rs`（接入 `#[path = "serve/mod.rs"] mod serve;`）、`Cargo.toml`
+   `src/bin/rapidstruct.rs`（接入 `#[path = "serve/mod.rs"] mod serve;`）、`Cargo.toml`
    （空 feature `serve = []`）、`src/exports.rs` 与 `src/runtime/provider.rs`，并持续新增
    `src/bin/serve/*.rs`。本阶段的 1–5 号命令（21:09–21:11:20）跑在**未包含**这些改动之前的
    树上；6–7 号命令（21:12）跑在包含它们的树上，仍全绿。21:15 的复检显示
@@ -429,12 +430,15 @@ Diff in …\src\exports.rs:85         ← M0c 工作流新增的那条 `pub use 
    `src/bin/serve/*.rs` 与 `src/exports.rs:85`（对方新增的 `pub use` 行），本阶段新增的代码与
    `pub use` 块没有任何 fmt diff（详见「与并发工作流的边界」）。复现本阶段结论时需要
    本阶段那一刻的 `src/` 状态（提交号无法给出，见风险 1）。
-6. **`OCR-Model/manifest.json` 仍是旧四字段形状**（未跟踪的本地文件）。它在本阶段
-   **之前**就已经与磁盘布局不一致（声明的是 `OCR-Model/manifest.json` 同级的扁平
-   `PP-OCRv6_det_medium.onnx`，而真实文件在 `OCR-Model/medium/`），因此旧代码
-   `validate_files(OCR-Model)` 也是失败的（`Io(NotFound)`）；本阶段没有改动它，
+6. **`models/configs/manifest.json` 仍是旧四字段形状**（未跟踪的本地文件）。它在本阶段
+   **之前**就已经与磁盘布局不一致（声明的是 `models/configs/manifest.json` 同级的扁平
+   `PP-OCRv6_det_medium.onnx`，而真实文件在 `models/text/medium/`），因此旧代码
+   `validate_files(models)` 也是失败的（`Io(NotFound)`）；本阶段没有改动它，
    行为没有回归，新代码给出的错误反而更明确（“旧格式清单”）。**未做**：没有迁移或删除
    这个文件（它不在 crate 内、也不被任何当前调用点使用；迁移它仍会因为目录布局而校验失败）。
+   **后续（E18）**：该文件已按用户决定**删除**（理由正是本段写的"不在 crate 内、不被任何调用点使用"），
+   副本留在 `Temp/deleted-models-configs-manifest.json`；如需旧形状的示例，看
+   `assets/manifest.example.json` 与 `src/model_source.rs` 的 legacy 拒绝测试。
 7. **`src-tauri` 未构建**：只确认它使用的两个符号（`ModelManifest`、`validate_files`）
    签名未变、且没有使用被删除的类型（`ModelArtifact`、`api::ModelSource`）。`src-tauri`
    当前处于另一条重构线上（工作树里有大量未完成的增删），构建它不属于本阶段范围。
@@ -507,7 +511,7 @@ src/bin/serve/cli.rs        490 行  9 tests  serve 选项面与默认值（无�
 | 文件 | 改动 | 理由 |
 | --- | --- | --- |
 | `Cargo.toml` | 新增空 feature `serve = []`（**不进 `default`**） | §2.1 的 feature 隔离；M1 才加 `tiny_http`（必须 optional） |
-| `src/bin/rapidocr.rs` | `#[cfg(feature = "serve")] #[path = "serve/mod.rs"] mod serve;` | 设计 §2.1：HTTP 不进库，serve 代码挂在二进制上 |
+| `src/bin/rapidstruct.rs` | `#[cfg(feature = "serve")] #[path = "serve/mod.rs"] mod serve;` | 设计 §2.1：HTTP 不进库，serve 代码挂在二进制上 |
 | `src/exports.rs` | 导出 `resolve_execution_providers` 与 `format_provider_preference` | §7.5/§7.6 要求启动期复用库里的**既有**判定与措辞，而不是另写一套 |
 | `src/runtime/provider.rs` | `format_provider_preference`：`fn` → `pub fn`（签名未变） | 同上；它是 provider 展示文本的唯一实现 |
 
@@ -595,7 +599,7 @@ pub struct ServeConfigPlan { pub engine: EngineConfig, pub requested: ProviderPr
 ```
 
 - **provider 名称/feature 非法 ⇒ 启动即失败**，错误文本来自
-  `rapid_ocr_rs::resolve_execution_providers`（"…is not compiled in; rebuild with
+  `rapid_structure_rs::resolve_execution_providers`（"…is not compiled in; rebuild with
   `--features directml-provider`"），**不新写措辞**：
   `startup_rejects_a_provider_whose_feature_is_not_compiled_in`；
 - **运行库不可用不在启动期判定**（§7.5 第 4 条）：探测固定用
@@ -695,7 +699,7 @@ pub enum DownloadError {  // §6.1 第 11 条的十类
 `models_corrupt`；`ModelResolve`/`FileNotFound` → 409 `models_missing`；
 `InvalidImage`/`InvalidInput`/`Decode` → 422 `unsupported_input`；`Config`/`Io`/`Yaml` →
 500 `internal`；`Download`/`Reqwest` → 502 `download_failed`）。
-测试 `every_rapid_ocr_error_variant_is_mapped` 逐变体构造实例并断言三元组（`Reqwest`
+测试 `every_rapid_structure_error_variant_is_mapped` 逐变体构造实例并断言三元组（`Reqwest`
 用端口越界的 URL 构造，**不产生任何网络 I/O**）。**没有一处字符串匹配**。
 
 **错误体形状**：`{"code": …, "message": …, "detail": …}` —— 三个键**始终**存在
@@ -1014,7 +1018,7 @@ body/result/export/download = 32/8/32/1024 MiB、队列 4/2、连续配额 4/1�
 
 ### 验证命令与结果（`docs/05` §12 要求）
 
-在本 crate（`crates/rapid-ocr-rs`）执行；日志：`target/m0c-final-sweep.log`（下表 1–7 号的
+在本 crate（`crates/rapid-structure-rs`）执行；日志：`target/m0c-final-sweep.log`（下表 1–7 号的
 单次连续执行，全部 exit 0）、`target/m0c-final-test-default.log`、`target/m0c-final-test-serve.log`、
 `target/m0c-clippy-default.log`、`target/m0c-clippy-serve.log`、`target/m0c-build-release.log`、
 `target/m0c-tree-*.txt`、`target/m0c-gate/`、`target/m0c-naive-text-first.log`、
@@ -1028,12 +1032,12 @@ body/result/export/download = 32/8/32/1024 MiB、队列 4/2、连续配额 4/1�
 | 4 | `cargo clippy --features serve --all-targets -- -D warnings` | `Finished dev profile`，无 warning（先修掉 3 条：`collapsible_if` ×1、`assertions_on_constants` ×2） | 0 |
 | 5 | `cargo test --all-targets` | 334 + 2 + 4 + 14 + 0 = **354 passed, 0 failed** | 0 |
 | 6 | `cargo test --features serve --all-targets` | 354 + **105** = **459 passed, 0 failed** | 0 |
-| 7 | `cargo build --release --bins` | `Finished release profile in 33.07s`；`rapidocr.exe` 33,401,344 B、`bench_warm_e2e.exe` 33,249,792 B、`formula_eval.exe` 28,418,560 B、`formula_bench.exe` 27,724,288 B | 0 |
+| 7 | `cargo build --release --bins` | `Finished release profile in 33.07s`；`rapidstruct.exe` 33,401,344 B、`bench_warm_e2e.exe` 33,249,792 B、`formula_eval.exe` 28,418,560 B、`formula_bench.exe` 27,724,288 B | 0 |
 | 8 | `cargo build --release --bins --features serve` | `Finished release profile in 20.47s`（feature 打开也能出 release 二进制） | 0 |
-| 9 | `cargo tree -e normal -p rapid-ocr-rs` / `… --features serve` | 各 606 行，**SHA-256 完全相同**（`BD2AB5E4…C3F6FC`） | 0 |
+| 9 | `cargo tree -e normal -p rapid-structure-rs` / `… --features serve` | 各 606 行，**SHA-256 完全相同**（`BD2AB5E4…C3F6FC`） | 0 |
 | 10 | `cargo tree -e normal --no-default-features` | 正常；三份树里 `tiny_http` 出现 **0** 次 | 0 |
 | 11 | `bench_warm_e2e.exe --max-side-len 2000 --warmup-rounds 1 --rounds 3 --intra-threads 16 --output target/m0c-gate/bench-cpu-2000.json` | 12 图；`regions.avg = 34.833333333333336` | 0 |
-| 12 | `rapidocr.exe evaluate --manifest <golden> --config test-config-small.yaml --output target/m0c-gate/evaluation-cpu.json` | 12 例；`mean_cer = 0.44765135645866394` | 0 |
+| 12 | `rapidstruct.exe evaluate --manifest <golden> --config test-config-small.yaml --output target/m0c-gate/evaluation-cpu.json` | 12 例；`mean_cer = 0.44765135645866394` | 0 |
 
 **基线对比（AGENTS.md §6）**
 
@@ -1049,7 +1053,7 @@ body/result/export/download = 32/8/32/1024 MiB、队列 4/2、连续配额 4/1�
 ### 依赖隔离（默认构建的依赖图）
 
 - `serve` 是**空 feature**（`serve = []`），不在 `default` 里：`cargo tree -e normal -p
-  rapid-ocr-rs` 与 `… --features serve` 的输出**逐字节相同**（606 行，SHA-256
+  rapid-structure-rs` 与 `… --features serve` 的输出**逐字节相同**（606 行，SHA-256
   `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC`），
   即"打开 `serve` 今天不新增任何依赖"。
 - `tiny_http` 在三份依赖树里都**不存在**（M1 才引入，且必须 optional）。
@@ -1102,7 +1106,7 @@ body/result/export/download = 32/8/32/1024 MiB、队列 4/2、连续配额 4/1�
 
 1. **模型完备性 → 状态机**（M0a 已就绪，M1 接线）：`state::ModelReadiness` 只接收
    "缺哪些文件"。M1 必须用 M0a 的 `validate_model_files` / `ModelSetStatus`
-   （`rapid_ocr_rs::{ModelFileState, model_set_status}`）填充，并把缺失/损坏文件名
+   （`rapid_structure_rs::{ModelFileState, model_set_status}`）填充，并把缺失/损坏文件名
    与 `/api/models` 的字段保持一致。
 2. **`ServeError::Download(DownloadError)` 与库侧下载器统一**（M0b）：本阶段按 §6.1 第 11 条
    定义了 serve 侧需要的十类错误，`DownloadError` 目前**只存在于 `src/bin/serve/error.rs`**，
@@ -1165,7 +1169,7 @@ body/result/export/download = 32/8/32/1024 MiB、队列 4/2、连续配额 4/1�
 | 加固下载器 + `--max-download-mb` + `MoveFileExW` + 迁移 CLI（§6） | ⛔ 不在 M0c（M0b）；**`--max-download-mb` 的解析与校验已完成** | 交付物 5 |
 | provider 回退语义 + 启动期配置校验 + 引擎创建期可用性 + `/api/status` 三字段（§7.5） | ✅ 完成（除"引擎创建期"本身，属 M1 的 `Loading → Ready\|Failed`） | 交付物 1 |
 | `ServiceState` / `EngineState` 状态机与全部转换（§7.6） | ✅ 完成 | 交付物 1；21 个测试含 `Rebuilding`（M3） |
-| `ServeError` 与状态码映射（§11.1，含 `engine_unavailable` / `export_too_large`） | ✅ 完成 | 交付物 2；`every_variant_*`、`every_download_error_*`、`every_rapid_ocr_error_variant_is_mapped` |
+| `ServeError` 与状态码映射（§11.1，含 `engine_unavailable` / `export_too_large`） | ✅ 完成 | 交付物 2；`every_variant_*`、`every_download_error_*`、`every_rapid_structure_error_variant_is_mapped` |
 | 准入顺序（§4.4）与 `--max-result-mb`（§4.6） | ✅ 完成 | 交付物 5 |
 | 双队列容量与**双向**公平调度参数（§8.3） | ✅ 完成 | 交付物 4（含朴素策略失败演示） |
 | **M0 验收**：以上每项都有单元测试；`cargo test` 全绿；文档与实现一致 | ✅ 本阶段范围内成立 | 459 passed / 0 failed（含 105 个 M0c 测试）；本文件 |
@@ -1176,7 +1180,7 @@ body/result/export/download = 32/8/32/1024 MiB、队列 4/2、连续配额 4/1�
 - HTTP 服务器、`tiny_http`、路由表、任何 socket；`GET /`、静态页、前端与 CSP 响应头拼接；
 - `POST /api/ocr` 等端点的实际行为与 `202 → queued → running → succeeded` 的端到端闭环；
 - 加固下载器本体（重定向/host 白名单/磁盘空间/原子替换/单飞）；
-- `serve` 子命令接入 `rapidocr` 的 `Command` 枚举、未启用 feature 时的可定位错误（M1）；
+- `serve` 子命令接入 `rapidstruct` 的 `Command` 枚举、未启用 feature 时的可定位错误（M1）；
 - 未编辑 `src/model_set.rs` / `src/model_source.rs` / `src/model_registry.rs` /
   `src/model_store.rs` / `src/api.rs` / `assets/default_models.yaml`（M0a 在途）；
 - 未提交任何 commit。
@@ -1349,7 +1353,7 @@ reqwest 0.12 的 blocking 客户端**不区分**"连接阶段超时"与"等待�
 `src/evaluation/formula/report.rs::classify_error` 的 `Download → ImageDecode`
 也保持不变（该层只从本地路径加载模型，不会触发模型下载），并加了注释说明原因。
 
-**发现 2**：`src/bin/rapidocr.rs` **没有**独立的下载子命令（命令面是
+**发现 2**：`src/bin/rapidstruct.rs` **没有**独立的下载子命令（命令面是
 `run` / `report` / `evaluate` / `check`）。CLI 触发的下载全部经由管线
 （`EngineConfig::allow_download` → detector/classifier/recognizer 的构造），也就是上表的
 4 个调用点。因此"CLI 下载路径"的迁移已经由上表覆盖，不存在第五个入口。
@@ -1363,7 +1367,7 @@ reqwest 0.12 的 blocking 客户端**不区分**"连接阶段超时"与"等待�
 ### 交付物 3：`--max-download-mb` 语义（§6.2）
 
 - **默认值同源**：`serve::limits::DEFAULT_MAX_DOWNLOAD_MB` 现在等于
-  `rapid_ocr_rs::DEFAULT_MAX_DOWNLOAD_MB`（1024），库内调用方与 CLI 不再各写一个 1024；
+  `rapid_structure_rs::DEFAULT_MAX_DOWNLOAD_MB`（1024），库内调用方与 CLI 不再各写一个 1024；
   `cli::tests::every_default_matches_the_document` 仍逐项断言 1024（测试未放松）；
 - **0 值在启动期被拒**：既有 `RawServeLimits::validate` 的 `mib_to_bytes` 已覆盖
   （`zero_mib_limits_are_rejected_with_the_flag_name` 含 `--max-download-mb`），本阶段未改；
@@ -1448,14 +1452,14 @@ fixture 没有把连接改回阻塞模式，于是"请求稍晚到达"时 `read`
 curl.exe -s -X POST --data-binary "@…\01基础多位置文本.png" `
   "http://127.0.0.1:8760/api/ocr?max_side=2000" `
   -H "Content-Type: application/octet-stream" `
-  -H "X-RapidOCR-Token: <token>" -H "Origin: http://127.0.0.1:8760"
+  -H "X-RapidStructure-Token: <token>" -H "Origin: http://127.0.0.1:8760"
 ```
 
 ---
 
 ### 验证命令与结果（`docs/05` §12 要求）
 
-在本 crate（`crates/rapid-ocr-rs`）执行；日志：`target/m0b-verify.log`（1–3 号）、
+在本 crate（`crates/rapid-structure-rs`）执行；日志：`target/m0b-verify.log`（1–3 号）、
 `target/m0b-clippy-default.log` / `m0b-clippy-serve.log`、`target/m0b-test-default.log` /
 `m0b-test-serve.log`、`target/m0b-build-release.log`、`target/m0b-formula-integration.log`、
 `target/m0b-gate/`、`target/m0b-tree-default.txt` / `m0b-tree-serve.txt`。
@@ -1467,9 +1471,9 @@ curl.exe -s -X POST --data-binary "@…\01基础多位置文本.png" `
 | 3 | `cargo clippy --features serve --all-targets -- -D warnings` | `Finished dev profile`，无 warning | 0 |
 | 4 | `cargo test --all-targets` | 369 + 2 + 4 + 14 + 0 = **389 passed, 0 failed** | 0 |
 | 5 | `cargo test --features serve --all-targets` | 369 + 2 + 4 + 14 + **106** = **495 passed, 0 failed** | 0 |
-| 6 | `cargo build --release --bins` | `Finished release profile in 17.46s`；`rapidocr.exe` 33,420,800 B、`bench_warm_e2e.exe` 33,269,760 B、`formula_eval.exe` 28,419,072 B、`formula_bench.exe` 27,727,360 B | 0 |
-| 7 | `cargo test --lib formula_integration_tests -- --test-threads=1`（`RAPID_OCR_MODEL_ROOT` / `RAPID_OCR_FORMULA_TEST_ROOT` 已设置） | **11 passed, 0 failed**（61.62 s；日志里 `skipping test` 出现 **0** 次 → 真的加载了真实模型与真实页面） | 0 |
-| 8 | `cargo tree -e normal -p rapid-ocr-rs`（默认 / `--features serve`） | 各 606 行，SHA-256 **相同**（`BD2AB5E4…C3F6FC`，与 M0c 记录的哈希**逐位相同**）；`tiny_http` 出现 0 次 | 0 |
+| 6 | `cargo build --release --bins` | `Finished release profile in 17.46s`；`rapidstruct.exe` 33,420,800 B、`bench_warm_e2e.exe` 33,269,760 B、`formula_eval.exe` 28,419,072 B、`formula_bench.exe` 27,727,360 B | 0 |
+| 7 | `cargo test --lib formula_integration_tests -- --test-threads=1`（`RAPID_STRUCTURE_MODEL_ROOT` / `RAPID_STRUCTURE_FORMULA_TEST_ROOT` 已设置） | **11 passed, 0 failed**（61.62 s；日志里 `skipping test` 出现 **0** 次 → 真的加载了真实模型与真实页面） | 0 |
+| 8 | `cargo tree -e normal -p rapid-structure-rs`（默认 / `--features serve`） | 各 606 行，SHA-256 **相同**（`BD2AB5E4…C3F6FC`，与 M0c 记录的哈希**逐位相同**）；`tiny_http` 出现 0 次 | 0 |
 
 **基线对比（AGENTS.md §6：修改前建立基线 → 实施 → 验证）**
 
@@ -1501,11 +1505,11 @@ curl.exe -s -X POST --data-binary "@…\01基础多位置文本.png" `
 命令（**与 §13 的 CLI 对照一致**）：
 
 ```powershell
-target\release\bench_warm_e2e.exe --config <OCR-Model>\test-config-small.yaml `
-  --images-dir <OCR-test-image> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
+target\release\bench_warm_e2e.exe --config <models>\test-config-small.yaml `
+  --images-dir <datasets/text> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
   --intra-threads 16 --output target\m0b-gate\bench-cpu-2000.json
-target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest.json `
-  --config <OCR-Model>\test-config-small.yaml --output target\m0b-gate\evaluation-cpu.json
+target\release\rapidstruct.exe evaluate --manifest <datasets/text>\golden-manifest.json `
+  --config <models>\test-config-small.yaml --output target\m0b-gate\evaluation-cpu.json
 ```
 
 为什么**必须**重跑：本阶段改了 `resolve_character_path`（`recognizer.rs`）与
@@ -1589,7 +1593,7 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 | 加固下载器 + `MoveFileExW` 原子替换（§6） | ✅ 完成 | 交付物 1：12 条要求逐条有测试；**36 个新测试**（`model_store` +34、`test_support` +1、`limits` +1） |
 | 迁移 CLI 调用方、删除可传 `None` 的入口（§6.4） | ✅ 完成 | 交付物 2：4 个调用点迁移；`ensure_downloaded` 与 serve 侧重复的 `DownloadError` 均已删除且无兼容层 |
 | `--max-download-mb`（§6.2） | ✅ 完成 | 交付物 3：默认 1024（单一来源）、0 值启动期拒绝、单文件 = 总量额度、剩余额度递减、未知体积仍受限 |
-| `DownloadError` 十二类 + serve 复用同一类型（§6.1 第 12 条） | ✅ 完成 | `every_download_error_class_has_a_stable_kind`、`every_download_error_maps_to_a_documented_status_and_code`、`every_rapid_ocr_error_variant_is_mapped` |
+| `DownloadError` 十二类 + serve 复用同一类型（§6.1 第 12 条） | ✅ 完成 | `every_download_error_class_has_a_stable_kind`、`every_download_error_maps_to_a_documented_status_and_code`、`every_rapid_structure_error_variant_is_mapped` |
 | 「测试不得依赖公网」 | ✅ 完成 | 交付物 4：fixture 只在 `127.0.0.1:0`；联网测试 0 条（`a_refused_connection_is_a_network_error` 用的是本机已释放端口） |
 | **M0 验收**：以上每项都有单元测试；`cargo test` 全绿；文档与实现一致 | ✅ 本阶段范围内成立 | 389 / 495 passed，0 failed；两个硬门槛逐位相同；本文件 + `docs/05` §13 已同步 |
 | §6.6 下载取消、M1/M2 的 HTTP 与 worker | ⛔ 不在 M0b | 见"未覆盖风险"第 5、6、10 条 |
@@ -1610,8 +1614,8 @@ serve 纯逻辑 105 测试、**无 HTTP**）。
 | --- | --- |
 | target | Windows x64 + MSVC ABI：`x86_64-pc-windows-msvc` |
 | 工具链 | rustc 1.98.1 / cargo 1.98.1 |
-| crate | `rapid-ocr-rs` 0.7.0（独立 git 仓库，本阶段未提交） |
-| 真实资产 | `OCR-Model/small/`（PP-OCRv6 det/rec small + dict）、`OCR-test-image/`（12 图 + `golden-manifest.json`）、`OCR-Model/test-config-small.yaml` |
+| crate | `rapid-structure-rs` 0.7.0（独立 git 仓库，本阶段未提交） |
+| 真实资产 | `models/text/small/`（PP-OCRv6 det/rec small + dict）、`datasets/text/`（12 图 + `golden-manifest.json`）、`models/configs/test-config-small.yaml` |
 | HTTP 依赖 | `tiny_http = { version = "0.12", optional = true }`（`serve = ["dep:tiny_http"]`，**不进 default**） |
 
 ---
@@ -1639,7 +1643,7 @@ src/bin/web/index.html       2024 行   （数据）  Temp/demo3-v2.html 的副�
 | 文件 | 改动 | 理由 |
 | --- | --- | --- |
 | `Cargo.toml` | `tiny_http` optional + `serve = ["dep:tiny_http"]` | §2.1：HTTP 只在 `serve` feature 里，且不在 `default` |
-| `src/bin/rapidocr.rs` | `Command::Serve`（启用 feature 时用真实 `ServeArgs`，未启用时给出"重建提示"的可定位错误） | §3 |
+| `src/bin/rapidstruct.rs` | `Command::Serve`（启用 feature 时用真实 `ServeArgs`，未启用时给出"重建提示"的可定位错误） | §3 |
 | `src/bin/serve/mod.rs` | 挂上 7 个新模块；**删除 M0c 的 `#![allow(dead_code)]`**；`scope_tests` 替换为 `dependency_boundary`（2 个测试） | 交付物 4 |
 | `src/bin/serve/{admit,error,jobs,limits,queue,state}.rs` | 逐项接上真实调用点；删除/接线的具体项见"交付物 4" | 交付物 4 |
 
@@ -1684,7 +1688,7 @@ serve-sweeper（1 个：JobStore::tick + 结果/原图与任务存储同步清�
 | 监听地址硬编码 | `security::bind_address(port)`（签名里没有地址参数）+ `assert_loopback` 启动断言；日志打印实际地址与允许集合 | M0c 测试 + `run.rs` 的端口一致性检查 |
 | `Host` → 421 | `LocalOrigin::check_host` | `the_host_header_is_validated_for_dns_rebinding`（含 `[::1]`、端口不符、无 Host） |
 | `Origin` → 403（仅状态改变方法） | `check_origin` | `state_changing_requests_require_a_matching_origin`（缺失 / `null` / 不匹配）+ `read_requests_do_not_require_an_origin` |
-| token（所有 `/api/*`） | `X-RapidOCR-Token` + 常量时间比较；`GET /` 是令牌下发者，**不**要求令牌 | `the_token_is_required_on_every_api_route`、`the_page_carries_...` |
+| token（所有 `/api/*`） | `X-RapidStructure-Token` + 常量时间比较；`GET /` 是令牌下发者，**不**要求令牌 | `the_token_is_required_on_every_api_route`、`the_page_carries_...` |
 | 不发送 `Access-Control-Allow-Origin` | 没有任何 CORS 头 | 页面测试逐项断言 |
 | 三个安全头 | `SECURITY_HEADERS` 在**每个**响应上（含 401/403/404/405/409/413/421/503） | 同上 + 各状态码测试 |
 | nonce CSP（无 `unsafe-inline`） | `GET /` 的 `Content-Security-Policy`，nonce 与页面里的 3 个 `nonce=` 属性**逐字节相同** | `the_main_page_csp_is_nonce_based_and_never_allows_inline`、`the_real_page_injects_cleanly_and_matches_the_csp_nonce` |
@@ -1779,14 +1783,14 @@ serve-sweeper（1 个：JobStore::tick + 结果/原图与任务存储同步清�
 | 3 | `cargo clippy --features serve --all-targets -- -D warnings` | 无 warning（**含 M0c 的 105 个测试与新代码**） | 0 |
 | 4 | `cargo test --all-targets` | 369 + 2 + 4 + 14 = **389 passed, 0 failed** | 0 |
 | 5 | `cargo test --features serve --all-targets` | 389 + **156** = **545 passed, 0 failed** | 0 |
-| 6 | `cargo build --release --bins` | `Finished release profile [optimized] in 7.98s`；`rapidocr.exe` 34,446,336 B | 0 |
+| 6 | `cargo build --release --bins` | `Finished release profile [optimized] in 7.98s`；`rapidstruct.exe` 34,446,336 B | 0 |
 | 7 | `cargo build --release --bins --features serve` | `Finished release profile [optimized] in 8.31s`（同一二进制即可跑 serve） | 0 |
 
 **默认依赖图逐字节未变**（§2.1 的硬约束）：
 
 | 证据 | 值 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs`（M1 开工前） | 606 行，SHA-256 `EB00BBA0C242E09DE4E7631662634596F3D5325778D32B32213E70981A8EB7B1` |
+| `cargo tree -e normal -p rapid-structure-rs`（M1 开工前） | 606 行，SHA-256 `EB00BBA0C242E09DE4E7631662634596F3D5325778D32B32213E70981A8EB7B1` |
 | 同上（M1 完成后） | 606 行，SHA-256 **完全相同** |
 | 默认树里的 `tiny_http` 出现次数 | **0** |
 | `cargo tree -e normal --no-default-features` | 605 行，`tiny_http` **0** 次 |
@@ -1820,12 +1824,12 @@ serve-sweeper（1 个：JobStore::tick + 结果/原图与任务存储同步清�
 
 ```powershell
 # 服务（release 二进制，真实模型目录 + 真实配置）
-target\release\rapidocr.exe serve --port 8791 `
-  --model-dir D:\100_Projects\110_Daily\SnapClip\OCR-Model\small `
-  --config D:\100_Projects\110_Daily\SnapClip\OCR-Model\test-config-small.yaml
-# 每张图：POST /api/ocr（application/octet-stream，带 X-RapidOCR-Token 与 Origin）→
+target\release\rapidstruct.exe serve --port 8791 `
+  --model-dir <repo>\models\text\small `
+  --config <repo>\models\configs\test-config-small.yaml
+# 每张图：POST /api/ocr（application/octet-stream，带 X-RapidStructure-Token 与 Origin）→
 #         轮询 GET /api/jobs/{id} → GET /api/jobs/{id}/result
-# 对照：target\release\rapidocr.exe run --img-path <同一张图> --config <同一配置> --json
+# 对照：target\release\rapidstruct.exe run --img-path <同一张图> --config <同一配置> --json
 ```
 
 | # | 图片 | HTTP `regions` | CLI `regions` | 区域数相同 | `text` 逐字节相同 | 逐区域文本序列相同 |
@@ -1881,11 +1885,11 @@ M1 的**生产**路由固定为文本队列（§10.8：公式路由默认关闭�
 #### 5.6 12 图硬门槛（`target/m1-gate/`，**没有**覆盖 `tests/baseline/`）
 
 ```powershell
-target\release\bench_warm_e2e.exe --config <OCR-Model>\test-config-small.yaml `
-  --images-dir <OCR-test-image> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
+target\release\bench_warm_e2e.exe --config <models>\test-config-small.yaml `
+  --images-dir <datasets/text> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
   --intra-threads 16 --output target\m1-gate\bench-cpu-2000.json
-target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest.json `
-  --config <OCR-Model>\test-config-small.yaml --output target\m1-gate\evaluation-cpu.json
+target\release\rapidstruct.exe evaluate --manifest <datasets/text>\golden-manifest.json `
+  --config <models>\test-config-small.yaml --output target\m1-gate\evaluation-cpu.json
 ```
 
 | 门槛 | 文档要求 | 本次实测（release） | 比较方式 | 结论 |
@@ -1902,7 +1906,7 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 | 项目 | 修改前（M0 基线） | 修改后 | 预期结果 |
 | --- | --- | --- | --- |
 | `serve` feature | 空 feature（`serve = []`），无 HTTP | `serve = ["dep:tiny_http"]`（optional，不进 default）；默认依赖图逐字节不变 | §2.1 |
-| `rapidocr serve` | 子命令**不存在**（无法解析） | 子命令可解析；未启用 feature 时给出"重建提示"的可定位错误 | §3 |
+| `rapidstruct serve` | 子命令**不存在**（无法解析） | 子命令可解析；未启用 feature 时给出"重建提示"的可定位错误 | §3 |
 | HTTP 端到端 | 完全没有（M0c 记录明说"一条都没跑"） | 24 个真实端口测试 + 12 张真实图片经 HTTP 与 CLI 逐张一致 | §12 |
 | OCR 409 体形状 | 保留为 M0c 接缝（只有 `code`，无清单） | `code`（`models_missing`/`models_corrupt`）+ `detail` 与 `/api/models` 同源同值 | §7.6 |
 | `ModelReadiness` | 本地接缝类型，没有生产者 | 由 `ModelSource`/`ModelSetStatus`（库的唯一实现）填充 | §5.2/§7.6 |
@@ -1946,13 +1950,13 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 
 | §11 M1 条目 | 本阶段 | 证据 |
 | --- | --- | --- |
-| `serve` 子命令 + feature 隔离 + 未启用 feature 的可定位错误 | ✅ 完成 | `cli.rs` 测试 + `rapidocr.rs` 的两个 `Command::Serve` 分支 |
+| `serve` 子命令 + feature 隔离 + 未启用 feature 的可定位错误 | ✅ 完成 | `cli.rs` 测试 + `rapidstruct.rs` 的两个 `Command::Serve` 分支 |
 | provider 启动期解析；`GET /`、`/api/status`、`POST /api/ocr`、`/api/jobs/{id}`、`/result` | ✅ 完成 | 5.2 的 HTTP 测试；`ServeShared::status_json` 三字段 |
 | 单图上传（XHR + 进度 + 取消上传）、异步任务与轮询 | ✅ 服务端完成 | `202 → queued → running → succeeded`；页面侧的 XHR 是原型既有代码（未改） |
 | 预览与 polygon 叠框、区域列表、复制全文、JSON 导出 | ✅ 数据面完成 | `regions[].polygon.points`（恰好 4 点、原图坐标）、`plain_text`；页面的渲染逻辑未改 |
 | 模型缺失提示（消费 `ModelSetStatus`；**不含下载动作**） | ✅ 完成 | `/api/models` + 409 `detail`；下载按 M2 处理并可见降级 |
 | 测试：状态机、tombstone（容量+TTL）、双队列 503、公平调度、准入顺序、Host/Origin/token、安全头与 nonce CSP | ✅ 完成 | 105（M0c 保留）+ 51（M1 新增）= 156 个 serve 测试，0 failed |
-| **M1 验收**：12 图经 HTTP 的 `regions` 与文本与 `rapidocr run --json` 逐张一致 | ✅ 完成 | 5.3：12/12 一致（418 = 418） |
+| **M1 验收**：12 图经 HTTP 的 `regions` 与文本与 `rapidstruct run --json` 逐张一致 | ✅ 完成 | 5.3：12/12 一致（418 = 418） |
 | **M1 验收**：空 `--model-dir` 下 `/api/models` 与 `/api/ocr` 的缺失字段一致 | ✅ 完成 | 5.4：`FIELDS_MATCH_API_MODELS=True` |
 | **M1 验收**：公式洪水下普通 OCR 不被饿死、普通洪水下公式也不被饿死 | ✅ 完成（测试专用慢速后端） | 5.5 两个方向 |
 | **M1 验收**：空模型目录下服务仍为 `Ready` + `EngineState::BlockedModelsMissing` | ✅ 完成 | 5.4 |
@@ -2015,8 +2019,8 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 | --- | --- |
 | target | Windows x64 + MSVC ABI：`x86_64-pc-windows-msvc` |
 | 工具链 | rustc 1.98.1 / cargo 1.98.1 |
-| crate | `rapid-ocr-rs` 0.7.0（独立 git 仓库，本阶段未提交） |
-| 真实资产 | `OCR-Model/small/`、`OCR-Model/test-config-small.yaml`、`OCR-test-image/`（12 图 + golden） |
+| crate | `rapid-structure-rs` 0.7.0（独立 git 仓库，本阶段未提交） |
+| 真实资产 | `models/text/small/`、`models/configs/test-config-small.yaml`、`datasets/text/`（12 图 + golden） |
 | 真实网络（opt-in） | ModelScope（`www.modelscope.cn`）：字典直连 200；ONNX 权重 **302 → CDN** |
 
 **变更规模**（`git diff --stat`，15 个跟踪文件：+3739 / −198，其中本记录的追加 `docs/06` 为 +590、`docs/05` 为 +38）：
@@ -2328,17 +2332,17 @@ impl JobQueue { pub fn name(self) -> &'static str; pub fn class(self) -> Option<
 | 3 | `cargo clippy --features serve --all-targets -- -D warnings` | 无 warning | 0 |
 | 4 | `cargo test --all-targets` | 374 + 2 + 4 + 14 = **394 passed, 0 failed** | 0 |
 | 5 | `cargo test --features serve --all-targets` | 394 + **176** = **570 passed, 0 failed** | 0 |
-| 6 | `cargo build --release --bins` | `rapidocr.exe` **34,522,112 B**（M1: 34,446,336 B） | 0 |
+| 6 | `cargo build --release --bins` | `rapidstruct.exe` **34,522,112 B**（M1: 34,446,336 B） | 0 |
 | 7 | `cargo build --release --bins --features serve` | 同一二进制即可跑 serve | 0 |
 
 **默认依赖图逐字节未变**（§2.1 的硬约束）：
 
 | 证据 | 值 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs` | 606 行，SHA-256 `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC` |
+| `cargo tree -e normal -p rapid-structure-rs` | 606 行，SHA-256 `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC` |
 | 与 M0c（`tiny_http` 引入**之前**）的快照 `target/m0c-tree-default.txt` 逐行比较 | **0 处差异** |
 | 默认树 / `--no-default-features` 里的 `tiny_http` | 0 / 0 次 |
-| `cargo tree -e normal -p rapid-ocr-rs --features serve` | 611 行，`tiny_http` 1 次 |
+| `cargo tree -e normal -p rapid-structure-rs --features serve` | 611 行，`tiny_http` 1 次 |
 | `Cargo.toml` | **未改**（无新依赖） |
 
 **测试增量与基线对比（AGENTS.md §6）**
@@ -2365,10 +2369,10 @@ impl JobQueue { pub fn name(self) -> &'static str; pub fn class(self) -> Option<
 ### 验证 2：12 图硬门槛（`target/m2-gate/`，**没有**覆盖 `tests/baseline/`）
 
 ```powershell
-target\release\bench_warm_e2e.exe --config <OCR-Model>\test-config-small.yaml --images-dir <OCR-test-image> `
+target\release\bench_warm_e2e.exe --config <models>\test-config-small.yaml --images-dir <datasets/text> `
   --warmup-rounds 1 --rounds 3 --max-side-len 2000 --intra-threads 16 --output target\m2-gate\bench-cpu-2000.json
-target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest.json `
-  --config <OCR-Model>\test-config-small.yaml --output target\m2-gate\evaluation-cpu.json
+target\release\rapidstruct.exe evaluate --manifest <datasets/text>\golden-manifest.json `
+  --config <models>\test-config-small.yaml --output target\m2-gate\evaluation-cpu.json
 ```
 
 | 门槛 | 文档要求 | 本次实测（release） | 比较方式 | 结论 |
@@ -2423,7 +2427,7 @@ FIELDS_MATCH_API_MODELS=True     engine.state equals blocked_models_missing: Tru
 
 ---
 
-### 验证 4：真实网络（opt-in，`RAPID_OCR_ALLOW_NETWORK=1`）与一条**未解决**的发现
+### 验证 4：真实网络（opt-in，`RAPID_STRUCTURE_ALLOW_NETWORK=1`）与一条**未解决**的发现
 
 > **【M2b 已解决】** 本节 (b) 记录的阻塞项（默认表 ONNX 权重 302 → CDN 被拒绝）已由 M2b
 > 修复：§6.1 第 2 条改写为"禁止盲从 + 手工逐跳校验"，`ALLOWED_DOWNLOAD_HOSTS` 增加
@@ -2434,7 +2438,7 @@ FIELDS_MATCH_API_MODELS=True     engine.state equals blocked_models_missing: Tru
 > 本节表格里的"重定向（真实主机）"一行因此只在"当时"成立，现状见 M2b 记录。
 
 日志：`target/m2-verify/network-test.log`（命令
-`$env:RAPID_OCR_ALLOW_NETWORK='1'; cargo test --features serve --bin rapidocr a_real_network -- --nocapture --test-threads=1`）。
+`$env:RAPID_STRUCTURE_ALLOW_NETWORK='1'; cargo test --features serve --bin rapidstruct a_real_network -- --nocapture --test-threads=1`）。
 
 **(a) 成功路径**（`a_real_network_download_of_the_default_table_dictionary_lands_and_verifies`）：
 临时模型目录 + 本地 manifest（一个待下载的真实字典 + 两个已就位的夹具文件以满足三个 role），
@@ -2537,7 +2541,7 @@ opt-in 回归测试：真实主机 302 → 502 `download_failed`/`redirect`，�
 | 性能表现 | — | 推理链路一行未动；12 图两个硬门槛逐位相同；新增的只有下载线程与 HTTP 路径 | 无退化 |
 | 依赖 | — | `Cargo.toml` 未改；默认依赖图与 M0c 快照 0 差异 | §2.1 |
 
-**证据：未触碰的文件**（在 `crates/rapid-ocr-rs` 与父仓库分别检查）：
+**证据：未触碰的文件**（在 `crates/rapid-structure-rs` 与父仓库分别检查）：
 
 - `Temp/demo3-v2.html`：父仓库 `git status --porcelain -- Temp/demo3-v2.html` 为空；
 - `docs/03-windows-only-optimization-tasks.md`：`git status --porcelain` 为空；
@@ -2593,7 +2597,7 @@ opt-in 回归测试：真实主机 302 → 502 `download_failed`/`redirect`，�
 1. **未提交、未在干净 clone 上验证**：按要求不 commit；`crates/` 在父仓库被 `.gitignore` 忽略，
    证据来自当前工作树（`06bd0af` + 本阶段改动）。
 2. **真实网络测试是 opt-in 且依赖上游内容**：`a_real_network_*` 只有设置
-   `RAPID_OCR_ALLOW_NETWORK=1` 才联网；不设置时打印 `skipping`。上游若替换同名文件，
+   `RAPID_STRUCTURE_ALLOW_NETWORK=1` 才联网；不设置时打印 `skipping`。上游若替换同名文件，
    哈希校验会**失败**（这正是期望行为），届时该测试会红——这是网络测试的正常语义，不是 flaky。
 3. **多文件真实下载未跑通**：见"覆盖分工"第 4 条（第一次尝试在第二个文件遇到 10 s
    `connect_timeout`）。因此"逐文件递减预算在真实多文件场景下"只有本机 fixture（库层）与
@@ -2606,14 +2610,14 @@ opt-in 回归测试：真实主机 302 → 502 `download_failed`/`redirect`，�
    `pending_download`（缺失 ∪ 损坏）并在有未知体积时按 `--max-download-mb` 计。这是保守估计，
    真正的逐文件判定仍在库侧（§6.5 的原文）。
 7. **并发工作流**：父仓库工作树里还有其它工作流的未提交改动（`src-tauri/**` 等），与本阶段
-   无关；本阶段的验证全部在 `crates/rapid-ocr-rs` 内取得。
+   无关；本阶段的验证全部在 `crates/rapid-structure-rs` 内取得。
 
 ---
 
 # 【M2b】逐跳校验的重定向：解决 M2 的发布前阻塞项
 
 - **时间**：2026-10-04（本机）
-- **工作范围**：`crates/rapid-ocr-rs`（父仓库 `.gitignore` 的既有改动与本阶段无关）
+- **工作范围**：`crates/rapid-structure-rs`（父仓库 `.gitignore` 的既有改动与本阶段无关）
 - **未提交**：按要求不 commit；证据全部来自当前工作树
 - **被解决的条目**：M2 的"【发布前阻塞项】默认表的 ONNX 权重不可下载"（见本文"验证 4b"与
   "接缝"第 1 条，两处已就地标注"已解决"）
@@ -2714,7 +2718,7 @@ SHA-256 决定，跳转改变不了其中任何一个。落盘名字的正确性
 | 3 | `a_redirect_chain_longer_than_the_hop_limit_is_rejected` | 服务器把 `/model.onnx` 永远指回自己 → `RedirectRejected{location}`；请求数恰好 `MAX_REDIRECT_HOPS + 1` |
 | 4 | `a_redirect_without_a_location_header_is_rejected` | `302` 无 `Location` → `RedirectRejected{location:None}` |
 | 5 | `a_redirect_that_downgrades_to_http_is_rejected` | `https → http`（明文端口上**确实有**服务器在监听）→ `SchemeRejected{scheme:"http"}`，且明文主机 `request_count()==0` |
-| 6 | `a_redirect_target_receives_no_credential_header` | 记录跳转目标收到的**全部**头名：`authorization` / `proxy-authorization` / `cookie` / `x-rapidocr-token` / `x-auth-token` 一个都不在；`user-agent` 仍在 |
+| 6 | `a_redirect_target_receives_no_credential_header` | 记录跳转目标收到的**全部**头名：`authorization` / `proxy-authorization` / `cookie` / `x-rapidstructure-token` / `x-auth-token` 一个都不在；`user-agent` 仍在 |
 | 7 | `a_redirected_body_above_the_cap_is_still_rejected` | 跳转目标回 **chunked**（无 `Content-Length`，预检不可能顺手挡住）64 KiB，上限 4096 → `TooLarge{4096, Some(4097)}`，目录为空 |
 | 8 | `a_cdn_style_redirect_with_a_hash_path_still_lands_under_the_original_name` | 真实 CDN 形状（哈希目录段 + `?filename=`）→ 接受，落盘名仍是 `model.onnx`，哈希匹配 |
 | — | `the_redirect_hop_limit_is_small_and_fixed` | 静态断言 `MAX_REDIRECT_HOPS == 5` 且在 `[1,8]` 内（改它必须同时改 §6.1 第 2 条） |
@@ -2728,8 +2732,8 @@ SHA-256 决定，跳转改变不了其中任何一个。落盘名字的正确性
 命令（日志：`target/m2b-verify/network-test.log`）：
 
 ```powershell
-$env:RAPID_OCR_ALLOW_NETWORK='1'
-cargo test --features serve --bin rapidocr a_real_network -- --nocapture --test-threads=1
+$env:RAPID_STRUCTURE_ALLOW_NETWORK='1'
+cargo test --features serve --bin rapidstruct a_real_network -- --nocapture --test-threads=1
 ```
 
 **(a) 权重：302 → CDN（M2b 打通的那条路径）**
@@ -2787,7 +2791,7 @@ host"的行为一致。
 
 | 证据 | 值 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs` | 606 行，SHA-256 `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC`（与 M2 快照**逐行 0 差异**） |
+| `cargo tree -e normal -p rapid-structure-rs` | 606 行，SHA-256 `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC`（与 M2 快照**逐行 0 差异**） |
 | 与 M0c 快照 `target/m0c-tree-default.txt` 比较 | 0 差异 |
 | `--no-default-features` | 605 行，与 `target/m0c-tree-no-default.txt` 0 差异 |
 | `--features serve` | 611 行，与 M2 快照 0 差异；`tiny_http` 出现 1 次 |
@@ -2797,10 +2801,10 @@ host"的行为一致。
 ## 6. 12 图硬门槛（输出写在 `target/m2b-gate/`，**没有**覆盖 `tests/baseline/`）
 
 ```powershell
-target\release\bench_warm_e2e.exe --config ..\..\OCR-Model\test-config-small.yaml --images-dir ..\..\OCR-test-image `
+target\release\bench_warm_e2e.exe --config ..\..\models\configs\test-config-small.yaml --images-dir ..\..\datasets/text `
   --warmup-rounds 1 --rounds 3 --max-side-len 2000 --intra-threads 16 --output target\m2b-gate\bench-cpu-2000.json
-target\release\rapidocr.exe evaluate --manifest ..\..\OCR-test-image\golden-manifest.json `
-  --config ..\..\OCR-Model\test-config-small.yaml --output target\m2b-gate\evaluation-cpu.json
+target\release\rapidstruct.exe evaluate --manifest ..\..\datasets/text\golden-manifest.json `
+  --config ..\..\models\configs\test-config-small.yaml --output target\m2b-gate\evaluation-cpu.json
 ```
 
 | 门槛 | 文档要求 | 本次实测（release） | 比较方式 | 结论 |
@@ -2834,7 +2838,7 @@ target\release\rapidocr.exe evaluate --manifest ..\..\OCR-test-image\golden-mani
    的设计后果，不是缺陷；修法是改常量 + 改锁死它的测试，或者由用户
    `--allow-download-host` 显式放行。本次沿 `det`/`rec`/`cls`/`rec_small` 四个权重 URL实测都落在
    `cdn-lfs-cn-1`，但没有"CDN 不会换名"的证据。
-2. **真实网络测试是 opt-in 且依赖上游内容 + `--test-threads=1`**：`RAPID_OCR_ALLOW_NETWORK=1`
+2. **真实网络测试是 opt-in 且依赖上游内容 + `--test-threads=1`**：`RAPID_STRUCTURE_ALLOW_NETWORK=1`
    才联网；上游替换同名文件会让哈希校验失败（这正是期望行为）。测试里没有"跳数"的内部断言
    （见 §2.4 的原因），跳数是 curl 的外部观测。
 3. **跳转过程中的超时口径**：每跳各自受 `connect_timeout` / `read_timeout` 约束（与库原有
@@ -2866,9 +2870,9 @@ M1/M2 记录里"留给 M3"的接缝（`annotated.png` 的原图字节、导出�
 | --- | --- |
 | target | Windows x64 + MSVC ABI：`x86_64-pc-windows-msvc` |
 | 工具链 | rustc 1.98.1 / cargo 1.98.1 |
-| crate | `rapid-ocr-rs` 0.7.0（独立 git 仓库，本阶段未提交） |
+| crate | `rapid-structure-rs` 0.7.0（独立 git 仓库，本阶段未提交） |
 | 页面语法检查 | node v24.12.0（`node --check`） |
-| 真实资产 | `OCR-Model/small/`、`OCR-Model/test-config-small.yaml`、`OCR-test-image/`（12 图 + golden） |
+| 真实资产 | `models/text/small/`、`models/configs/test-config-small.yaml`、`datasets/text/`（12 图 + golden） |
 
 **变更规模**（`git diff --numstat`，15 个跟踪文件 +3112 / −256；其中本记录的追加 +420，
 其余 14 个跟踪文件 +2692 / −256；另有新增文件 `src/bin/serve/export.rs` 433 行）：
@@ -2877,7 +2881,7 @@ M1/M2 记录里"留给 M3"的接缝（`annotated.png` 的原图字节、导出�
 | --- | --- | --- |
 | `src/output/html.rs` | 328 → 375 | `ReportMode::{Full,Static}`；脚本段抽成常量；两个渲染入口都收 `mode` |
 | `src/exports.rs` | +8/−1 | 导出 `ReportMode` 与 `LoadImage`/`OcrInput`（复用库的唯一解码实现） |
-| `src/bin/rapidocr.rs` | +3/−1 | `report` 显式传 `ReportMode::Full`（CLI 输出不变） |
+| `src/bin/rapidstruct.rs` | +3/−1 | `report` 显式传 `ReportMode::Full`（CLI 输出不变） |
 | `src/bin/serve/export.rs` | **新增 433** | 标注 PNG、base64/data URL、三种导出文档、时间账本 JSON、`ExportFormat` |
 | `src/bin/serve/error.rs` | 1008 → 1083 | `ExportTooLarge{limit,observed,annotated}`、`OriginalEvicted`(410)、`ProviderRejected`(400) |
 | `src/bin/serve/jobs.rs` | 1322 → 1414 | `original_retained`、字节压力下**先释放原图**、`release_original`/`take_released_originals` |
@@ -3091,7 +3095,7 @@ default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'none';
 
 | 证据 | 值 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs` | 606 行，SHA-256 `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC` |
+| `cargo tree -e normal -p rapid-structure-rs` | 606 行，SHA-256 `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC` |
 | 与 M2b 快照 `target/m2b-verify/tree-default.txt` 比较 | **0 处差异**；与 M0c 快照同样 0 差异 |
 | 与 `--no-default-features` / `--features serve` 快照比较 | 各 **0 处差异**（605 / 611 行） |
 | 默认树里的 `tiny_http` | **0** 次（serve 树 1 次） |
@@ -3123,10 +3127,10 @@ default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'none';
 ### 验证 2：12 图硬门槛（`target/m3-gate/`，**没有**覆盖 `tests/baseline/`）
 
 ```powershell
-target\release\bench_warm_e2e.exe --config <OCR-Model>\test-config-small.yaml --images-dir <OCR-test-image> `
+target\release\bench_warm_e2e.exe --config <models>\test-config-small.yaml --images-dir <datasets/text> `
   --warmup-rounds 1 --rounds 3 --max-side-len 2000 --intra-threads 16 --output target\m3-gate\bench-cpu-2000.json
-target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest.json `
-  --config <OCR-Model>\test-config-small.yaml --output target\m3-gate\evaluation-cpu.json
+target\release\rapidstruct.exe evaluate --manifest <datasets/text>\golden-manifest.json `
+  --config <models>\test-config-small.yaml --output target\m3-gate\evaluation-cpu.json
 ```
 
 | 门槛 | 文档要求 | 本次实测（release） | 比较方式 | 结论 |
@@ -3141,8 +3145,8 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 ### 验证 3：CLI 的 `report` / `run` 输出未变（**本阶段改了报告渲染器**）
 
 `ReportMode` 是新增参数，因此必须证明 `Full` 的产物与本阶段之前相同。做法是**真实前后对比**
-（`target/m3-cli-pin/`）：改动前用当时的 release 二进制把两张真图跑一遍 `rapidocr report` 与
-一次 `rapidocr run --json`（`before/`），改动后（同一个 `report` 命令、同一个 `--config`、
+（`target/m3-cli-pin/`）：改动前用当时的 release 二进制把两张真图跑一遍 `rapidstruct report` 与
+一次 `rapidstruct run --json`（`before/`），改动后（同一个 `report` 命令、同一个 `--config`、
 同样的两张图）再跑一遍（`after/`）。
 
 报告里嵌的是**实测耗时**（`total N ms`），它每次运行都会变，因此逐字节相同的比较对象是
@@ -3271,7 +3275,7 @@ run --json first-point x identical=True
 # 【M4】公式与评估：真实的第二队列、模型集接线与复用库的评估
 
 - **时间**：2026-10-04（本机）
-- **工作范围**：`crates/rapid-ocr-rs`（父仓库 `.gitignore` 的既有改动与本阶段无关）
+- **工作范围**：`crates/rapid-structure-rs`（父仓库 `.gitignore` 的既有改动与本阶段无关）
 - **未提交**：按要求不 commit；证据全部来自当前工作树
 - **开工基线**：`c2f35d6`（M0 `1144ddb` + M0b `dbab12e` + M1 `06bd0af` + M2 `8532fd8` + M2b `dcf8583` + M3 `c2f35d6`）
 - **阶段**：`docs/05` §11「M4」的全部条目 + §3 / §4.1 / §4.2（新增 4.2.1）/§4.4 / §5.3 / §5.4 /
@@ -3287,9 +3291,9 @@ run --json first-point x identical=True
 | --- | --- |
 | target | Windows x64 + MSVC ABI：`x86_64-pc-windows-msvc` |
 | 工具链 | rustc 1.98.1 / cargo 1.98.1 |
-| crate | `rapid-ocr-rs` 0.7.0（独立 git 仓库，本阶段未提交） |
-| 真实资产（文本） | `OCR-Model/small/`（det/rec/dict）、`OCR-Model/test-config-small.yaml`、`OCR-test-image/`（12 图 + `golden-manifest.json`） |
-| 真实资产（公式） | `OCR-Model/Formula-Recognition-Models/onnx/pp_formulanet_plus_m.onnx`（593,915,961 B）、`OCR-Model/Formula-Detection-Model/pix2text-mfd-1.5.onnx`（80,311,115 B）、`Formula-TestSet/` |
+| crate | `rapid-structure-rs` 0.7.0（独立 git 仓库，本阶段未提交） |
+| 真实资产（文本） | `models/text/small/`（det/rec/dict）、`models/configs/test-config-small.yaml`、`datasets/text/`（12 图 + `golden-manifest.json`） |
+| 真实资产（公式） | `models/formula/recognition/onnx/pp_formulanet_plus_m.onnx`（593,915,961 B）、`models/formula/detection/pix2text-mfd-1.5.onnx`（80,311,115 B）、`datasets/formula/` |
 | 模型目录（证据用） | `target/m4-model-dir/`（4 个**硬链接**：三个文本文件 + 公式识别模型）、`target/m4-model-dir-noformula/`（只硬链接文本三个） |
 
 **变更规模**（`git diff --stat`，12 个跟踪文件 + 1 个新文件：+1764 / −179）：
@@ -3304,7 +3308,7 @@ run --json first-point x identical=True
 | `src/bin/serve/run.rs` | +62 | `--formula-detector` 启动期校验与解析（CLI > 模型集 role）、公式路由判据接线、启动日志两行 |
 | `src/bin/serve/cli.rs` | +53 | `--formula-detector`、`--max-eval-cases`（选项面 21 → 23，逐项枚举测试同步） |
 | `src/bin/serve/limits.rs` | +31 | `--max-eval-cases`（默认 32，≥ 1） |
-| `src/bin/rapidocr.rs` | +28 | `evaluation_report_value`（CLI 与 serve 的评估报告**同一份**实现） |
+| `src/bin/rapidstruct.rs` | +28 | `evaluation_report_value`（CLI 与 serve 的评估报告**同一份**实现） |
 | `src/bin/serve/error.rs` | +22 | `ServeError::Evaluation`（400 `bad_request` + `detail.reason`） |
 | `src/bin/serve/evaluate.rs` | 新文件 | `POST /api/evaluate` 的请求体白名单、清单加载/限流/路径解析、复用 `evaluation::ocr` 的逐例评估 + 4 个单测 |
 | `src/bin/serve/mod.rs` | +2 | 模块表与 `mod evaluate;` |
@@ -3459,13 +3463,13 @@ fn spawn_evaluation(shared: &Arc<ServeShared>, manifest: PathBuf, request: Reque
 **范围（明确说清做了什么、故意没做什么）**：
 
 - 做：`POST /api/evaluate`，请求体**恰好** `{"manifest": "<本机清单路径>"}`（白名单式校验，
-  与 `parse_set_id` 同一形状）；清单格式 = `rapidocr evaluate --manifest` 的
+  与 `parse_set_id` 同一形状）；清单格式 = `rapidstruct evaluate --manifest` 的
   `[{image, text, boxes}]`，`image` 相对清单所在目录解析（与 CLI 同一规则）；
   逐例调用 `evaluation::ocr::evaluate_case`（CER / 精确匹配 / 检测精度与召回 / 多边形 IoU），
   汇总用 `EvaluationSummary::from_cases`——**一行指标实现都没有另写**；
 - 报告字段与 CLI **同源**：抽出 `crate::evaluation_report_value(&EvaluationSummary)`
   （库的质量指标 + `peak_working_set_bytes`/`memory_source`/`ort_runtime`/`ort_runtime_version`），
-  CLI 的 `rapidocr evaluate` 与 serve 都调它；serve 额外加 `iou_threshold` 与
+  CLI 的 `rapidstruct evaluate` 与 serve 都调它；serve 额外加 `iou_threshold` 与
   `manifest_file`（只给文件名，§7.4 脱敏）；
 - 执行方式：**独立线程 + 单飞**（`Documents/05` §4.1 记录的唯一例外，理由写进文档）。
   第二个并发评估 503 `busy`；推理走与 OCR 任务**同一条**引擎锁路径；`--max-eval-cases`
@@ -3475,7 +3479,7 @@ fn spawn_evaluation(shared: &Arc<ServeShared>, manifest: PathBuf, request: Reque
   没有把评估做成队列任务（那需要给结果类型加第二种载荷，而它的中间状态没有可轮询语义）；
   没有上传清单 + multipart（§2.2 明确不引入 multipart，因此页面的输入是**路径**，
   由用户手输/粘贴）。公式领域的指标集（`evaluation::formula`）**不在本端点范围内**：
-  `rapidocr evaluate` 的口径就是文本 OCR 的质量，混进公式指标会造出第二套"默认汇总"，
+  `rapidstruct evaluate` 的口径就是文本 OCR 的质量，混进公式指标会造出第二套"默认汇总"，
   而库的 `evaluation` 模块文档明确要求两类指标不得混合。
 
 **页面**：右侧"评估"小节 = 一行输入（清单绝对路径）+ "评估"按钮 + 一张小表
@@ -3528,17 +3532,17 @@ serve::evaluate::tests::{the_evaluate_body_carries_only_a_manifest_path,
 
 | 命令 | 结果 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs` | **606 行**，SHA-256 `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC`（与 M2b/M3 记录**逐位相同**）；`tiny_http` **0** 次 |
+| `cargo tree -e normal -p rapid-structure-rs` | **606 行**，SHA-256 `BD2AB5E41B1A6D649E2F80B0D3D3E55327B96EB7C6F861E55DFC7C8501C3F6FC`（与 M2b/M3 记录**逐位相同**）；`tiny_http` **0** 次 |
 | `cargo tree -e normal --no-default-features` | 605 行，`tiny_http` **0** 次 |
-| `cargo tree -e normal -p rapid-ocr-rs --features serve` | 611 行，`tiny_http` **1** 次 |
+| `cargo tree -e normal -p rapid-structure-rs --features serve` | 611 行，`tiny_http` **1** 次 |
 
 `Cargo.toml` 未改；M4 也没有引入任何新依赖（评估用的是库自带的 `evaluation` + 已有的
 `serde_json`）。
 
 ### 3. 12 图 HTTP 与 CLI 逐张一致（**12/12**，真实服务 + 真实模型）
 
-`target/m4-evidence/run-12-images.ps1`（release `rapidocr.exe serve --model-dir target/m4-model-dir
---config OCR-Model/test-config-small.yaml`）：
+`target/m4-evidence/run-12-images.ps1`（release `rapidstruct.exe serve --model-dir target/m4-model-dir
+--config models/configs/test-config-small.yaml`）：
 
 ```text
 models: complete=True formula.complete=True formula.routing=False
@@ -3594,7 +3598,7 @@ export md:   bytes=1450  carries_latex=True has_script=False formula_markers=1
 export html: bytes=672818 carries_latex=True has_script=False formula_markers=39
 ```
 
-（用 `OCR-test-image\08数字公式与符号.png`：一页含 8 个公式区域；服务端与 CLI 的
+（用 `datasets/text\08数字公式与符号.png`：一页含 8 个公式区域；服务端与 CLI 的
 区域数、文本序列、latex 序列**三者全等**。）
 
 **页面就绪判定（不是"读代码觉得对"，而是把页面的函数跑在真实 JSON 上）**：
@@ -3692,7 +3696,7 @@ B: page probe -> {"formula_queue":{"ready":false,
 
 ### 7. 评估端点复现库/CLI 的数字（真实 12 图标注清单）
 
-`target/m4-evidence/run-evaluate.ps1`（`OCR-test-image/golden-manifest.json`，12 例真实标注）：
+`target/m4-evidence/run-evaluate.ps1`（`datasets/text/golden-manifest.json`，12 例真实标注）：
 
 ```text
 POST /api/evaluate -> HTTP 200 in 12.3 s
@@ -3718,11 +3722,11 @@ CLI 附加项）。响应保存在 `target/m4-gate/evaluate-serve.json` 与 `eva
 ### 8. 12 图硬门槛（`target/m4-gate/`，**没有**覆盖 `tests/baseline/`）
 
 ```powershell
-target\release\bench_warm_e2e.exe --config <OCR-Model>\test-config-small.yaml `
-  --images-dir <OCR-test-image> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
+target\release\bench_warm_e2e.exe --config <models>\test-config-small.yaml `
+  --images-dir <datasets/text> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
   --intra-threads 16 --output target\m4-gate\bench-cpu-2000.json
-target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest.json `
-  --config <OCR-Model>\test-config-small.yaml --output target\m4-gate\evaluation-cpu.json
+target\release\rapidstruct.exe evaluate --manifest <datasets/text>\golden-manifest.json `
+  --config <models>\test-config-small.yaml --output target\m4-gate\evaluation-cpu.json
 ```
 
 | 门槛 | 要求 | 本次实测（release） | 比较方式 | 结论 |
@@ -3738,8 +3742,8 @@ target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest
 ### 9. 环境变量门控的 `formula_integration_tests`
 
 ```powershell
-$env:RAPID_OCR_MODEL_ROOT='D:\100_Projects\110_Daily\SnapClip\OCR-Model'
-$env:RAPID_OCR_FORMULA_TEST_ROOT='D:\100_Projects\110_Daily\SnapClip\Formula-TestSet'
+$env:RAPID_STRUCTURE_MODEL_ROOT='<repo>\models'
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT='<repo>\datasets/formula'
 cargo test --lib formula_integration_tests -- --test-threads=1
 ```
 
@@ -3749,7 +3753,7 @@ cargo test --lib formula_integration_tests -- --test-threads=1
 ### 10. im2latex-100 smoke：**跳过，理由如下**
 
 本阶段**没有改动任何公式推理代码**：`git status` 显示改动的 12 个跟踪文件全部在
-`src/bin/serve/*`、`src/bin/web/index.html`、`src/bin/rapidocr.rs` 与 `docs/05`，
+`src/bin/serve/*`、`src/bin/web/index.html`、`src/bin/rapidstruct.rs` 与 `docs/05`，
 `src/formula/**`、`src/ocr/**`、`src/evaluation/**`、`src/bin/formula_eval.rs` **一个文件都没有动**
 （库文件 0 改动，因此依赖图逐位不变）。im2latex-100 smoke 跑的是 `formula_eval` 这条
 公式推理路径，其代码与依赖在 M4 中完全没有变化；作为替代证据，公式路径由验证 4
@@ -3860,8 +3864,8 @@ cargo test --lib formula_integration_tests -- --test-threads=1
 
 | 编号 | 根因（一句话） | 修复位置 |
 | --- | --- | --- |
-| P1-1 | 检测模型只传路径、集合声明的 SHA-256 被丢掉，加载时**从不校验** | `model_plan.rs` / `run.rs` / `server.rs` / `api.rs` / `formula/detect.rs` / `rapid_ocr.rs` |
-| P1-2 | 公式准入只看**存在性**；会话缓存只按**路径**失效 | `model_verify.rs`（新）/ `model_set.rs` / `server.rs` / `http.rs` / `rapid_ocr.rs` |
+| P1-1 | 检测模型只传路径、集合声明的 SHA-256 被丢掉，加载时**从不校验** | `model_plan.rs` / `run.rs` / `server.rs` / `api.rs` / `formula/detect.rs` / `rapid_structure.rs` |
+| P1-2 | 公式准入只看**存在性**；会话缓存只按**路径**失效 | `model_verify.rs`（新）/ `model_set.rs` / `server.rs` / `http.rs` / `rapid_structure.rs` |
 | P2-1 | 队列容量"先检查、后入队"是两个临界区 | `admit.rs` / `http.rs` / `server.rs` |
 | P2-2 | 无 body 的 `POST /api/engine/reload` 在 accept 线程上建会话 | `http.rs` / `server.rs` |
 | P2-3 | `/api/evaluate` 接受任意本机路径 | `evaluate.rs` / `cli.rs` / `run.rs` / `server.rs` |
@@ -3877,9 +3881,9 @@ cargo test --lib formula_integration_tests -- --test-threads=1
 | --- | --- |
 | target | `x86_64-pc-windows-msvc`（Windows x64 + MSVC ABI） |
 | 工具链 | rustc 1.98.1 / cargo 1.98.1 |
-| crate | `rapid-ocr-rs` 0.7.0（独立 git 仓库，基线 `1b0f860`，**未提交**） |
-| 真实资产（文本） | `OCR-Model/small/`、`OCR-Model/test-config-small.yaml`、`OCR-test-image/`（12 图 + `golden-manifest.json`） |
-| 真实资产（公式） | `OCR-Model/Formula-Recognition-Models/onnx/pp_formulanet_plus_m.onnx`（593,915,961 B）、`OCR-Model/Formula-Detection-Model/pix2text-mfd-1.5.onnx`（80,311,115 B）、`Formula-TestSet/` |
+| crate | `rapid-structure-rs` 0.7.0（独立 git 仓库，基线 `1b0f860`，**未提交**） |
+| 真实资产（文本） | `models/text/small/`、`models/configs/test-config-small.yaml`、`datasets/text/`（12 图 + `golden-manifest.json`） |
+| 真实资产（公式） | `models/formula/recognition/onnx/pp_formulanet_plus_m.onnx`（593,915,961 B）、`models/formula/detection/pix2text-mfd-1.5.onnx`（80,311,115 B）、`datasets/formula/` |
 | 证据目录 | `target/review-gate/`（本轮全部门禁与实测）、`target/m1-review-evidence/`（脚本）、`target/m1-review-*/`（夹具） |
 
 **改动过的对外签名（新增/改变的部分）**：
@@ -4046,7 +4050,7 @@ second /api/models: cold_this_call=0 cache_hits=8
 POLLING_DOES_NOT_REHASH=True
 
 公式集成测试（真实 566 MB + 真实检测器，0 skipped）:
-test ocr::pipeline::rapid_ocr::formula_integration_tests::a_replaced_formula_detector_is_reverified_instead_of_reused ... ok
+test ocr::pipeline::rapid_structure::formula_integration_tests::a_replaced_formula_detector_is_reverified_instead_of_reused ... ok
 ```
 
 单元层（不依赖资产，任何环境都跑）：
@@ -4158,7 +4162,7 @@ serve::tests::a_bodyless_reload_keeps_the_accept_loop_live
 ```text
 outside sandbox -> HTTP 400 code=bad_request reason=the manifest `…\outside-manifest.json`
    resolves to `\\?\…\outside-manifest.json`, which is outside the --eval-root sandbox
-   \\?\D:\100_Projects\110_Daily\SnapClip\OCR-test-image; evaluation only reads files inside that directory
+   \\?\…\datasets/text; evaluation only reads files inside that directory
 OUTSIDE_REFUSED=True
 POST /api/evaluate (in-root) -> HTTP 200 in 12.3 s
 serve: cases=12 mean_cer=0.44765135645866394 exact_match_rate=0
@@ -4279,9 +4283,9 @@ SPEEDUP: 393.9x
 
 | 命令 | 结果 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs` | **606 行**，与 `target/m4-gate/tree-default.txt` **逐行相同**（规范化换行后 SHA-256 `CB12F133…59DF52`，三次采样稳定）；`tiny_http` **0** 次 |
+| `cargo tree -e normal -p rapid-structure-rs` | **606 行**，与 `target/m4-gate/tree-default.txt` **逐行相同**（规范化换行后 SHA-256 `CB12F133…59DF52`，三次采样稳定）；`tiny_http` **0** 次 |
 | `cargo tree -e normal --no-default-features` | **605 行**，与 M4 快照逐行相同；`tiny_http` **0** 次 |
-| `cargo tree -e normal -p rapid-ocr-rs --features serve` | **611 行**，与 M4 快照逐行相同；`tiny_http` **1** 次 |
+| `cargo tree -e normal -p rapid-structure-rs --features serve` | **611 行**，与 M4 快照逐行相同；`tiny_http` **1** 次 |
 
 （`docs/06` 早期里程碑记的 `BD2AB5E4…` 是另一种字节序列化口径下的哈希；本轮改用
 "与保存的 M4 树文件逐行比较 + 规范化换行后的 SHA-256"，两者都指向同一个结论：**逐行 0 差异**。）
@@ -4290,22 +4294,22 @@ SPEEDUP: 393.9x
 
 ```text
 Packaged 190 files, 14.0MiB (3.3MiB compressed)
-Verifying rapid-ocr-rs v0.7.0 (…\target\package\rapid-ocr-rs-0.7.0)
+Verifying rapid-structure-rs v0.7.0 (…\target\package\rapid-structure-rs-0.7.0)
 Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.63s      （exit 0）
 ```
 
 `cargo package --list` 里 `src/model_verify.rs`、`src/bin/web/index.html`、
 `src/bin/serve/model_plan.rs` 都在；打包树上的 `cargo check --features serve --all-targets`
-（`target/package/rapid-ocr-rs-0.7.0`）**exit 0**（31.64 s），日志：`target/review-gate/package-serve-check.log`。
+（`target/package/rapid-structure-rs-0.7.0`）**exit 0**（31.64 s），日志：`target/review-gate/package-serve-check.log`。
 
 ### 4. 12 图硬门槛（`target/review-gate/`，**没有**覆盖 `tests/baseline/`）
 
 ```powershell
-target\release\bench_warm_e2e.exe --config <OCR-Model>\test-config-small.yaml `
-  --images-dir <OCR-test-image> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
+target\release\bench_warm_e2e.exe --config <models>\test-config-small.yaml `
+  --images-dir <datasets/text> --warmup-rounds 1 --rounds 3 --max-side-len 2000 `
   --intra-threads 16 --output target\review-gate\bench-cpu-2000.json
-target\release\rapidocr.exe evaluate --manifest <OCR-test-image>\golden-manifest.json `
-  --config <OCR-Model>\test-config-small.yaml --output target\review-gate\evaluation-cpu.json
+target\release\rapidstruct.exe evaluate --manifest <datasets/text>\golden-manifest.json `
+  --config <models>\test-config-small.yaml --output target\review-gate\evaluation-cpu.json
 ```
 
 | 门槛 | 要求 | 本次实测（release） | 比较方式 | 结论 |
@@ -4332,8 +4336,8 @@ POLLING_DOES_NOT_REHASH=True
 ### 6. 环境变量门控的 `formula_integration_tests`（真实模型，0 skipped）
 
 ```powershell
-$env:RAPID_OCR_MODEL_ROOT='D:\100_Projects\110_Daily\SnapClip\OCR-Model'
-$env:RAPID_OCR_FORMULA_TEST_ROOT='D:\100_Projects\110_Daily\SnapClip\Formula-TestSet'
+$env:RAPID_STRUCTURE_MODEL_ROOT='<repo>\models'
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT='<repo>\datasets/formula'
 cargo test --lib formula_integration_tests -- --test-threads=1
 ```
 
@@ -4345,8 +4349,8 @@ cargo test --lib formula_integration_tests -- --test-threads=1
 ### 7. im2latex-100 smoke（**本轮的库公式路径被改动，因此必须跑**）
 
 ```powershell
-target\release\formula_eval.exe --model <OCR-Model>\…\pp_formulanet_plus_m.onnx `
-  --dataset-root D:\100_Projects\110_Daily\SnapClip\Formula-TestSet `
+target\release\formula_eval.exe --model <models>\…\pp_formulanet_plus_m.onnx `
+  --dataset-root <repo>\datasets/formula `
   --dataset im2latex --split test --limit 100 `
   --expect-manifest target\formula-eval\manifest-im2latex-100.json `
   --output target\review-gate\formula-im2latex-100.json
@@ -4425,7 +4429,7 @@ GATE_MEAN_CER_LITERAL=0.0863135185950055  GATE_ZERO_PIPELINE_FAILURES=True
 7. **冷/缓存延迟数字是单机、单次采样**：3 次冷 + 5 次命中，页缓存是热的；
    磁盘更冷时冷验证会更慢（M4 记录过约 1 s），命中侧（`stat` + 比较）与文件大小无关，
    因此结论不依赖那个假设，但**倍数**会随冷侧变化。
-8. **`cargo package` 的 serve 检查在打包树上跑**（`target/package/rapid-ocr-rs-0.7.0`），
+8. **`cargo package` 的 serve 检查在打包树上跑**（`target/package/rapid-structure-rs-0.7.0`），
    不是在一个全新的干净 clone 上；依赖来自本机 cargo 缓存，无网络。
 9. **`docs/05` 的 M0-M4 章节仍保留历史表述**（例如 §1.1 的"实现前必须先补齐"表格、
    §5.3 里"当前 `ModelManifest` 与 `default_models.yaml` 是两套权威"这类**设计时**的描述）。
@@ -4458,9 +4462,9 @@ GATE_MEAN_CER_LITERAL=0.0863135185950055  GATE_ZERO_PIPELINE_FAILURES=True
 | --- | --- |
 | target | `x86_64-pc-windows-msvc`（Windows x64 + MSVC ABI） |
 | 工具链 | rustc 1.98.1 / cargo 1.98.1 |
-| crate | `rapid-ocr-rs` 0.7.0（独立 git 仓库，基线 `c541486`，**未提交**） |
-| 真实资产（文本） | `OCR-Model/small/`、`OCR-Model/test-config-small.yaml`、`OCR-test-image/`（12 图 + `golden-manifest.json`） |
-| 真实资产（公式） | `OCR-Model/Formula-Recognition-Models/onnx/pp_formulanet_plus_m.onnx`（593,915,961 B）、`OCR-Model/Formula-Detection-Model/pix2text-mfd-1.5.onnx`、`Formula-TestSet/` |
+| crate | `rapid-structure-rs` 0.7.0（独立 git 仓库，基线 `c541486`，**未提交**） |
+| 真实资产（文本） | `models/text/small/`、`models/configs/test-config-small.yaml`、`datasets/text/`（12 图 + `golden-manifest.json`） |
+| 真实资产（公式） | `models/formula/recognition/onnx/pp_formulanet_plus_m.onnx`（593,915,961 B）、`models/formula/detection/pix2text-mfd-1.5.onnx`、`datasets/formula/` |
 | 证据目录 | `target/reverify-gate/`（本轮全部门禁与实测）、`target/m1-review-evidence/`（沿用上一轮的脚本） |
 
 **改动过的对外签名（新增/改变的部分）**：
@@ -4551,12 +4555,12 @@ serve::run::tests::the_startup_gate_refuses_a_missing_file_too
 
 ```text
 tests/serve_startup.rs::the_serve_command_refuses_to_start_when_the_plan_model_is_missing
-  （真实的 rapidocr.exe + 真实命令行 + 真实退出码；CARGO_BIN_EXE_rapidocr 由 cargo 注入，
+  （真实的 rapidstruct.exe + 真实命令行 + 真实退出码；CARGO_BIN_EXE_rapidstruct 由 cargo 注入，
     因此它一定指向本次 --features serve 构建出来的那个可执行文件）
 ```
 
 它单独放在 `tests/` 而不是 `src/bin/serve/tests.rs` 的原因写在两个文件的注释里：单元测试
-二进制在 `target/<profile>/deps/` 下，cargo 在那里**不保证**注入 `CARGO_BIN_EXE_rapidocr`，
+二进制在 `target/<profile>/deps/` 下，cargo 在那里**不保证**注入 `CARGO_BIN_EXE_rapidstruct`，
 "猜上一级目录"可能拿到 `cargo build` 留下的、没有 `serve` feature 的旧可执行文件——本轮
 第一版正是这样，测试实际上在对一个与本次构建无关的二进制断言。这是一处**被实测纠正的
 设计**，如实记录。
@@ -4776,7 +4780,7 @@ POST /api/models/reverify: HTTP 200 wall_ms=453.39 outcome=ready computed=4 cont
    `… + SHA-256 of the first and last 64 KiB`），并**新增** `partial_window_bytes`、
    `partial_reads`、`residual_blind_spot` 含 "not a security boundary" 的断言；
 2. `the_serve_command_cold_verifies_at_startup_and_exits_non_zero_on_a_corrupt_model` 从
-   `src/bin/serve/tests.rs`（单元测试目标，拿不到 `CARGO_BIN_EXE_rapidocr`）**搬到**
+   `src/bin/serve/tests.rs`（单元测试目标，拿不到 `CARGO_BIN_EXE_rapidstruct`）**搬到**
    `tests/serve_startup.rs`（集成测试，cargo 保证注入）——不是因为断言太严，而是因为它在
    原来的位置上断言的是**另一个二进制**。
 
@@ -4791,9 +4795,9 @@ POST /api/models/reverify: HTTP 200 wall_ms=453.39 outcome=ready computed=4 cont
 
 | 命令 | 结果 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs` | **606 行**，与 `target/review-gate/tree-default-normalized.txt` **逐行相同**；`tiny_http` **0** 次 |
+| `cargo tree -e normal -p rapid-structure-rs` | **606 行**，与 `target/review-gate/tree-default-normalized.txt` **逐行相同**；`tiny_http` **0** 次 |
 | `cargo tree -e normal --no-default-features` | **605 行**，与快照逐行相同；`tiny_http` **0** 次 |
-| `cargo tree -e normal -p rapid-ocr-rs --features serve` | **611 行**，与快照逐行相同；`tiny_http` **1** 次 |
+| `cargo tree -e normal -p rapid-structure-rs --features serve` | **611 行**，与快照逐行相同；`tiny_http` **1** 次 |
 
 （`serve::dependency_boundary::{the_http_dependency_is_optional_and_outside_the_default_feature,
 the_http_dependency_lives_only_in_the_http_module}` 两条边界断言同时通过：
@@ -4803,13 +4807,13 @@ the_http_dependency_lives_only_in_the_http_module}` 两条边界断言同时通�
 
 ```text
 Packaged 191 files, 14.2MiB (3.3MiB compressed)
-Verifying rapid-ocr-rs v0.7.0 (…\target\package\rapid-ocr-rs-0.7.0)
+Verifying rapid-structure-rs v0.7.0 (…\target\package\rapid-structure-rs-0.7.0)
 Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.90s     （exit 0）
 ```
 
 `cargo package --list` 里 `src/model_verify.rs`、`src/bin/web/index.html`、
 `src/bin/serve/model_plan.rs`、`tests/serve_startup.rs` 都在；打包树上的
-`cargo check --features serve --all-targets`（`target/package/rapid-ocr-rs-0.7.0`）**exit 0**
+`cargo check --features serve --all-targets`（`target/package/rapid-structure-rs-0.7.0`）**exit 0**
 （24.23 s），日志 `target/reverify-gate/package-serve-check.log`。
 
 ### 4. 12 图硬门槛（`target/reverify-gate/`，**没有**覆盖 `tests/baseline/`）
@@ -4846,8 +4850,8 @@ POST /api/models/reverify: HTTP 200 wall_ms=546 outcome=ready computed=4 content
 ### 6. 环境变量门控的 `formula_integration_tests`（真实模型，0 skipped）
 
 ```powershell
-$env:RAPID_OCR_MODEL_ROOT='D:\100_Projects\110_Daily\SnapClip\OCR-Model'
-$env:RAPID_OCR_FORMULA_TEST_ROOT='D:\100_Projects\110_Daily\SnapClip\Formula-TestSet'
+$env:RAPID_STRUCTURE_MODEL_ROOT='<repo>\models'
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT='<repo>\datasets/formula'
 cargo test --lib formula_integration_tests -- --test-threads=1
 ```
 
@@ -4860,8 +4864,8 @@ cargo test --lib formula_integration_tests -- --test-threads=1
 ### 7. im2latex-100 smoke（**本轮改动了公式加载路径共用的校验入口，因此必须跑**）
 
 ```powershell
-target\release\formula_eval.exe --model <OCR-Model>\…\pp_formulanet_plus_m.onnx `
-  --dataset-root D:\100_Projects\110_Daily\SnapClip\Formula-TestSet `
+target\release\formula_eval.exe --model <models>\…\pp_formulanet_plus_m.onnx `
+  --dataset-root <repo>\datasets/formula `
   --dataset im2latex --split test --limit 100 `
   --expect-manifest target\formula-eval\manifest-im2latex-100.json `
   --output target\reverify-gate\formula-im2latex-100.json
@@ -4936,7 +4940,7 @@ GATE_MEAN_CER_LITERAL=0.0863135185950055  GATE_ZERO_PIPELINE_FAILURES=True
 6. **A1 的"健康模型"用例在单元层不断言"服务真的接受请求"**：夹具文件不是有效的 ONNX，
    真实建会话会在更后面失败。进程边界的那条用例证的是**拒绝启动**（损坏/缺失），
    "健康 → 真的开始服务"由本轮的 12 图 HTTP 用例（真实模型 + 真实服务）覆盖。
-7. **`cargo package` 的 serve 检查在打包树上跑**（`target/package/rapid-ocr-rs-0.7.0`），
+7. **`cargo package` 的 serve 检查在打包树上跑**（`target/package/rapid-structure-rs-0.7.0`），
    不是在一个全新的干净 clone 上；依赖来自本机 cargo 缓存，无网络。
 8. **页面按钮只做了结构与接线断言**：`serve::tests` 断言按钮、端点字面量、
    `addEventListener`、`role="status"`、无内联 handler/style；**没有**浏览器自动化
@@ -4976,7 +4980,7 @@ im2latex smoke 的必跑条件（"库公式代码改动"）不成立——本轮
    `POST /api/models/reverify` 也**从不列它、从不为它算摘要**——一个"同体积 + 同 mtime、
    改动只落在中段"的检测模型可以一直留在陈旧摘要上，直到某次普通公式请求路径碰巧重新
    校验。检测模型是**真的会被加载**的（`FormulaPolicy.detector_path` →
-   `rapid_ocr.rs::formula_detector`），所以这是"报告的一份、加载的另一份"的经典缺口。
+   `rapid_structure.rs::formula_detector`），所以这是"报告的一份、加载的另一份"的经典缺口。
 2. **公式识别模型被无条件加入计划，而 fail-fast 只看 `text_blocking()`**：于是
    (a) 公式路由**未启用**时，A1/A2 仍然把 566 MB 的 `formula_recognizer` 读一遍（纯浪费）；
    (b) 公式路由**已启用**时，一个损坏的 `formula_recognizer` **不会**让 `--reverify-models`
@@ -5183,7 +5187,7 @@ SUMMARY[formula-disabled] rounds=3 files=3 digests=3 mean_ms=17.3 min_ms=17 max_
 ### A2 与 `/api/models`（真实 566 MB + 真实 80 MB 检测器）
 
 `target/plan-gate/run-12-images.ps1` → `http-vs-cli.log`（真实 release 服务，公式路由开启，
-检测器是 `OCR-Model/Formula-Detection-Model/pix2text-mfd-1.5.onnx` 的副本）：
+检测器是 `models/formula/detection/pix2text-mfd-1.5.onnx` 的副本）：
 
 ```text
 plan.text.files=PP-OCRv6_det_small.onnx,PP-OCRv6_rec_small.onnx,ppocrv6_dict.txt
@@ -5233,9 +5237,9 @@ POLLING_DOES_NOT_REHASH=True
 
 | 命令 | 结果 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs` | **606 行**，与 `target/reverify-gate/tree-default.txt` **逐行相同**；`tiny_http` **0** 次 |
+| `cargo tree -e normal -p rapid-structure-rs` | **606 行**，与 `target/reverify-gate/tree-default.txt` **逐行相同**；`tiny_http` **0** 次 |
 | `cargo tree -e normal --no-default-features` | **605 行**，逐行相同；`tiny_http` **0** 次 |
-| `cargo tree -e normal -p rapid-ocr-rs --features serve` | **611 行**，逐行相同；`tiny_http` **1** 次 |
+| `cargo tree -e normal -p rapid-structure-rs --features serve` | **611 行**，逐行相同；`tiny_http` **1** 次 |
 
 （`tiny_http` 仍然只出现在 `src/bin/serve/http.rs`：`serve::dependency_boundary` 的两条边界
 断言同时通过。）
@@ -5244,7 +5248,7 @@ POLLING_DOES_NOT_REHASH=True
 
 ```text
 Packaged 191 files, 14.3MiB (3.4MiB compressed)
-Verifying rapid-ocr-rs v0.7.0 (…\target\package\rapid-ocr-rs-0.7.0)
+Verifying rapid-structure-rs v0.7.0 (…\target\package\rapid-structure-rs-0.7.0)
 Finished `dev` profile … in 16.93s        （exit 0；target/plan-gate/package.log）
 ```
 
@@ -5281,8 +5285,8 @@ ALL_12_MATCH=True
 ### 6. 环境变量门控的 `formula_integration_tests`（真实模型，0 skipped）
 
 ```powershell
-$env:RAPID_OCR_MODEL_ROOT='D:\100_Projects\110_Daily\SnapClip\OCR-Model'
-$env:RAPID_OCR_FORMULA_TEST_ROOT='D:\100_Projects\110_Daily\SnapClip\Formula-TestSet'
+$env:RAPID_STRUCTURE_MODEL_ROOT='<repo>\models'
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT='<repo>\datasets/formula'
 cargo test --lib formula_integration_tests -- --test-threads=1
 ```
 
@@ -5358,20 +5362,20 @@ done: total=100 scored=100 exact=0.2400 normalized=0.2500 mean_cer=0.0863 pipeli
 本轮由报告者的**真实浏览器行为**驱动，而不是由 curl 驱动的既有 12 图门槛：
 
 ```powershell
-.\target\release\rapidocr.exe serve --port 8760 `
-  --model-dir "D:\100_Projects\110_Daily\SnapClip\OCR-Model\small" `
-  --config    "D:\100_Projects\110_Daily\SnapClip\OCR-Model\test-config-small.yaml" `
+.\target\release\rapidstruct.exe serve --port 8760 `
+  --model-dir "<repo>\models\text\small" `
+  --config    "<repo>\models\configs\test-config-small.yaml" `
   --reverify-models --open
 ```
 
 启动健康（BCryptGenRandom 熵、3 个文件 17 ms 冷验证、监听 127.0.0.1:8760、模型目录
-`<...>\OCR-Model\small` source `default_table`、文本管线齐备、公式不在本次运行里、
+`<...>\models\text\small` source `default_table`、文本管线齐备、公式不在本次运行里、
 provider cpu / selected_ep cpu / fallback false、`service state = Ready, engine state = ready`、
 浏览器已打开）。**症状**：上传一张图之后，左栏的扫描动画一直转，右栏永远没有结果。
 
 ### 1. 先确认服务端没问题（把"引擎 / 任务流水线"从嫌疑名单里划掉）
 
-按**页面发请求的方式**（不带查询串、`application/octet-stream`、`X-RapidOCR-Token` +
+按**页面发请求的方式**（不带查询串、`application/octet-stream`、`X-RapidStructure-Token` +
 `Origin: http://127.0.0.1:8760`）驱动报告者**仍在运行的那个进程**：
 
 ```text
@@ -5403,7 +5407,7 @@ plain_text present: string      timings present: object      timing_ledger prese
 ### 2. 真实浏览器点击闭环：稳定复现，并定位到**页面控制流**
 
 用 headless Chrome + CDP 打开**真实服务**上的**真实页面**，用
-`DOM.setFileInputFiles` 选一张 `OCR-test-image` 里的真图，再点"开始识别"——即报告者的动作。
+`DOM.setFileInputFiles` 选一张 `datasets/text` 里的真图，再点"开始识别"——即报告者的动作。
 仪器是页面**自己**的 `XMLHttpRequest`（`Page.addScriptToEvaluateOnNewDocument` 包装
 `open`/`send`，记录方法 / URL / 状态 / 耗时 / 响应体），因此"页面到底发了什么"不是推断：
 
@@ -5531,8 +5535,8 @@ console exceptions      -> []
 first region            -> "01 文本 VISUAL TEXT BENCHMARK"
 ```
 
-**如实说明**：为了验证修复，我停掉了报告者那个仍在运行的 `rapidocr serve`（PID 50568，
-命令行与报告里的命令逐字相同）——它锁住了 `target\release\rapidocr.exe`，任何 release 构建
+**如实说明**：为了验证修复，我停掉了报告者那个仍在运行的 `rapidstruct serve`（PID 50568，
+命令行与报告里的命令逐字相同）——它锁住了 `target\release\rapidstruct.exe`，任何 release 构建
 都会失败（`os error 5`）。"修复前"的全部证据（页面自己的 XHR 记录、DOM 采样、原始 `/result`
 字节、被丢弃任务的回查结果）在停掉它之前已经落盘到 `target/flow-gate/`。之后的"修复后"
 验证用的是**同一条命令行**（只去掉 `--open`，避免自动弹出桌面浏览器与自动化打架）。
@@ -5540,20 +5544,20 @@ first region            -> "01 文本 VISUAL TEXT BENCHMARK"
 ### 5. 服务端流动日志（报告者明确要求的那一条）
 
 新增 `src/bin/serve/flowlog.rs`。开关：`--log-level <off|flow>`（默认 **off**）或环境变量
-`RAPID_OCR_SERVE_LOG`，**CLI 优先**。真实输出（`target/flow-gate/flow-demo-output.txt`）：
+`RAPID_STRUCTURE_SERVE_LOG`，**CLI 优先**。真实输出（`target/flow-gate/flow-demo-output.txt`）：
 
 ```text
 unknown level: exit=1
-unknown level stderr: error: startup configuration rejected: --log-level / RAPID_OCR_SERVE_LOG
+unknown level stderr: error: startup configuration rejected: --log-level / RAPID_STRUCTURE_SERVE_LOG
   rejected: unknown log level `chatty`; expected `off` or `flow`
 
 === startup line with --log-level flow ===
-serve: flow logging: --log-level=flow (RAPID_OCR_SERVE_LOG=<unset>); one line per HTTP request and
+serve: flow logging: --log-level=flow (RAPID_STRUCTURE_SERVE_LOG=<unset>); one line per HTTP request and
   per job lifecycle is on: request id, method/path/status/bytes/duration, and the job's
   admission/running/terminal lines share that request id
 
 === startup line with the default (off) ===
-serve: flow logging: --log-level=off (RAPID_OCR_SERVE_LOG=<unset>); one line per HTTP request and
+serve: flow logging: --log-level=off (RAPID_STRUCTURE_SERVE_LOG=<unset>); one line per HTTP request and
   per job lifecycle is off (pass --log-level flow to turn it on)
 flow lines written while off: 0
 ```
@@ -5567,7 +5571,7 @@ serve-flow: req=3 POST /api/ocr -> 202 bytes=91 in 5ms
 serve-flow: req=3 job=job-0000000000000000 queue=text terminal state=succeeded result_bytes=35215 backend_ms=876
 ```
 
-（`RAPID_OCR_SERVE_LOG=flow` 走同一个开关，实测写出 3 行；**默认 `off` 时一行都没有**。
+（`RAPID_STRUCTURE_SERVE_LOG=flow` 走同一个开关，实测写出 3 行；**默认 `off` 时一行都没有**。
 请求行按响应写出的顺序出现，因此 `POST /api/ocr` 那一行排在 `running` 之后——worker 在响应
 写回之前就把它取走了；把一次上传串起来靠的是请求 id，不是行序。）
 
@@ -5682,9 +5686,9 @@ exit against PRE-FIX capture: 1
 
 | 命令 | 结果 |
 | --- | --- |
-| `cargo tree -e normal -p rapid-ocr-rs` | **606 行**，与 `target/plan-gate/tree-default.txt` **逐行相同**；`tiny_http` **0** 次 |
+| `cargo tree -e normal -p rapid-structure-rs` | **606 行**，与 `target/plan-gate/tree-default.txt` **逐行相同**；`tiny_http` **0** 次 |
 | `cargo tree -e normal --no-default-features` | **605 行**，逐行相同；`tiny_http` **0** 次 |
-| `cargo tree -e normal -p rapid-ocr-rs --features serve` | **611 行**，逐行相同；`tiny_http` **1** 次 |
+| `cargo tree -e normal -p rapid-structure-rs --features serve` | **611 行**，逐行相同；`tiny_http` **1** 次 |
 
 `Cargo.toml` 的 `[dependencies]`/`[features]` 一个字未改（`--log-level` 是 clap 选项，
 不引入任何新依赖）。`tiny_http` 仍然只在 `src/bin/serve/http.rs`：本轮新增的
@@ -5720,8 +5724,8 @@ POLLING_DOES_NOT_REHASH=True
 **环境变量门控的 `formula_integration_tests`（真实模型，0 skipped）**：
 
 ```powershell
-$env:RAPID_OCR_MODEL_ROOT='D:\100_Projects\110_Daily\SnapClip\OCR-Model'
-$env:RAPID_OCR_FORMULA_TEST_ROOT='D:\100_Projects\110_Daily\SnapClip\Formula-TestSet'
+$env:RAPID_STRUCTURE_MODEL_ROOT='<repo>\models'
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT='<repo>\datasets/formula'
 cargo test --lib formula_integration_tests -- --test-threads=1
 ```
 
@@ -5749,7 +5753,7 @@ page flow check PASSED: one upload polls its job, fetches its result, clears the
 
 | 位置 | 改动 |
 | --- | --- |
-| `docs/05` §3 | 新增 `--log-level <off\|flow>`；说明它的优先级只有两层（CLI > `RAPID_OCR_SERVE_LOG` > `off`）、无 YAML 面、非法取值拒绝启动，以及关闭时的零代价 |
+| `docs/05` §3 | 新增 `--log-level <off\|flow>`；说明它的优先级只有两层（CLI > `RAPID_STRUCTURE_SERVE_LOG` > `off`）、无 YAML 面、非法取值拒绝启动，以及关闭时的零代价 |
 | `docs/05` §4.2 端点表 | `/api/ocr` 那一行补上"页面**必须显式发送** `?queue=`"，并点名它由哪条测试钉住 |
 | `docs/05` §9.2 缺口第 3 条 | 标注 **M5 已补上真实浏览器闭环**，并指向 §17 |
 | `docs/05` §17（新增节） | 流动日志的两种行与真实样例、页面侧详细模式（`?verbose=1`/Ctrl+Alt+L/复选框）、契约钉住的四条腿、页面的任务生命周期所有者 |
@@ -5762,7 +5766,7 @@ page flow check PASSED: one upload polls its job, fetches its result, clears the
 1. **未提交、未在干净 clone 上验证**：按要求不 commit；证据来自当前工作树
    （`7500e3a` + 上一轮与本轮的未提交改动）。
 2. **停掉了报告者的进程**：为了能重建 release 二进制，我终止了报告者那个仍在监听的
-   `rapidocr serve`（PID 50568，命令行与报告逐字相同）。"修复前"证据已先落盘；
+   `rapidstruct serve`（PID 50568，命令行与报告逐字相同）。"修复前"证据已先落盘；
    我没有在报告者的**桌面浏览器**里点过——我用的是 headless Chrome + CDP（同一套页面代码、
    同一个服务、同一张图），这是任务允许并且优先的做法。
 3. **第 17 项闸依赖本机 Chrome 与 node**：`tools/check-page-flow-cdp.mjs` 需要

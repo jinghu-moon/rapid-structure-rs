@@ -1,8 +1,8 @@
-# PP-FormulaNet_plus-M 接入 rapid-ocr-rs：TDD 分阶段任务清单
+# PP-FormulaNet_plus-M 接入 rapid-structure-rs：TDD 分阶段任务清单
 
 > 文档状态：实施计划
 >
-> 目标：在 `rapid-ocr-rs` 中以独立、可验证的公式识别链路接入 RapidDoc 的 `PP-FormulaNet_plus-M` ONNX 模型，并用公开公式测试集完成数值、功能、性能和回归验收。
+> 目标：在 `rapid-structure-rs` 中以独立、可验证的公式识别链路接入 RapidDoc 的 `PP-FormulaNet_plus-M` ONNX 模型，并用公开公式测试集完成数值、功能、性能和回归验收。
 >
 > 适用阶段：项目仍处于开发期，尚未正式发布。
 
@@ -34,7 +34,7 @@
 模型路径：
 
 ```text
-OCR-Model/Formula-Recognition-Models/onnx/pp_formulanet_plus_m.onnx
+models/formula/recognition/onnx/pp_formulanet_plus_m.onnx
 ```
 
 RapidDoc ModelScope 来源：
@@ -90,7 +90,7 @@ src/
 │   ├── cls/
 │   ├── rec/
 │   ├── pipeline/
-│   │   ├── rapid_ocr.rs
+│   │   ├── rapid_structure.rs
 │   │   ├── config.rs
 │   │   ├── types.rs
 │   │   └── image_ops.rs
@@ -120,7 +120,7 @@ src/
 
 边界规则：
 
-- `cls/`、`det/`、`rec/` 和当前普通 OCR 编排器 `pipeline/rapid_ocr.rs` 必须归入 `src/ocr/`。
+- `cls/`、`det/`、`rec/` 和当前普通 OCR 编排器 `pipeline/rapid_structure.rs` 必须归入 `src/ocr/`。
 - `pipeline/config.rs`、`pipeline/types.rs` 中只服务普通 OCR 的内容归入 `src/ocr/pipeline/`；不能把通用 runtime 或公式配置混入其中。
 - `config.rs` 不能整体机械移动：检测、分类、CTC 识别配置进入 `ocr/config.rs`，provider/runtime/图像基础配置保留在共享模块。
 - `types.rs` 不能整体机械移动：`LineResult`、`WordBox` 等普通 OCR 类型进入 `ocr/types.rs`，通用几何、图片和跨领域结果类型保留共享。
@@ -279,8 +279,8 @@ src/
 推荐环境变量：
 
 ```powershell
-$env:RAPID_OCR_MODEL_ROOT = "D:\100_Projects\110_Daily\SnapClip\OCR-Model"
-$env:RAPID_OCR_FORMULA_TEST_ROOT = "D:\100_Projects\110_Daily\SnapClip\Formula-TestSet"
+$env:RAPID_STRUCTURE_MODEL_ROOT = "<repo>\models"
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT = "<repo>\datasets/formula"
 ```
 
 必须记录：
@@ -317,7 +317,7 @@ FormulaSample {
 测试集目录：
 
 ```text
-Formula-TestSet/im2latex-100k/
+datasets/formula/im2latex-100k/
   *.png
   im2latex_formulas.norm.lst
   im2latex_test_filter.lst
@@ -346,7 +346,7 @@ image_name.png formula_index
 目录：
 
 ```text
-Formula-TestSet/ocr_rec_latexocr_dataset_example/
+datasets/formula/ocr_rec_latexocr_dataset_example/
   images/
   train.txt
   val.txt
@@ -364,7 +364,7 @@ Formula-TestSet/ocr_rec_latexocr_dataset_example/
 目录：
 
 ```text
-Formula-TestSet/UniMER-Test/
+datasets/formula/UniMER-Test/
   spe/ cpe/ sce/ hwe/
   spe.txt cpe.txt sce.txt hwe.txt
 ```
@@ -710,7 +710,7 @@ FormulaRecognizer::recognize_batch(images)
 先使用：
 
 ```text
-Formula-TestSet/ocr_rec_latexocr_dataset_example/val.txt
+datasets/formula/ocr_rec_latexocr_dataset_example/val.txt
 ```
 
 501 张样本的任务：
@@ -938,21 +938,21 @@ cargo check --features directml-provider,cuda-provider,cann-provider
 
 ```powershell
 # 外部资产（模型/测试集）通过环境变量引用；缺失时相关测试显式 skip。
-$env:RAPID_OCR_MODEL_ROOT = "<workspace>/OCR-Model"
-$env:RAPID_OCR_FORMULA_TEST_ROOT = "<workspace>/Formula-TestSet"
+$env:RAPID_STRUCTURE_MODEL_ROOT = "<workspace>/models"
+$env:RAPID_STRUCTURE_FORMULA_TEST_ROOT = "<workspace>/datasets/formula"
 # 需要“缺资产即失败”的流水线：
-# $env:RAPID_OCR_REQUIRE_EXTERNAL_ASSETS = "1"
+# $env:RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS = "1"
 
 # 公式 smoke / 主评测 / 性能（完整命令见 README 与 tools/run_formula_evaluation.ps1）
-cargo run --release --bin formula_eval -- --model <model.onnx> --dataset-root <Formula-TestSet> `
+cargo run --release --bin formula_eval -- --model <model.onnx> --dataset-root <datasets/formula> `
   --dataset im2latex --split test --limit 100 --output target/formula-eval/im2latex-100.json
-cargo run --release --bin formula_eval -- --model <model.onnx> --dataset-root <Formula-TestSet> `
+cargo run --release --bin formula_eval -- --model <model.onnx> --dataset-root <datasets/formula> `
   --dataset unimer --subset spe --output target/formula-eval/unimer-spe.json
 cargo run --release --bin formula_bench -- --model <model.onnx> --image <formula1.png> --image <formula2.png> `
   --rounds 5 --warmup 1 --batch-sizes 1,2,4,8 --provider cpu
 
 # 页面级公式路由 CLI
-cargo run --release --bin rapidocr -- run --img-path <page.png> --config <config.yaml> `
+cargo run --release --bin rapidstruct -- run --img-path <page.png> --config <config.yaml> `
   --formula-model <model.onnx> --formula-detector <pix2text-mfd-1.5.onnx> --json
 
 # fixture / fixture 校验的重新生成
@@ -1021,10 +1021,10 @@ python tools/formula_detect_reference.py
 
 设计冻结只确认目录、依赖方向、公共边界和迁移方案，不修改源代码；同时确认资产事实：
 
-- 模型文件：`D:\100_Projects\110_Daily\SnapClip\OCR-Model\Formula-Recognition-Models\onnx\pp_formulanet_plus_m.onnx`
+- 模型文件：`<repo>\models\formula\recognition\onnx\pp_formulanet_plus_m.onnx`
 - 模型 SHA-256 实算：`71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b`（与文档 0.3 一致）
 - 模型大小：593,915,961 字节（约 594 MB，不随 crate 提交）
-- 公式测试集：`D:\100_Projects\110_Daily\SnapClip\Formula-TestSet`（im2latex-100k 103,541 文件 / ocr_rec_latexocr_dataset_example / UniMER-Test：spe 6,762、cpe 5,921、sce 4,742、hwe 6,332）
+- 公式测试集：`<repo>\datasets/formula`（im2latex-100k 103,541 文件 / ocr_rec_latexocr_dataset_example / UniMER-Test：spe 6,762、cpe 5,921、sce 4,742、hwe 6,332）
 - 目标模块边界：`src/ocr/`（普通 OCR 专属）、`src/formula/`（公式专属）、共享层（runtime/input/vision/output/model_store/model_registry/error/evaluation）不得反向依赖领域模块；`evaluation` 拆分为 `evaluation::ocr` 与 `evaluation::formula`
 - 迁移方案：先移动 det/cls/rec → `ocr/`，再移动 pipeline → `ocr/pipeline/`，随后拆分 config/types/evaluation；每次拆分跑普通 OCR 全量回归；最后建立空 `formula/mod.rs`
 
@@ -1037,7 +1037,7 @@ python tools/formula_detect_reference.py
 - 内存：34,182,643,712 字节（约 31.8 GiB）
 - Rust / Cargo：1.98.1（stable-x86_64-pc-windows-msvc）
 - ORT provider：默认 CPU；DirectML/CUDA/CANN 由 feature 控制
-- 工作树：`rapid-ocr-rs` 仓库 clean，`main` @ `1e4fba8`
+- 工作树：`rapid-structure-rs` 仓库 clean，`main` @ `1e4fba8`
 
 执行命令与结果：
 
@@ -1049,7 +1049,7 @@ python tools/formula_detect_reference.py
 | `cargo test --features directml-provider` | 79 passed；0 failed |
 | `cargo test --features cuda-provider` | 79 passed；0 failed |
 | `cargo check --features directml-provider,cuda-provider,cann-provider` | 编译通过 |
-| 真实图片回归（`cargo run -q --bin rapidocr -- run --img-path 01基础多位置文本.png --config test-config-small.yaml --json`） | 输出 25 个文本区域（JSON 保存在 `target/baseline-real-image-small.json`），文本正确，无失败 |
+| 真实图片回归（`cargo run -q --bin rapidstruct -- run --img-path 01基础多位置文本.png --config test-config-small.yaml --json`） | 输出 25 个文本区域（JSON 保存在 `target/baseline-real-image-small.json`），文本正确，无失败 |
 
 普通 OCR 基线验收：
 
@@ -1061,10 +1061,10 @@ python tools/formula_detect_reference.py
 | CANN 编译 | 通过 | 编译通过或记录环境阻塞 |
 | 普通 OCR 区域数 | 25（01 基础多位置文本） | 保持 |
 | 普通 OCR 文本 | 与图片一致 | 保持 |
-| 普通 OCR 吞吐 | 沿用 `OCR-Model/bench-*.json` 与 `tests/baseline/*.json` | 记录差异并解释 |
+| 普通 OCR 吞吐 | 沿用 `models/bench-*.json` 与 `tests/baseline/*.json` | 记录差异并解释 |
 | 峰值内存 | 未单独测量（沿用既有记录） | 无不可接受增长 |
 
-未覆盖风险：阶段 1 未重新执行独立吞吐/内存 benchmark；采用既有 `OCR-Model/bench-*.json` 与 `crates/rapid-ocr-rs/tests/baseline/*.json` 作为吞吐/内存基线。阶段 11 最终回归时将补充独立对比。
+未覆盖风险：阶段 1 未重新执行独立吞吐/内存 benchmark；采用既有 `models/bench-*.json` 与 `crates/rapid-structure-rs/tests/baseline/*.json` 作为吞吐/内存基线。阶段 11 最终回归时将补充独立对比。
 
 ---
 
@@ -1072,10 +1072,10 @@ python tools/formula_detect_reference.py
 
 ### 17.1 结构重构内容
 
-- 移动 `det`/`cls`/`rec` → `src/ocr/{det,cls,rec}`；移动 `pipeline` → `src/ocr/pipeline/`（含 `rapid_ocr.rs`、`config.rs`、`types.rs`、`image_ops.rs`）
+- 移动 `det`/`cls`/`rec` → `src/ocr/{det,cls,rec}`；移动 `pipeline` → `src/ocr/pipeline/`（含 `rapid_structure.rs`、`config.rs`、`types.rs`、`image_ops.rs`）
 - 拆分 `config.rs`：共享层保留 `ColorOrder`/`VisionBackend`/`ModelType`/`OcrVersion`/`Lang*`/`ProviderPreference`/`RuntimeBackend`/`RuntimeConfig`/`RecImage`；`ModelConfig`/`RecognizerConfig`/`RecognizeOptions` 迁入 `src/ocr/config.rs`
 - 拆分 `types.rs`：`LineResult`/`WordBox`/`WordInfo`/`WordType`/`RecognizeOutput` 迁入 `src/ocr/types.rs`；`Quad` 保留共享 `lib.rs`
-- 拆分 `evaluation.rs` → `src/evaluation/{mod.rs, ocr.rs, formula.rs}`；`rapidocr` CLI 引用改为 `evaluation::ocr`
+- 拆分 `evaluation.rs` → `src/evaluation/{mod.rs, ocr.rs, formula.rs}`；`rapidstruct` CLI 引用改为 `evaluation::ocr`
 - 建立空 `src/formula/mod.rs`，声明公式领域只依赖共享层
 - 更新 `lib.rs` 模块声明与公共导出；`src/ocr/mod.rs`、`src/ocr/pipeline/mod.rs` 写入依赖方向注释
 
@@ -1497,7 +1497,7 @@ cargo run --features cuda-provider --bin formula_bench -- --model <model.onnx> -
 
 #### 25.1 固定 smoke subset
 
-- 数据集：`Formula-TestSet/ocr_rec_latexocr_dataset_example/val.txt` 前 100 个 scorable 样本。
+- 数据集：`datasets/formula/ocr_rec_latexocr_dataset_example/val.txt` 前 100 个 scorable 样本。
 - Python 参考：RapidDoc `pre_process.py` + ONNX Runtime CPUExecutionProvider + 真实模型
   metadata tokenizer。
 - Rust 参考：`FormulaPreprocessor` + `FormulaSession` + `FormulaTokenizer` +
@@ -1558,7 +1558,7 @@ cargo run --features cuda-provider --bin formula_bench -- --model <model.onnx> -
 
 #### 27.2 修复的回归阻塞
 
-- `rapidocr evaluate` 之前把 manifest 中的相对图片路径按当前工作目录解析，导致
+- `rapidstruct evaluate` 之前把 manifest 中的相对图片路径按当前工作目录解析，导致
   `golden-manifest.json` 在 crate 工作目录下执行时找不到图片。
 - 现在相对路径按 manifest 所在目录解析，绝对路径保持原样；CLI `evaluate` 回归通过。
 
@@ -1592,8 +1592,8 @@ cargo run --features cuda-provider --bin formula_bench -- --model <model.onnx> -
 - cargo fmt --all -- --check
 - cargo check --features directml-provider,cuda-provider,cann-provider
 - cargo run --bin formula_bench -- --model <model.onnx> --image <formula1.png> --image <formula2.png> --rounds 5 --warmup 1 --batch-sizes 1,2,4,8 --provider cpu
-- cargo run --release --bin formula_eval -- --model <model.onnx> --dataset-root <Formula-TestSet> --dataset latexocr --split validate --manifest-output target/formula-eval/manifest-val-501.json --output target/formula-eval/val-501.json
-- python tools/formula_reference.py --model <model.onnx> --dataset-root <Formula-TestSet> --dataset latexocr --manifest target/formula-eval/manifest-val-501.json --output target/formula-eval/python-val-501.json
+- cargo run --release --bin formula_eval -- --model <model.onnx> --dataset-root <datasets/formula> --dataset latexocr --split validate --manifest-output target/formula-eval/manifest-val-501.json --output target/formula-eval/val-501.json
+- python tools/formula_reference.py --model <model.onnx> --dataset-root <datasets/formula> --dataset latexocr --manifest target/formula-eval/manifest-val-501.json --output target/formula-eval/python-val-501.json
 - python tools/summarize_formula_eval.py --dir target/formula-eval --markdown target/formula-eval/summary.md --baseline-json tests/baseline/formula-evaluation-2026-10-03.json
 - pwsh -NoProfile -File tools/run_formula_evaluation.ps1
 
@@ -1632,20 +1632,20 @@ cargo run --features cuda-provider --bin formula_bench -- --model <model.onnx> -
 - 新增 `tools/build_formula_onnx_fixtures.py`，用 Python `onnx` 确定性重建全部 fixture
   （仅 `formula_recognizer_*` 需要真实模型 metadata）；
 - 新增 `src/test_support.rs`：外部资产只能通过
-  `RAPID_OCR_MODEL_ROOT` / `RAPID_OCR_FORMULA_MODEL` / `RAPID_OCR_FORMULA_DETECT_MODEL` /
-  `RAPID_OCR_FORMULA_TEST_ROOT` / `RAPID_OCR_TEST_IMAGES` 定位，缺失时显式打印原因并
-  skip；`RAPID_OCR_REQUIRE_EXTERNAL_ASSETS=1` 时改为失败；
+  `RAPID_STRUCTURE_MODEL_ROOT` / `RAPID_STRUCTURE_FORMULA_MODEL` / `RAPID_STRUCTURE_FORMULA_DETECT_MODEL` /
+  `RAPID_STRUCTURE_FORMULA_TEST_ROOT` / `RAPID_STRUCTURE_TEST_IMAGES` 定位，缺失时显式打印原因并
+  skip；`RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS=1` 时改为失败；
 - 删除 `src/formula/model_info.rs` 与 `src/evaluation/formula/fixture.rs` 中的全部绝对路径。
 
 **验证**：`src` 下已无 `D:\`/`C:\` 字面量；无环境变量时
 `cargo test --all-targets` = 246 passed / 0 failed（外部资产测试打印 skip 并返回），
-带 `RAPID_OCR_MODEL_ROOT` 时同样全绿且真实模型测试真正执行。
+带 `RAPID_STRUCTURE_MODEL_ROOT` 时同样全绿且真实模型测试真正执行。
 
 **干净 clone 端到端验证**（决定性证据）：
 
 ```powershell
-git clone <crate> $env:TEMP\rapid-ocr-rs-cleanclone
-cd $env:TEMP\rapid-ocr-rs-cleanclone
+git clone <crate> $env:TEMP\rapid-structure-rs-cleanclone
+cd $env:TEMP\rapid-structure-rs-cleanclone
 cargo test --all-targets        # 不设置任何模型/测试集环境变量
 # -> 246 passed; 0 failed
 ```
@@ -1687,7 +1687,7 @@ cargo test --all-targets        # 不设置任何模型/测试集环境变量
 | `cargo test --lib formula::route` | 8 passed（重叠/嵌套消解、误检面积与越界过滤、显式区域旁路、顺序无关与上限、抹白像素与尺寸） |
 | `cargo test --lib formula::detect` | 17 passed（含 golden 多边形 `max_delta = 0`、与 Python 参考 IoU 1.0000、NaN/Inf 坐标与退化宽高被丢弃） |
 | `cargo test --lib formula_integration` | 9 passed（缺省关闭=无公式、漏检=文本逐字一致、严格阈值=回到基线、检测到的区域 typed 且带 LaTeX、显式区域无需检测器、`roi`/`tile` 拒绝、缺 `model_path` 拒绝、**内存像素/图像输入同样受 `max_decode_pixels` 限制**、**抹白区域内文本消失且远处文本内容保留**） |
-| CLI 端到端 | `rapidocr run --img-path 08数字公式与符号.png --formula-model … --formula-detector …` → `regions=50 formulas=8`，LaTeX 正确（`\sqrt{2}\approx1.414`、`\pi\approx3.14159`、`a^2+b^2=c^2`、定积分等），总耗时 7.6 s |
+| CLI 端到端 | `rapidstruct run --img-path 08数字公式与符号.png --formula-model … --formula-detector …` → `regions=50 formulas=8`，LaTeX 正确（`\sqrt{2}\approx1.414`、`\pi\approx3.14159`、`a^2+b^2=c^2`、定积分等），总耗时 7.6 s |
 
 阅读顺序核验：8 个公式区域在全局阅读顺序中的位置为“顶部一项 → 左栏 4 项 →
 右栏 2 项 → 底部 1 项”，与其几何位置一致（公式不与文本分开排序）。
@@ -1982,11 +1982,11 @@ NaN/负宽高/退化框并传播为非法 `FormulaBox`。
 #### 29.11.8 P2 测试资产路径解析重复实现
 
 **根因**：`detect.rs` 测试模块自己实现了一套环境变量解析与缺失资产处理，
-且把 `RAPID_OCR_MODEL_ROOT` 指向的任意文件当作检测模型（共享实现不会这样）。
+且把 `RAPID_STRUCTURE_MODEL_ROOT` 指向的任意文件当作检测模型（共享实现不会这样）。
 
 **处理**：删除本地实现，统一调用 `test_support::formula_detector_path()`。
 **验证**：`cargo test --lib formula::detect` 17 passed；设置
-`RAPID_OCR_MODEL_ROOT` 与 `RAPID_OCR_REQUIRE_EXTERNAL_ASSETS=1` 时真实模型测试正常执行。
+`RAPID_STRUCTURE_MODEL_ROOT` 与 `RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS=1` 时真实模型测试正常执行。
 
 #### 29.11.9 验证分层（本轮同时更新文档）
 

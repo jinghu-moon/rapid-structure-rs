@@ -2,7 +2,7 @@
   "meta": {
     "device_id": 0,
     "image_count": 12,
-    "images_dir": "OCR-test-image",
+    "images_dir": "datasets/text",
     "init_ms": 131.2745,
     "intra_threads": 16,
     "max_side_len": 2000,

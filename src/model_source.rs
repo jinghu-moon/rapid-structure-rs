@@ -705,7 +705,7 @@ mod tests {
 
     /// **真实模型目录**上的端到端校验：默认表里的哈希与逐文件状态逻辑对真实文件成立。
     ///
-    /// 缺 `RAPID_OCR_MODEL_ROOT`（或该目录下没有 `medium/`）时显式 skip，
+    /// 缺 `RAPID_STRUCTURE_MODEL_ROOT`（或该目录下没有 `medium/`）时显式 skip，
     /// 与套件里其他真实资产测试一致。
     #[test]
     fn the_default_table_set_is_complete_against_real_v6_medium_models() {

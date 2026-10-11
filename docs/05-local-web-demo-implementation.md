@@ -1,7 +1,7 @@
-# 本地 Web 评估界面（`rapidocr serve`）实施文档
+# 本地 Web 评估界面（`rapidstruct serve`）实施文档
 
 > 状态：**M0–M4 已实现并通过验收**（逐里程碑证据见 `docs/06-local-web-demo-reports.md`；协议已冻结，冻结结论见下）
-> 已定决策：**仅本机（loopback）** · **模型下载默认关闭、显式触发** · **实现为 `rapidocr serve` 子命令**
+> 已定决策：**仅本机（loopback）** · **模型下载默认关闭、显式触发** · **实现为 `rapidstruct serve` 子命令**
 > 关联文档：`docs/03-windows-only-optimization-tasks.md`、`docs/04-windows-phase-reports.md`
 > 参考规范：MDN（Fetch / XMLHttpRequest.upload / AbortController）、`tiny_http::Server`、OWASP SSRF Prevention、WCAG 2.2
 >
@@ -78,13 +78,13 @@
 ### 2.1 分层与依赖方向
 
 ```
-rapidocr (bin)                        ← 唯一引入 HTTP 依赖的地方
+rapidstruct (bin)                        ← 唯一引入 HTTP 依赖的地方
   └── serve 子命令（feature = "serve"，非 default）
         ├── http 层：路由 / 准入顺序 / ServeError → 状态码 / 安全头
         ├── 静态页：include_str!("web/index.html")，启动时注入 nonce 与 token
         ├── job 层：双队列 + 固定 worker + 有界结果存储 + tombstone + TTL 清理
         ├── download 层：独立 worker + 单飞 + 加固下载器
-        └── rapid-ocr-rs（库，零 HTTP 依赖）
+        └── rapid-structure-rs（库，零 HTTP 依赖）
               ModelSet / model_store（加固） / ImageInput → OcrRequest → OcrOutput
 ```
 
@@ -107,7 +107,7 @@ rapidocr (bin)                        ← 唯一引入 HTTP 依赖的地方
 ## 3. 命令行接口
 
 ```
-rapidocr serve [OPTIONS]
+rapidstruct serve [OPTIONS]
 
   --port <PORT>              默认 8760；占用时报可定位错误，不静默换端口
                              （**没有 --host**：监听地址硬编码 127.0.0.1，见 §7.1）
@@ -166,7 +166,7 @@ rapidocr serve [OPTIONS]
                                **与它的原因**、入队位置、等待时长、运行时长、终态、结果字节数，
                                失败时还有状态码 + `code` + `detail`；
                              · 两类行共用**同一个请求 id**，因此一次上传可以从请求行一路
-                               追到任务终态。环境变量 `RAPID_OCR_SERVE_LOG` 是同一个开关，
+                               追到任务终态。环境变量 `RAPID_STRUCTURE_SERVE_LOG` 是同一个开关，
                                **CLI 优先**；取值非法（不只是 `off`/`flow`）**拒绝启动**并点名它。
                              关闭时所有记录函数在第一次判断就返回，不做任何格式化
 ```
@@ -174,14 +174,16 @@ rapidocr serve [OPTIONS]
 **参数优先级（必须一致并记录）**：**CLI flag > `--config` YAML > 内建默认**。
 `serve` 会用 CLI 值覆盖配置中的 `max_side_len` 与 `provider_preference`，并在启动日志中打印"哪个值生效、被覆盖的值是什么"。未启用 `serve` feature 时子命令仍可解析，但返回可定位错误（提示 `cargo build --features serve`）。
 
-`--log-level` 没有 YAML 面（它不是引擎配置），因此它只有两层：**CLI > `RAPID_OCR_SERVE_LOG` > `off`**。
-启动时那一行同时打印生效级别与 `RAPID_OCR_SERVE_LOG` 的当前值（未设置时是 `<unset>`），
+`--log-level` 没有 YAML 面（它不是引擎配置），因此它只有两层：**CLI > `RAPID_STRUCTURE_SERVE_LOG` > `off`**。
+启动时那一行同时打印生效级别与 `RAPID_STRUCTURE_SERVE_LOG` 的当前值（未设置时是 `<unset>`），
 因此"开关到底生效没有"不需要猜。
 
 **M4 的两处实现结论（改的是文档没写清的地方）**：
 
 1. 公式**识别**模型（`pp_formulanet_plus_m.onnx`，566 MB）来自模型集（`formula_recognizer` role，
-   默认表可下载）；公式**检测**模型在 `FormulaPolicy` 里是可选的、也没有可信的公开下载来源
+   默认表可下载）；公式**检测**模型在 `FormulaPolicy` 里是可选的；它的官方来源是 Pix2Text 的 Hugging Face
+   仓库（`breezedeus/pix2text-mfd-1.5`，SHA-256 `40d4fc85…`、80,311,115 B，与
+   `models/serve/pix2text-mfd-1.5.onnx` 逐字节一致），但它不属于 RapidOCR 那套默认表
    （§5.1 的 role 枚举里有 `FormulaDetector`，但 `assets/default_models.yaml` 刻意不登记它），
    因此 `serve` 只能通过 `--formula-detector` 显式给出。本地清单若声明了 `formula_detector`
    role，`serve` 也认它（CLI > 模型集）；两者都没有时**公式路由不可用**——理由是可读文字，
@@ -189,6 +191,303 @@ rapidocr serve [OPTIONS]
 2. 没有检测模型时**不**打开路由，而不是"接了但永远产不出公式区域"：`FormulaPolicy` 在没有
    `detector_path` 时只处理调用方显式声明的区域（`input_regions`），而 HTTP 请求里没有这种
    区域。那样公式任务会稳定地"成功且零公式区域"，是一个看起来能用、实际什么都没做的路径。
+
+### 3.1 启动器 `serve.ps1`（E18 新增）
+
+`rapidstruct serve` 的旗标很多（模型集目录、配置、表格模型、provider、端口），而**发布的包不自带模型**，
+所以仓库根目录提供一个薄封装 `serve.ps1`：读一个 profile 文件 → 启动前盘点模型 → 缺就打印下载地址
+（或经同意自动下载并校验 SHA-256）→ 然后才起服务。
+
+```powershell
+.\serve.ps1                                                    # 快档（models\text\small + 表格）
+.\serve.ps1 -Menu                                              # 交互菜单（见 §3.2；无参数时也进菜单）
+.\serve.ps1 -DryRun                                            # 只打印将要执行的东西
+.\serve.ps1 -ModelsOnly                                        # 只做模型检查/下载，不起服务
+.\serve.ps1 -Download                                          # 缺模型时预先同意自动下载
+.\serve.ps1 -ServeConfig models\configs\serve-local-full.json  # 全功能档（medium + 公式 + 表格）
+```
+
+- **参数优先级**：命令行 > profile（`-ServeConfig`）> 内建默认。profile 是 JSON
+  （`models/configs/serve-local.json` = 快档、`models/configs/serve-local-full.json` = 全功能档），
+  字段：`port` / `model_dir` / `config` / `table_model` / `table_enabled` / `open` / `provider`。
+  两档的实测代价：快档 ~0.9–1.2 s/页（3200×2000），全功能档 18–27 s/页（同一张图；参数量只大
+  3.6–6.3 倍而推理成本约 20 倍，线程配置不是原因——`intra_threads: 1/14/16` 扫描后仍是同一量级）。
+- **模型检查的权威来源是服务端自己的 `/api/models`**（脚本临时起服务、从 `GET /` 里取令牌、GET 一次再继续），
+  因此"哪个文件被哪条管线使用"永远与 `ModelPlan` 一致，脚本**不重复实现模型解析**。
+- **唯一例外是 `--table-model`**：它是**启动期**检查（`run()` 在路径不存在时直接拒绝启动，
+  见 `docs/11` §4.2），所以脚本必须先单独修它，再起服务。
+- **逐文件下载地址来自 `sets[].files[].source_url`**（`pipelines.*.plan[]` 里**没有** URL，只能按
+  `name + role` join 得到）；表格模型不属于任何集合，地址读它旁边的 `models/table/manifest.json`。
+  清单没有声明 `source_url` 时**如实打印"未声明下载地址"**，绝不编造 URL；域名不在生效白名单
+  （服务端 `--allow-download` 那条路径受 `src/model_store.rs` 的编译期白名单约束，当前为
+  `www.modelscope.cn` 与重定向目标 `cdn-lfs-cn-1.modelscope.cn`）时跳过并提示手动下载。
+- **启动器自己的下载白名单比服务端宽一档**：库白名单之外再加上官方托管 Pix2Text 公式检测模型的
+  `huggingface.co` 与它的国内镜像 `hf-mirror.com`（也认 Hugging Face 生态约定的 `HF_ENDPOINT`
+  环境变量指向的镜像 host，并**打印**一条"已追加为允许域名"而不是静默放宽）。
+- **Hugging Face 的文件同时打印官方地址与镜像地址**（报告里是两行「下载地址 / 下载镜像」，
+  手动下载任选其一，启动后仍按清单的 SHA-256 复核）；自动下载默认**先官方、传输失败才换镜像**，
+  加 `-PreferMirror` 则镜像在前（国内网络）。**只在传输失败时换源，SHA-256 不匹配绝不重试**——
+  否则就成了"挑一个能对上哈希的源"。为此 `curl` 必须带 `--connect-timeout 20 --speed-limit …`：
+  没有它，被墙的 host 会挂到 TCP 超时（几分钟），"失败就回退镜像"这条分支等于永远不触发。
+  实测：`-PreferMirror -Download` 从 `hf-mirror.com` 下完 `pix2text-mfd-1.5.onnx` 全量
+  80,311,115 B、SHA-256 `40d4fc85…` 一致、无 `.part` 残留。
+  需要用**服务端**那条路径下载 HF 来源时，仍要显式加 `--allow-download-host huggingface.co`
+  （或 `hf-mirror.com`）——服务端的白名单不接受用户自己的环境变量。
+- 下载落到 `<name>.part` → `Get-FileHash` 与清单声明的 SHA-256 比对 → 相同才改名就位，不同则删除 `.part`。
+- 启动器**不改**服务端的下载开关：`POST /api/models/download` 那条路径仍受 `--allow-download`
+  控制（默认关闭），启动器只是把"缺哪个文件、去哪儿下"讲清楚。
+- 服务是**先起后查**：模型文件缺失时 `serve` 照样启动（`engine state = blocked_models_missing`），
+  脚本靠 `/api/models` 发现；只有 `--table-model` / `--formula-detector` 这类启动期路径会让它拒绝启动。
+
+**同批清理：删掉 `models/configs/manifest.json`**（E18，用户决定）。它是 legacy 四字段形状
+（`{detector, recognizer, dictionary, classifier}`、`id = pp-ocrv6-medium-multilingual`）、
+**没有任何代码读它**（`src/model_source.rs:322-328` 明确拒绝该形状并给出迁移提示）、
+git 从未跟踪，却反复被误读成"三种模型各有 manifest"的活跃清单（见本档 §3.1 上文）。
+删掉之后 `models/` 下只剩两份清单，各对应一个模型集：`models/serve/manifest.json`（OCR + 公式）
+与 `models/table/manifest.json`（表格结构）。"表格模型不在默认分发集合"的现行依据改指
+`assets/default_models.yaml`（顶层只有 `onnxruntime` 与 `formula`，**没有 `table` 段**），
+副本留在 `Temp/deleted-models-configs-manifest.json`。
+
+**为什么给 `models/text/small` 手写一个 `manifest.json` 是错的**（E18 踩过）：本地清单是
+`<model_dir>` 的**唯一权威来源**，而 `serve` 的清单请求是无条件的 `ModelRequest::text_and_formula`
+（`src/bin/serve/model_plan.rs:261`）——集合必须声明 detector/recognizer/dictionary/**formula_recognizer**，
+否则 `ModelSet::require_roles` 直接报 `is missing required roles: formula_recognizer`。缺 role 时不静默降级，
+因此"只有文本 + 表格"的档位**不该**写 manifest，继续走内建默认表即可。另外模型清单的 schema 是
+`deny_unknown_fields`，连 `_comment` 都不许有（启动器 profile 由 PowerShell 自己读，因此可以有注释字段）。
+
+### 3.2 交互菜单与 UI 状态（E19 新增）
+
+`serve.ps1` 原本只会"解析参数 → 拼命令行 → 起服务"。E19 在**原有业务逻辑之前**加了一层交互入口、
+在**原有执行逻辑之外**加了一层轻量状态存储；**模型盘点与下载流程一行未改**（仍走 §3.1 的 `/api/models` 权威路径）。
+
+#### 3.2.1 入口判定（`.\serve.ps1` 会不会进菜单）
+
+| 调用形态 | 行为 |
+| --- | --- |
+| `.\serve.ps1`（无参数）+ 可交互终端 | 进方向键菜单 |
+| `.\serve.ps1 -Menu` | 强制进菜单（终端不可交互时打印原因并 `exit 1`，不启动任何东西） |
+| `.\serve.ps1 <任何原有操作参数>`（`-ServeConfig` / `-Provider` / `-ModelsOnly` / `-Download` / `-NoDownload` / `-DryRun` / `-NoBuild` / `-Port` …） | 与 E18 完全相同的非交互路径 |
+| `-ModelsOnly -Menu` | 以 `-ModelsOnly` 为准（检查不是菜单场景） |
+| 无参数 + 不可交互（Agent / 管道 / 重定向 `stdin`/`stdout`） | 打印一行"按内建默认档位走命令行路径（不等待按键）"后走 CLI——**绝不等待按键** |
+
+判定用 `Test-InteractiveConsole`：`[Environment]::UserInteractive` + `[Console]::IsInputRedirected` +
+`[Console]::IsOutputRedirected` 三者同时成立才算可交互（异常即视为不可交互）。
+
+#### 3.2.2 菜单形态（照 `demo.ps1` 的渲染方式）
+
+- 主菜单五项：**启动本地服务**（Badge `推荐 · 档位：<中文档位>`）/ 检查 · 下载模型 / 环境与配置诊断 /
+  高级选项 / 退出。启动向导 = 选档位（快速档 `small + 表格` / 全功能档 `medium + 公式 + 表格`）→
+  启动确认（打印生效配置 + 模型盘点 → Enter 开始 / Esc 返回）。
+- 键位：`↑`/`↓` 移动（跳过不可用项）、`Enter` 确认、`Esc` 返回上一级（主菜单里退出）、`Home`/`End` 首尾。
+  实现只用 PS 5.1 自带的 `[Console]::ReadKey($true)`，**不引入任何 TUI 依赖**。
+- 渲染：**每一屏进来先清屏**（`Clear-MenuScreen`，E20 按实测反馈改的）——按 Enter 换屏后不与上一屏的
+  文字堆在一起、文本不会越滚越多。清屏后标题/副标题/提示行只打印一次，之后**只重画选项区**
+  （`Set-MenuCursor` + 按**显示列**补空格擦行，选中项 `● ` 绿色、未选中 `○ ` 灰色、不可用项暗灰但仍可见）；
+  菜单期间隐藏光标、`finally` 恢复。报告类输出（诊断、缺件明细、模型盘点）仍然先留在屏幕上，
+  由 `按 Enter 返回主菜单`（`Wait-MenuContinue`）读完这一下才清屏。
+  **补空格必须按显示宽度算**（`Add-MenuPad`，CJK 一列算两列）：按字符数补会把中英混排的行撑过窗口宽度、
+  触发终端软换行，就地重画随之整体错位（E21 的花屏，见 §3.2.9）；只要有一行放不下就整屏退回顺序打印。
+  终端不支持光标定位或清屏（`Test-ConsoleCursor` / `Clear-MenuScreen` 为 false，例如输出被重定向）时
+  **不清屏**并退回顺序打印，保证日志可读、不报错。
+- **一律让用户做选择题**：推荐项标「推荐」且默认选中。全脚本只有一处填空——「高级选项 → 端口 →
+  自定义端口…」（`Read-MenuValue`），端口本身也是选择题（跟随 profile / `8760`/`8761`/`8780`/`8790` 预设 /
+  自定义）。下载授权是两项选择题而不是 `(y/N)` 提示。
+- **菜单不覆盖命令行**：命令行显式给过的项在高级选项里标 `由命令行 -Port 固定，菜单不覆盖它` 并禁用；
+  合并规则是"先把命令行铺上，再叠菜单改动，最后把命令行里非 `$null` 的项盖回去"。
+
+#### 3.2.3 UI 状态文件
+
+| 项 | 约定 |
+| --- | --- |
+| 路径 | `%LOCALAPPDATA%\RapidStructure\serve-ui.json`（`LOCALAPPDATA` 缺失时退回 `%TEMP%`、再退回仓库根） |
+| 内容 | 只有 `{"version":1,"lastProfile":"quick"}`；`quick` / `full` 是脚本内部稳定标识，**不存绝对路径** |
+| 只读用途 | 主菜单与档位选择器据此预选并标「上次选择」 |
+| 写入时机 | **只有"菜单里选的档位 + 真的启动成功"才写**，且写在**服务就绪、运行计划模型齐备之后、转前台等待之前**——Ctrl+C 停服务时脚本随之中断，写在最后永远写不上。命令行路径**从不**写 |
+| 失败面 | 文件缺失 → 静默用默认（快速档）；损坏/版本不认识 → **忽略 + 提示一次** + 回退快速档；写入先写 `*.tmp` 再 `Move-Item -Force` 原子替换，失败只警告 |
+| 绝不越权 | 不覆盖命令行参数，也不覆盖 profile 文件 |
+| 实测反例 | 全功能档缺件失败那一轮**没有**覆盖掉上一次成功启动记下的 `quick`（记忆只记录成功） |
+
+#### 3.2.4 原有安全边界逐条保持不变
+
+- **下载授权仍只有 `Test-DownloadConsent` 一个入口**（E19 只把它的 `(y/N)` 提示改成两项选择题）：
+  `-Download` = 预先授权；**`-NoDownload` 压过交互询问**（菜单里也不弹）；非交互 → 不询问、不下载。
+  实测 `-Menu -NoDownload` + 缺公式模型：不出现同意菜单、直接给缺件报告 + exit 1（"菜单里已经选了全功能档"
+  不能成为绕过授权的理由）。
+- **不自动杀进程、不换端口**：端口被占用仍打印 `端口 8760 已被占用：pwsh (PID …)` + `Stop-Process -Id …`
+  提示 + LNK1104（孤儿 `serve` 会锁住 `target\release\deps\rapidstruct.exe`）提醒后 `exit 1`。
+- **"检查模型"仍会临时起一次服务**读 `/api/models`（§3.1），菜单里进入该项时会**先说明这一点**再继续；
+  且 `-ModelsOnly` 现在会**从命令行里去掉 `--open`**——检查不是来看页面的。
+- 退出码：菜单路径返回"本次最后一次操作的退出码"（什么都没做 = 0），因此 `.\serve.ps1` 仍可被脚本调用。
+
+#### 3.2.5 自动化测试缝（headless 验收）
+
+`.ps1` 的交互无法被普通重定向测试，所以留了三个**只在显式 `-Menu` 时才读**的环境变量：
+
+```powershell
+$env:RAPID_STRUCTURE_SERVE_MENU_KEYS    = 'Down,Enter,Escape'   # 按键队列（UpArrow/DownArrow/Home/End/Enter/Escape）
+$env:RAPID_STRUCTURE_SERVE_MENU_VALUES  = '8790'                # 填空队列（只有"自定义端口"会用到）
+$env:RAPID_STRUCTURE_SERVE_MENU_INPLACE = '1'                   # 假装终端支持光标定位（E20 新增，见下）
+.\serve.ps1 -Menu
+```
+
+队列耗尽时**视为 `Esc`**（返回上一级），绝不阻塞；注入模式下每一步都会打印 `[注入按键] X`，
+因此 E19 的 A/B/C 三组验收都能在无终端环境里逐帧复核（日志在 `Temp\e19-*`）。
+不带 `-Menu` 时这三个变量被完全忽略。
+
+`RAPID_STRUCTURE_SERVE_MENU_INPLACE` 让 `Test-ConsoleCursor` / `Get-MenuCursorTop`（返回假值 `8`）/
+`Clear-MenuScreen` 都假装可用，**但 `Set-MenuCursor` 故意不认这个缝**——于是在没有真实终端的机器上，
+"走进就地重画 → `SetCursorPosition` 失败 → 永久退回顺序打印并补打一整屏"这条降级路径也能被跑到
+（E20 的那个崩溃正是发生在它上面，见 §3.2.8）。
+
+按键队列只能驱动"逻辑"，驱动不了"渲染"：真终端里"就地重画"与"软换行"之间的相互作用是 E21 花屏的
+现场，而它恰好是最难在无终端环境里复现的一条。因此 E21 另加了
+**`tools/test_serve_menu_render.ps1`**（模拟屏幕 + 模拟控制台，见 §3.2.9）：它用 AST 从 `serve.ps1`
+里抽出渲染函数、把 `[Console]::*` 换成模拟器变量，可直接断言"每一行的显示宽度不超过窗口"。
+它**不修改 `serve.ps1`**，只读源码；`-ServePath` 可指向另一份改坏的副本做反向对照。
+
+#### 3.2.6 E19 修掉的四个既有缺陷（都不在交互层，是启动器自己的）
+
+1. **单元素返回值被展开成字符串 → 下载只请求了 URL 的首字符**。`Get-DownloadCandidates` 在只有一个
+   来源时 `return @($Url)`，而 PowerShell 的函数返回值会被展开：调用方拿到的是**字符串**，
+   `$candidates[0]` 于是取到首字符 `'h'`。`$HostMirrors` 只映射 `huggingface.co ↔ hf-mirror.com`，
+   **所有 modelscope 文件（dict / 表格模型 / det / rec）都是单候选**，所以这些下载全部失败，
+   症状是 `✗ 下载失败：h`（本机 `http_proxy` 把裸词 `h` 当主机，代理回 502，因此日志里看到的 502
+   其实来自代理）。证据：重构前的快照 `Temp\serve-bom-probe.ps1:527` 同样缺 `@()`。
+   修法：`$candidates = @(Get-DownloadCandidates -Url $r.Url)`；同批把两处 `Get-PortOwner` 也包成 `@(…)`
+   （单个占用者时它返回 `int`）。修复后实测：移走 `ppocrv6_dict.txt` → `-ModelsOnly -Download` exit 0 /
+   1.9 s / `校验通过 b5f2bfe2…` / 74,947 B / 无 `.part` 残留。
+2. **服务起来之后抛异常会留下孤儿 `rapidstruct serve`，看起来像脚本死锁**。下载失败会 `throw`，
+   而那一刻临时服务已在运行且**没有清理**（早退分支各自调 `Stop-ServeChild`，异常路径不调）——
+   表现为命令永不返回（外层 shell 等孤儿子进程的输出句柄），孤儿还会占端口、锁住
+   `target\release\deps\rapidstruct.exe`（下次 `cargo build` 报 LNK1104）。修法：在首次
+   `Get-ModelInventory`、`Invoke-ModelDownload`、下载后重新盘点三处加
+   `try { … } catch { Stop-ServeChild -Process $proc; throw }`。修复后实测：同一次失败下载
+   **2.3 s 返回**、exit 1、`rapidstruct` 孤儿进程数 0。
+3. **在 Windows PowerShell 5.1 下读不出 profile（中文注释被按 ANSI 解码）**。`serve.ps1` 头一行写的是
+   `#Requires -Version 5.1`，但它用 `Get-Content -Raw` 读 JSON，而 5.1 的 `Get-Content` 在文件**没有
+   BOM** 时按系统 ANSI 代码页解码：`models/configs/serve-local.json` 里的中文 `_comment` 变成乱码，
+   `ConvertFrom-Json` 直接失败，用户看到的是
+   `✗ Invalid object passed in, ':' or '}' expected. (328): {` —— **在 Windows 自带的 PowerShell 里
+   启动器根本起不来**（E19 之前所有实测都跑在 `pwsh` 7 下，所以一直没暴露）。修法：新增
+   `Read-Utf8Json`（`[System.IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)` + 去 BOM），
+   五处读 JSON 的地方（集合清单、表格清单、UI 状态、profile、高级选项里的 profile 端口预览）
+   全部改走它。实测 5.1.26100 下 `-DryRun` 与 `-ModelsOnly -NoBuild -NoDownload` 都 exit 0。
+   仓库里 `tools/*.ps1` 的同类读取本来就带 `-Encoding UTF8`——差的正是这一处。
+4. **`serve.ps1` 缺 UTF-8 BOM**：脚本里有大量中文注释，5.1 按 ANSI 读无 BOM 的 UTF-8 时会把
+   多字节序列读成吃掉引号的怪字符，`ParseFile` 报 **97 个语法错误**（从 `132:1 Unexpected token '}'`
+   起连锁崩）。E19 收尾给文件补上 UTF-8 BOM 后，`pwsh` 7 与 Windows PowerShell 5.1 的
+   `[System.Management.Automation.Language.Parser]::ParseFile` 都是 `PARSE OK`。
+   （对照：`tools/run_windows_baseline.ps1` 同样无 BOM 却能被 5.1 解析，所以这不是"所有中文脚本都会中招"，
+   但**改完任何 `.ps1` 都应复核这一条**。）
+
+#### 3.2.7 E19 验收实测（日志在 `Temp\e19-a|b|c`，`LOCALAPPDATA` 指到临时目录以免污染真实状态文件）
+
+| 组 | 用例 | 结果 |
+| --- | --- | --- |
+| A | `-DryRun` | exit 0；打印生效值 + 可手敲的完整命令行 + `（-DryRun：不构建、不启动…）` |
+| A | `-DryRun` / `-ModelsOnly -NoBuild -NoDownload`（**Windows PowerShell 5.1**） | 都 exit 0；5.1.26100 下 `ParseFile` = `PARSE OK`（补 BOM + 改 UTF-8 读取之前是 97 个语法错误 / profile 读不出来） |
+| A | 无参数 + 重定向 | 打印"按内建默认档位走命令行路径（不等待按键）"后走 CLI，全程无等待按键（用占住 8760 的方式让它在此处 exit 1） |
+| A | `-Menu` + 重定向 | 打印原因 + `exit 1`，不构建、不启动、不等待 |
+| A | `-ModelsOnly -NoBuild -NoDownload` | exit 0（1.5 s）；打印三管线状态与"模型检查完成（未留在前台服务）"；**不写状态文件** |
+| A | `-DryRun -ServeConfig <不存在>` | `✗ profile not found: …` + exit 1（修复前是整段 PowerShell 堆栈） |
+| B | 全新状态 + Esc / 取消 | 主菜单首项标 `推荐 · 档位：快速档`（修复前会错标"上次选择"）；`已取消（没有启动任何东西）。`；**不产生状态文件** |
+| B | 手写 `{"lastProfile":"full"}` | 预选全功能档 + `上次选择`；banner 里 profile = `serve-local-full.json` |
+| B | 损坏状态 | 一条"内容不是合法 JSON，已忽略它并回退快速档" + 回退快速档 |
+| B | `-Menu -Port 8790` | 高级选项里 `端口 : 8790` + `由命令行 -Port 固定，菜单不覆盖它` |
+| B | 诊断屏 | 只读：PS 版本/是否交互、仓库根、`serve` 二进制与时间、两个 profile 的存在性、UI 状态文件与来源、允许域名、生效配置、端口空闲或被谁占用；**不起服务、不构建、不下载** |
+| B | 菜单驱动真启动 | 服务监听 8760、模型齐备，**状态文件在转前台之前**写出 `{"version":1,"lastProfile":"quick"}`；外部强杀子进程后脚本 `finally` 收尾、无孤儿、退出码如实为子进程的退出码 |
+| B | 用上一条的状态再进菜单 | `● 快速档    上次选择` 且被预选（"记住上次档位"闭环） |
+| C | `-NoDownload` + 缺件（CLI） | 缺件明细 + 手动下载帮助 + exit 1，**不弹询问** |
+| C | `-Download` + 缺件 | 真实下载 + SHA-256 校验通过 + exit 0（修复 §3.2.6-1 之后） |
+| C | 菜单选全功能档 + 缺件 + 拒绝下载 | 出现下载同意菜单 → 选"暂不下载" → 缺件报告 + `本次没有起来（退出码 1）`；状态文件未写、无孤儿、端口释放 |
+| C | `-Menu -NoDownload` + 缺件 | **不出现**同意菜单，直接 exit 1，状态文件保持不变 |
+| C | 端口被占用 | 打印占用进程名+PID 与 `Stop-Process` 提示后 exit 1；监听者仍在、端口不变 |
+
+**本轮未重跑（登记，不假装测过）**：镜像回退（E18 已实测：`Temp\e18-mirror-dl.txt:44` 记录
+`可用来源：hf-mirror.com（备用 huggingface.co）`，重跑要再下 80 MB）；SHA-256 不匹配路径
+（代码 6 行：删 `.part` 再 `throw`，不换源；未构造不匹配样本）；就绪超时清理；
+Ctrl+C 的真实按键中断（用外部强杀走同一个 `finally` 作旁证）。
+
+#### 3.2.8 E20：按用户实测反馈修的三处（都在交互层）
+
+真机使用后用户报了三件事（原话：「调用"SetCursorPosition"并传入"2"个参数时发生异常：
+`The value must be greater than or equal to zero and less than the console's buffer size in that dimension. (Parameter 'top') Actual value was 78.`」/
+「按下回车键后自动 clear 屏幕，不然文本太多，影响阅读」/「为什么没有切换挡位的功能」）。
+
+1. **原地重画在长屏幕之后越界崩溃**。诊断屏打完 28 行再回主菜单时，选项区第一行已经落在控制台缓冲区之外，
+   `SetCursorPosition(0, 78)` 直接抛 .NET 异常（就是用户贴的那段）。修法是三条一起上：
+   - **所有**光标操作改走 `Set-MenuCursor`（`try/catch`，失败返回 `$false`）与 `Get-MenuCursorTop`（失败返回 `-1`）
+     两个兜底函数，调用方一律检查返回值，不再有裸 `[Console]::SetCursorPosition` / `[Console]::CursorTop`；
+   - 进菜单先 `Clear-MenuScreen`（清屏后光标回到顶部，越界前提被消掉）；
+   - `Show-ArrowMenu` 预留选项区前先算窗口高（`($lineCount+5) -gt WindowHeight` 放弃就地重画）与缓冲高
+     （`$optionTop+$lineCount+1 >= BufferHeight` 放弃）；`Set-MenuCursor` 真的失败时**永久退回顺序打印**
+     并立刻补打一整屏（半就地留一屏残缺菜单比慢一点更糟）。
+   实测（`RAPID_STRUCTURE_SERVE_MENU_INPLACE=1` 强制走就地分支）：exit 0，日志里 `SetCursorPosition` **0** 次、
+   `Exception` **0** 次，可见"就地打标题+占位行 → 第一次写入失败 → 整屏顺序重打"。
+2. **按 Enter 自动清屏**（需求 1）。三个清屏点：进每个菜单、`Wait-MenuContinue` 读完键、确认之后打计划横幅之前。
+   报告类输出仍先留在屏幕上，直到用户按 Enter 才清——需求是"读完再清"，不是"立刻清"。
+3. **高级选项里能切档位**（需求 2）。此前只有"启动服务"向导里能选档位，用户在高级选项里找不到入口。
+   现在 `Show-AdvancedOptions` 首行就是 `档位 : <当前档>`（`-ServeConfig` 固定时禁用并写明由谁固定），
+   回车即切换、打印 `档位已切换：<中文档位>`，主菜单首项同步标 `档位：<档>（已切换）`，高级选项的 Hint 改为
+   `档位、端口、provider、…`。会话里 `ProfileId`（本次用哪个）与 `LastProfile`（上次成功启动的是哪个）
+   是两件事——所以**切换不等于写状态文件**，记忆仍然只在"真的启动成功"之后写。
+
+回归（`pwsh` 7 + Windows PowerShell 5.1.26100，日志在 `Temp\e20-recheck` 与 `Temp\e20-inplace`）：
+`-Menu` Esc、`-DryRun -NoTable`、档位切换（`Down,Down,Down,Enter,Enter,Down,Enter,Escape,Escape` →
+`● 档位 : 快速档` → `档位已切换：全功能档` → `档位：全功能档（已切换）`）、`-Menu -NoBuild -NoDownload`
+检查模型 —— **8 次全部 exit 0、零异常**；`-ModelsOnly` 仍不写状态文件；孤儿 `rapidstruct` 进程 0 个。
+`serve.ps1` = 93,761 B（带 UTF-8 BOM），两个宿主的 `Parser::ParseFile` 都是 `PARSE OK`。
+
+#### 3.2.9 E21：用户第二次实测反馈修的三处（三个独立真缺陷）
+
+用户在真机上又报了两件事（原话：「脚本有问题：检查 /下载模型、表格路由按回车都是以下输出：」后接那屏
+把两个选项与说明**挤在同一行**、还带大段尾随空格的菜单；「端口、构建、下载授权、DryRun 按回车都是
+刷新页面，其余不变」）。三个根因互相独立：
+
+1. **补空格按字符数、不按显示列 → 软换行 → 就地重画错位（花屏）**。
+   `Show-ArrowMenu` 原来用 `$Label.PadRight($WindowWidth - 3)` 补满整行，而汉字占**两列**、`PadRight` 数的是
+   **字符**：中英混排的行实际显示宽度超出窗口，真终端**软换行**，就地重画记下的行号整体错位 → 选项互相覆盖、
+   说明与下一个选项粘在一行（还有一处漏算：`'  ● '` 标记是单独用 `-NoNewline` 写的，占 4 列却没进补空格）。
+   修法：新增 `Get-DisplayWidth`（逐字符算显示列，CJK/全角算 2 列）与 `Add-MenuPad`
+   （按 `(窗口 - 3) - 已用列 - 显示宽度` 补，宽度读不到或补不出正列数时**原样返回**），`$paint` 两处改走它；
+   降级判据同时补一条：只要有一行的**显示宽度**超过 `窗口 - 3`，整屏退回顺序打印（顺序打印会自然换行，
+   不会错位）。数字：窗口 120 时旧写法显示宽度 **124 列**（超 7 列 → 换行），新写法恰好 **117 列**。
+2. **参数模式吞掉了 `+ 1`，所有"切换项"按回车等于没按**（用户报的"刷新页面，其余不变"）。
+   六处（`provider` / `table` / `open` / `build` / `consent` / `dryrun`）都写成
+   `$values[(Get-MenuStateIndex -Values $values -Current $cur + 1) % $values.Count]`：PowerShell 的参数模式下
+   `+ 1` **不是算术**，而是被当成多余的位置参数丢掉 → 取回的永远是当前值的下标 → 按回车什么都不变。
+   实证：`Get-MenuStateIndex … -Current $cur + 1` 返回 `0`，`((…) + 1)` 返回 `1`。修法：六处全部加括号。
+3. **高级选项每次回来都把光标重置到第一行**（用户报的"表格路由按回车都是切换档位屏"）。
+   `Show-AdvancedOptions` 每轮都用 `-DefaultIndex 0` 重建菜单，于是做完任何动作光标都跳回"档位"，
+   用户再按一次回车就打开了档位选择器。修法：`Show-ArrowMenu` 在两种返回前都记下 `$script:MenuLastIndex`，
+   高级选项与主菜单各自用它当下一轮的 `-DefaultIndex`。（另：菜单里进"检查 / 下载模型"**也要先定档位**，
+   以前没说清——现在副标题会写 `检查 / 下载模型：先确认查哪一档的模型目录（快速档 = small + 表格，
+   全功能档 = medium + 公式 + 表格）`。）
+
+**回归**（日志 `Temp\e21-regress`，**13/13 断言通过**，`pwsh` 7 + Windows PowerShell 5.1.26100，
+每个用例一个独立 `LOCALAPPDATA` —— 否则会写掉用户真实的"上次档位"）：档位切换打印 `档位已切换：全功能档`
+且主菜单徽标变 `档位：全功能档（已切换）`；表格路由连续三帧的 `●` 都停在同一行、值真的走
+`(跟随 profile) → 启用 → 停用`；`-DryRun` / `-Menu` / `-ModelsOnly` 全部 exit 0，`Exception` 与
+`SetCursorPosition` 各 **0** 次，孤儿 `rapidstruct` 进程 **0** 个。
+
+**为什么 E20 的回归没抓到第 2 条**：那批用例只断言"退出码 0 + 没有异常"，从没断言过**切换项的值发生变化**——
+一个只做静态检查的门禁，对"动作其实没生效"是盲的。现在的用例一律断言可观察的状态变化：值变了、
+光标没跳、打印出了哪一句。
+
+**新增工具 `tools/test_serve_menu_render.ps1`（10,058 B，不需要真实终端）**：它用 AST 从 `serve.ps1`
+里抽出 `Get-DisplayWidth` / `Add-MenuPad` / `Move-MenuIndex` / `Show-ArrowMenu` 四个函数，
+把 `[Console]::*` 换成模拟器变量、把 `Write-Host` 换成内存屏幕（行号 → 文字），于是能逐帧断言：
+窗口 120×40 时确实走了就地重画（`Set-MenuCursor` **7** 次）、**没有任何一行达到窗口宽度**（最宽 117 ≤ 119）、
+三个选项各占一行、`●` 只在默认项、`Down` 后 Enter 回传移动后的键；窗口 40×40 与 200×8 时
+`Set-MenuCursor` **0** 次（主动降级，绝不花屏——E20 那个 `top=78` 越界就属于这一类）。
+**反向对照**：把 `Add-MenuPad` 换回旧的 `PadRight` 写法（`Temp\serve-bad-pad.ps1`），工具立刻报
+`[FAIL] 没有任何一行达到/超过窗口宽度 —— 最宽 126 列（窗口 120）`、`FAILURES = 1`、exit 1 ——
+证明它真的能失败，不是只会打印 OK 的摆设。`pwsh` 7 与 5.1 跑正向都是 `FAILURES = 0`。
+
+两处与本文档正文相关的实现说明：`serve.ps1` 现在 **97,961 B / 1,908 行 / 带 UTF-8 BOM**
+（改完 `.ps1` 必须复核 BOM，`edit` 类工具会把它剥掉，5.1 下会退回 97 个语法错误）；
+交互层的"每屏先清屏"（§3.2.2）不变，此次只改了补空格、切换项的取值与光标记忆。
+
 
 ---
 
@@ -210,12 +509,13 @@ OCR（尤其公式路径）单图可达数秒至数十秒，**不得长期占用
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/` | 内联单页（注入 nonce + token） |
+| `GET` | `/static/*` | 公式渲染引擎的同源静态资源（KaTeX 0.19.0 js+css+woff2 字体；MathJax 4.1.3 tex-svg 组合组件）。资源**编译期嵌入**：表由 `build.rs` 扫描 `src/bin/web/static/` 生成，路径只参与封闭查表、不碰文件系统（穿越形状天然 404）；不在 `/api/*` 边界内因此**不要求令牌**；表外路径 → 与其它未知路径同一个 404；页面引用的每个 `/static/…` 路径由 `serve::assets` 的测试钉住（页面与资源必须同源演进） |
 | `GET` | `/api/status` | 引擎/provider/ORT 指纹/队列与内存概况（路径脱敏）+ M4 的 `formula` 块（与 `/api/models` 同源同值） |
 | `GET` | `/api/models` | 模型集状态（§5.4；顶层字段是**本次运行计划**的**文本管线**作用域，公式管线在 `formula` 块（库存）与 `pipelines.formula`（计划）里） |
 | `POST` | `/api/models/download` | 启动下载任务（需 `--allow-download` **且** token）；请求体 `{"set_id": "<id>"}`，未知 id → **404 `model_set_not_found`**（绝不回落 `sets[0]`）。公式集合（566 MB）与文本集合同一条路径、同一个按钮语义 |
 | `POST` | `/api/models/reverify` | **A2 新增**：一次动作完成"重新读盘"——①清掉校验缓存，②**冷验证这次运行的整份模型计划**（含 `--formula-detector`/集合声明的公式检测模型），③**引擎此前就绪则重建会话**（否则"清缓存"只是一个按下去什么都不会变的按钮：流水线的会话缓存可能仍在服务一个磁盘上已经不是这个文件的模型）。请求体**必须为空**（有 body → 400）；单飞（第二个并发调用 **503 `busy`**，与 `POST /api/engine/reload` **同一把**资格），且整个序列在**独立线程**里执行（accept 线程绝不建会话）。响应**按管线**给结论（`text.outcome` 与 `formula.*` 分开），见 §5.5 |
-| `POST` | `/api/ocr` | 提交识别 → **202** `{job_id, queue, position, state:"queued"}`。队列由 `?queue=text\|formula` 选择，**队列类别就是管线选择**（M4，见下）。**页面必须显式发送它**（M5：旧的 `submitImage` 发的是无查询串的 `/api/ocr`，于是公式开关实际上什么都没改变；页面源码里的这一条由 `serve::tests::the_page_reads_exactly_the_pinned_result_paths` 断言） |
-| `POST` | `/api/evaluate` | **M4 新增**：批量评估一份已标注清单 → 200 + 库的评估报告。**必须先配置 `--eval-root <DIR>`**（M1 评审 P2-3）：未配置时整个端点拒绝（400 `bad_request`，`detail.reason` 点名 `--eval-root`）；配置后清单与清单引用的**每张图**都必须规范化到该目录内，越界（`..`、绝对路径、符号链接）是可定位的 400。请求体**恰好**一个键 `{"manifest": "<本机清单路径>"}`（与 `rapidocr evaluate --manifest` 同格式：`[{image, text, boxes}]`，`image` 相对清单目录解析）。报告字段与 CLI 的 `rapidocr evaluate` **同一份实现**（`cases[]` + `mean_cer` + `exact_match_rate` + `mean_detection_*` + `peak_working_set_bytes` + `memory_source` + `ort_runtime` + `ort_runtime_version`），另加 `iou_threshold` 与 `manifest_file`（只给文件名）。可定位的拒绝是 **400 `bad_request`** + `detail.reason`（没有 `--eval-root`/清单越界/格式不对/用例数超过 `--max-eval-cases`/某张图越界或读不出来）；模型缺失与引擎不可用分别是 409 `models_missing` / 503 `engine_unavailable`（与 `/api/ocr` 同一份错误体） |
+| `POST` | `/api/ocr` | 提交识别 → **202** `{job_id, queue, position, state:"queued"}`。队列由 `?queue=text\|formula` 选择，**队列类别就是管线选择**（M4，见下）。表格阶段由**正交的** `?table=1` 追加（E16，见 §4.2.2）——`queue` 决定排哪条队，`table` 决定那条队里的页面管线是否额外跑表格阶段。**页面必须显式发送它们**（M5：旧的 `submitImage` 发的是无查询串的 `/api/ocr`，于是公式开关实际上什么都没改变；E16 起页面按模式选择器发送四种组合。页面源码里的这些由 `serve::tests::the_page_reads_exactly_the_pinned_result_paths` 与 `serve::tests::the_page_carries_the_mode_selector_and_the_table_renderer` 断言） |
+| `POST` | `/api/evaluate` | **M4 新增**：批量评估一份已标注清单 → 200 + 库的评估报告。**必须先配置 `--eval-root <DIR>`**（M1 评审 P2-3）：未配置时整个端点拒绝（400 `bad_request`，`detail.reason` 点名 `--eval-root`）；配置后清单与清单引用的**每张图**都必须规范化到该目录内，越界（`..`、绝对路径、符号链接）是可定位的 400。请求体**恰好**一个键 `{"manifest": "<本机清单路径>"}`（与 `rapidstruct evaluate --manifest` 同格式：`[{image, text, boxes}]`，`image` 相对清单目录解析）。报告字段与 CLI 的 `rapidstruct evaluate` **同一份实现**（`cases[]` + `mean_cer` + `exact_match_rate` + `mean_detection_*` + `peak_working_set_bytes` + `memory_source` + `ort_runtime` + `ort_runtime_version`），另加 `iou_threshold` 与 `manifest_file`（只给文件名）。可定位的拒绝是 **400 `bad_request`** + `detail.reason`（没有 `--eval-root`/清单越界/格式不对/用例数超过 `--max-eval-cases`/某张图越界或读不出来）；模型缺失与引擎不可用分别是 409 `models_missing` / 503 `engine_unavailable`（与 `/api/ocr` 同一份错误体） |
 | `GET` | `/api/jobs/{id}` | `{id, kind, queue, state, position, queued_ms, started_ms, elapsed_ms, error}` + M2 追加的 `{failure, download, cancel_requested}`（见 §4.3） |
 | `GET` | `/api/jobs/{id}/result` | 结果（未完成 409 `job_not_finished`；已淘汰 410 `job_evicted`） |
 | `GET` | `/api/jobs/{id}/annotated.png` | 叠加检测框 PNG（原图淘汰 → 410 `original_evicted`） |
@@ -316,6 +616,56 @@ dictionary/tokenizer 就是这种量级）。`size == 0` 时两块都退化为�
 
 **普通 OCR 永不因公式缺口而失败**：`/api/ocr` 的 409 只报告**文本管线**的缺失文件，
 `EngineState::BlockedModelsMissing` 的清单同样是文本作用域（§5.4、§7.6）。
+
+#### 4.2.2 表格阶段的请求协议（E16 定案）
+
+表格阶段**不是第三个队列类别**，它跑在页面管线**内部**（`OcrRequest.table`，见 `TablePolicy`）：
+没有自己的 worker、没有自己的容量、不改变请求的排队归属。因此它由**一个正交的布尔参数**表达：
+
+```text
+POST /api/ocr?queue=text                    → 文本管线（默认）
+POST /api/ocr?queue=formula                 → 公式管线
+POST /api/ocr?queue=text&table=1            → 文本管线 + 表格阶段（文本 + 表格）
+POST /api/ocr?queue=formula&table=1         → 公式管线 + 表格阶段（文本 + 公式 + 表格）
+POST /api/ocr?table=0                       → 显式关闭（与缺省同义）
+```
+
+**取值面只有 `1` / `0` / 缺省**：`2`、`true`、`yes`、空串、`TRUE`、`-1` 一律 **400 `bad_request`**，
+且**在触达后端之前**就被拒绝（`serve::tests::the_table_switch_rejects_anything_but_one_and_zero`
+断言被拒绝的请求一次都没有进到识别后端）。
+
+**为什么不做 `queue=table`**：调度器、配额与 §8.3 的公平性计数是围绕"占独立资源的队列"建的，
+而表格阶段不占独立资源——把它做成第三个 `QueueClass` 会让这三处为一个"页面管线内部的阶段"
+凭空长出一份副本。这与 §4.2.1 拒绝 `formula=1` 的理由不同：那里是"一个含义一个字段"，
+这里是"类别与阶段不是一回事"。
+
+**路由关闭时不静默忽略**（与 `?queue=` 同一口径）：结构模型不在场（没有 `--table-model`、
+模型集也没声明 `table_structure`）时，`?table=1` 是 **400 `bad_request`**，
+`detail.reason` 点名 `--table-model`（`/api/models.table.disabled_reason` 同一份文案，
+页面把它显示在模式选择器旁，不只靠禁用态）。静默忽略会让页面以为表格在跑，
+而用户拿到的是一份"成功但没有表格"的结果。
+
+**路由可用但文件缺失/损坏**则是 **409**（`models_missing` / `models_corrupt`，
+`detail.scope="table"`），与公式的 §4.2.1 表完全同形：
+
+| 情况 | 结论 |
+| --- | --- |
+| 路由可用、结构模型齐备 | 202，页面管线在文本结果之上追加 `RegionKind::Table` 区域 |
+| 路由可用、结构模型**缺失/损坏** | **409**，`detail.scope="table"`、`missing`/`corrupt`/`blocked` 列出**表格管线**的文件（`table_structure`），`detail.in_plan` 说明表格是否属于本次运行，`detail.structure` 给出 `{configured, file, sha256, state}`。判定在**读 body 之前**完成，用的是与 `/api/models` 的 `pipelines.table` 块**同一份**判定 |
+| 路由**不可用** | **400** `bad_request`，理由在 `/api/models` 的 `table.disabled_reason` 里 |
+
+**表格是第三条管线，但不拖累前两条**：`/api/models` 的顶层 `complete` 仍然只看**文本**管线
+（§5.4 的既有语义），表格与公式各自在自己的块（`table` / `pipelines.table`）里报告。
+因此"结构模型缺失"下普通 OCR 照常 202、公式队列照常工作。
+
+**页面必须显式发送 `?table=1`**，且模式可用性只由 `/api/models` 的
+`table.routing` / `pipelines.table.plan` 决定（页面不自己拼路径、不自己猜文件名）。
+页面源码里的这一条由 `serve::tests::the_page_carries_the_mode_selector_and_the_table_renderer`
+断言；四种模式与服务端行为的对应由 `serve::tests::the_table_stage_runs_from_the_model_set_when_requested`
+端到端跑通（四种模式各提交一次，断言每一次真的带着/不带表格策略进入后端）。
+
+**`?table=` 与 `?queue=` 的模型可用性检查都在 §4.4 准入顺序的第 4 步之后、第 6 步之前**
+（两条正交参数共用同一次判定入口）。
 
 ### 4.3 状态机与取消语义
 
@@ -738,7 +1088,7 @@ pub fn download_verified(req: &DownloadRequest<'_>) -> Result<PathBuf>;
 | --- | --- |
 | `Host` 校验 | 不在允许集合 → **421 `bad_host`**（防 DNS rebinding） |
 | `Origin` 校验 | **所有** `POST/PUT/DELETE` 必须带 `Origin` 且等于当前服务 origin；缺失、`null`、不匹配 → **403 `bad_origin`** |
-| 令牌 | 启动时随机生成，注入页面下发；客户端用 `X-RapidOCR-Token`；**所有 `/api/*` 都需要**（`GET /` 除外）。熵**只**来自操作系统 CSPRNG（Windows `BCryptGenRandom`，`BCRYPT_USE_SYSTEM_PREFERRED_RNG`；非密码学的时间/PID/栈地址派生已删除），比较保持常量时间；**fail-closed**：CSPRNG 不可用时服务**拒绝启动**，绝不退回弱熵（M1 评审 P2-4）。CSP nonce 用同一个 CSPRNG |
+| 令牌 | 启动时随机生成，注入页面下发；客户端用 `X-RapidStructure-Token`；**所有 `/api/*` 都需要**（`GET /` 除外）。熵**只**来自操作系统 CSPRNG（Windows `BCryptGenRandom`，`BCRYPT_USE_SYSTEM_PREFERRED_RNG`；非密码学的时间/PID/栈地址派生已删除），比较保持常量时间；**fail-closed**：CSPRNG 不可用时服务**拒绝启动**，绝不退回弱熵（M1 评审 P2-4）。CSP nonce 用同一个 CSPRNG |
 | CORS | **不发送任何** `Access-Control-Allow-Origin`；绝不 `*` |
 | Cookie | **不使用** |
 | 下载 | 同时要求 `--allow-download` **与** token；请求体**不得**携带 URL（防 SSRF） |
@@ -896,7 +1246,7 @@ ode --check 报 Unexpected token '}'，
 | --- | --- |
 | 左 | 拖放区 + 文件选择按钮 + `<img>` + 覆盖层 `<canvas>`；粘贴；缩放/适应；"下载标注图" |
 | 右上 | 引擎状态（`loading`/`ready`/`rebuilding`/`failed`）、`requested`/`selected_ep`/`fallback_to_cpu`、ORT 版本、峰值内存、进度 |
-| 右中 | 区域列表（阅读顺序、文本、置信度、坐标）；点击 ↔ 高亮；"复制全文" |
+| 右中 | 区域列表（阅读顺序、文本、置信度、坐标）；点击 ↔ 高亮；**双击公式行复制该条 LaTeX**；“复制全文”（含公式，见 §9.6） |
 | 右上（引擎面板下方） | **"重新校验"按钮 + 结论区**（A2）：一次动作触发 `POST /api/models/reverify`（清缓存 → 冷验证 → 重建引擎），结论显示 `computed`/`content_changed`/`outcome`/逐文件状态，并按 `pipelines` 块给出**公式管线**的独立结论（阻塞的文件名、检测模型与它的状态），因此"文本就绪、公式损坏"在页面上不会被合并成一句"服务不可用"。放在常驻位置而不是模型横幅里：横幅在模型齐备时是隐藏的，而这个动作在齐备时同样有意义 |
 | 右下 | 导出 JSON/Markdown/HTML；折叠的诊断面板（逐阶段耗时、账本口径说明、provider 实测耗时） |
 | 横幅 | 模型缺失/损坏：文件、总大小、来源、是否允许下载、下载按钮与进度 |
@@ -932,9 +1282,19 @@ Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 
 3. 主页面 CSP（`GET /`）：
 
 ```
-default-src 'none'; script-src 'nonce-<n>'; style-src 'nonce-<n>';
+default-src 'none'; script-src 'nonce-<n>'; style-src 'nonce-<n>'; font-src 'self';
 img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 ```
+
+   `font-src 'self'` 只为一个目的存在：KaTeX 的 woff2 字体（同源、编译期嵌入，`/static/katex/fonts/`）。
+   MathJax 走 tex-svg 输出（内联路径，常规公式不取 web 字体），不需要它。关于 nonce：
+   - 页面自己动态创建的 `<script>`/`<link rel=stylesheet>` 显式带上页面 nonce；
+   - **MathJax v4 已移除 `options.cspNonce`**（bundle 里根本读不到这个键），它向 `<head>` 注入的
+     `<style>` 不带 nonce。为此页面在带 nonce 的启动脚本里装了一个**最小 nonce 垫片**：包裹
+     `Node.prototype.appendChild`/`insertBefore`，在任何“自身没有 nonce”的 `<style>`/`<link rel=stylesheet>`
+     进入 DOM 前盖上同一个 nonce（运行时属性赋值，不新增 HTML 属性）。这修复了 style-src 拦截，
+     **没有放宽 CSP**（既不加 `unsafe-inline`，也不加 `'self'`）；逐元素排版样式走 CSSOM（`el.style.x=`），
+     本就不受 style-src 约束。
 
 4. **M3 自动化测试**：`export?format=html` 的响应含 `Content-Disposition: attachment`、含上述导出 CSP、且**正文不含 `<script`**；主页面的 CSP 含 nonce 且**不含 `unsafe-inline`**。
 5. **导出的 HTML 必须是真正可离线使用的单文件**：`render_report` 的 `image_href` 是**相对路径**（注释即写明依赖与 HTML 同目录故可离线，这只在 CLI 场景成立），而导出 CSP 又是 `img-src data:`——因此当前设计**并不成立**。
@@ -945,7 +1305,40 @@ img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; form-action 'no
 
 ### 9.6 CSP 兼容约束
 
-不使用内联 `onclick=`；事件在 nonce 脚本中绑定；不引用外部 CDN；页面由服务端注入 nonce 与 token（每次启动随机）。
+不使用内联 `onclick=`；事件在 nonce 脚本中绑定；不引用外部 CDN（公式渲染引擎也走同源 `/static/*`，懒加载、失败可见并回落 LaTeX 原文）；页面由服务端注入 nonce 与 token（每次启动随机）。
+
+公式渲染引擎的最终形态（实测验收）：
+
+- **KaTeX**：懒加载 `/static/katex/katex.min.js` + `katex.min.css`（`<link>` 带 nonce）+ 同源 woff2（`font-src 'self'`），逐元素内联样式走 CSSOM。全量渲染，无 CSP 拦截。
+- **MathJax**：懒加载 `/static/mathjax/tex-svg.js`；注入的 `<style>` 由上面的 nonce 垫片盖上页面 nonce（style-src 拦截归零）；产品渲染分支**优先同步 `MathJax.tex2svg(latex,{display:true})`**，仅当它抛 “MathJax retry — asynchronous action required”（需按需加载扩展包）时才回退异步 `tex2svgPromise`。之所以同步优先：异步链依赖 `requestAnimationFrame`，而 MathJax 的 a11y 语音 blob worker 被 CSP 拦下（`worker-src` 未显式设置→回落 `script-src 'nonce-…'`，blob 不在允许列表）。
+- **已知边界（有意不作为缺陷修复）**：
+  1. `\mathsf`/sans-serif 等 **newcm 动态变体**字形需 MathJax 从 CDN 懒加载 `@mathjax/mathjax-newcm-font` 的 `svg/dynamic/*`；本工具是**零 CDN + 严格 nonce**，这些请求被拦，对应公式**优雅回退成 LaTeX 原文**（切 KaTeX 可正常渲染）。把该字体包（约 1124 文件）全量内嵌、并给任意动态 `<script>` 放宽 nonce，代价与风险都与收益不成比例，故不做。
+  2. a11y 语音 blob worker 被拦会在 console 留下**一条** CSP 记录：它只关闭屏幕朗读（speech），**不影响视觉 SVG 渲染**，因此不为它加 `worker-src blob:`。
+
+复制行为（实测验收）：
+
+- **“复制全文”按阅读顺序从 `regions` 重建**，而不是直接用服务端 `plain_text`：`plain_text` 只含文本通道（公式区域被抹白后不回填），直接用会丢公式。公式区域的 `.text` 就是它的 LaTeX（`normalizeResult` 把 `formula.latex` 存进 `.text`），因此全文天然含公式；纯文本结果时与 `plain_text` 等价。
+- **双击公式行 → 复制该条 `data-latex`**：渲染后 `.fx-slot` 的 `textContent` 为空（只剩 SVG/KaTeX 标记），原文只在 `data-latex` 属性里，所以直接读属性；文本行无 `.fx-slot`，不响应双击。
+- **稳健复制**：在点击手势的同步上下文里**先试 `textarea` + `execCommand('copy')`**（无焦点的内嵌 webview 也能成功，且瞬时用户激活未被 `await` 消耗），再退回异步 `navigator.clipboard.writeText`；两条都不成才报“复制失败”，绝不静默。逐元素 `style` 走 CSSOM（不受 `style-src` 约束），创建的 `textarea` 不是 `style`/`link`，nonce 垫片不碰它。
+
+---
+
+### 9.7 队列就绪判定的数据源（E22：表格模式曾被误置灰）
+
+页面回答"某个队列/模式现在能不能用"时，**三种模型的权威来源本来就不同**，混用一个来源就会出错（用户实测 m12799：服务端明明开着表格路由，页面上「文本 + 表格」却是灰的）：
+
+| 队列 | 权威来源 | 为什么 |
+| --- | --- | --- |
+| `text` | `sets[].files[]` 里按 role 找 `detector` / `recognizer` / `dictionary` | 它们**必须**属于某个模型集，集合齐备即就绪 |
+| `formula` | 同上找 `formula_recognizer`，**再**看 `/api/models.formula.routing` | 识别模型在集合里；页面公式**检测**模型（`--formula-detector`）不是集合成员，它的有无由服务端回答 |
+| `table` | **只看** `/api/models.table`（`routing` / `complete` / `in_plan` / `missing` / `corrupt` / `blocked` / `structure.state`） | 结构模型由 `--table-model` 从模型目录之外指定，`models/serve/manifest.json` 的五个 role 里**根本没有** `table_structure` |
+
+所以 `modelsReadyFor(queue)` 里 `table` 是一个**提前返回**的分支（排在共用角色扫描之前），`QUEUE_ROLES` 里**故意没有** `table` 条目。展示层（`planRowsHtml`）与判定层必须共用同一个来源：计划表里那行"命令行指定"就是判定层该给出的结论。
+
+配套：
+- `route()` 归一化带出 `corrupt` / `blocked`（文案要区分"缺失 / 损坏 / 被启动参数挡住"），且内部字段名是 `reason`（不是线上名 `disabled_reason`）——读错名字会让服务端的理由永远显示不出来。
+- 离线预览（`demoInitialModels()`）也带 `table` 路由块与 `pipelines.*.plan`，且其结构模型**刻意不归属任何集合**，用来复现这条路径。
+- 回归：`node tools\check_web_model_gating.js --models <api-models.json>`（把页面里的判定函数原样抽出、喂真实 JSON 跑 13 条断言，并用**修前的同名函数**作反向对照）。Rust 侧只有一条绊线测试钉住"分支存在且顺序正确"，因为页面的 JS 在 `cargo test` 里跑不起来。
 
 ---
 
@@ -1029,7 +1422,7 @@ pub enum ServeError {
 - [x] 模型缺失提示（消费 `ModelSetStatus`；**不含下载动作**）
 - [x] 测试：状态机、tombstone（容量+TTL）、双队列 503、公平调度、准入顺序、Host/Origin/token、安全头与 nonce CSP
 
-**M1 验收**：真实 12 图经 HTTP 的 `regions` 数量与文本与 `rapidocr run --json` **逐张一致**；空 `--model-dir` 下 `/api/models` 与 `/api/ocr` 的缺失字段一致；公式洪水下普通 OCR 不被饿死、普通洪水下公式也不被饿死；空模型目录下服务仍为 `Ready` 且 `EngineState::BlockedModelsMissing`（OCR 409，字段与 `/api/models` 一致）；CLI 中不存在任何可改变监听地址的选项，也不存在 `--ocr-workers`。
+**M1 验收**：真实 12 图经 HTTP 的 `regions` 数量与文本与 `rapidstruct run --json` **逐张一致**；空 `--model-dir` 下 `/api/models` 与 `/api/ocr` 的缺失字段一致；公式洪水下普通 OCR 不被饿死、普通洪水下公式也不被饿死；空模型目录下服务仍为 `Ready` 且 `EngineState::BlockedModelsMissing`（OCR 409，字段与 `/api/models` 一致）；CLI 中不存在任何可改变监听地址的选项，也不存在 `--ocr-workers`。
 
 ### M2：模型管理
 
@@ -1155,7 +1548,7 @@ A1/A2/B 之后的一轮，修的是**"这次运行会加载哪些文件"有三�
 | 参数优先级 | CLI `--config` / `--provider` / `--max-side` 三者优先级与启动日志一致 |
 | 真实资产 | 12 图 HTTP 与 CLI 逐张一致；公式路径单独验证 |
 | 公平性（双向，M4） | 公式洪水下普通 OCR 等待有上界；**普通洪水下公式任务等待有上界**——两个方向都用**真实推理**（真实照片 + 真实公式模型），上界取 `/api/status` 的 `wait_bound` 并证明洪水队列在窗口内确实被服务 |
-| 评估（M4） | `POST /api/evaluate` 的报告与 `rapidocr evaluate` **逐字段同值**（逐例 CER + 均值 + 精确匹配率）；超限/坏清单是可定位的 400；同一时刻只允许一个评估（503 `busy`） |
+| 评估（M4） | `POST /api/evaluate` 的报告与 `rapidstruct evaluate` **逐字段同值**（逐例 CER + 均值 + 精确匹配率）；超限/坏清单是可定位的 400；同一时刻只允许一个评估（503 `busy`） |
 | 公式模型（M4） | `/api/models` 报告公式集合的 role/体积/SHA-256；下载按钮按集合（566 MB 显式点击，绝不自动下载）；剔除公式文件后路由变 409 且普通 OCR 不受影响 |
 | 手工 | 浏览器闭环、粘贴、上传进度、标注图、键盘与焦点可用 |
 | 性能 | 诊断面板数据与 CLI 报告同值（不重新测量） |
@@ -1165,7 +1558,7 @@ A1/A2/B 之后的一轮，修的是**"这次运行会加载哪些文件"有三�
 | 引擎重建线程（M1 评审 P2-2） | 无 body 的 `POST /api/engine/reload` 在建会话被闸门按住的整段时间里：`/api/status` 显示 `loading` 且 `POST /api/ocr` 仍返回 202 |
 | 评估沙箱（M1 评审 P2-3） | 没有 `--eval-root` → 400 且理由点名开关；清单越界 / 图片越界（绝对路径、`..`、符号链接）→ 400 且点名违规路径；根内清单照常返回与 CLI 逐字段同值的报告 |
 | 令牌熵（M1 评审 P2-4） | 生成成功且每次不同、是十六进制；熵源字符串被报告；注入一个必然失败的填充器时错误被传播（fail-closed 分支被真的执行） |
-| 启动期冷验证（A1） | 损坏/缺失的**计划**模型 → `rapidocr serve --reverify-models` **非零退出**并点名那个文件**与所属管线**（单元层 + 真实子进程的集成用例，含公式检测模型那一条）；健康模型 → 每个计划文件**这一次**都算了一次摘要（`digests_computed == 计划文件数`）；不在计划里的文件**不**被哈希（公式未启用时 `digests_computed == 3`，566 MB 那个一个字节都不读） |
+| 启动期冷验证（A1） | 损坏/缺失的**计划**模型 → `rapidstruct serve --reverify-models` **非零退出**并点名那个文件**与所属管线**（单元层 + 真实子进程的集成用例，含公式检测模型那一条）；健康模型 → 每个计划文件**这一次**都算了一次摘要（`digests_computed == 计划文件数`）；不在计划里的文件**不**被哈希（公式未启用时 `digests_computed == 3`，566 MB 那个一个字节都不读） |
 | 运行期重新校验（A2） | 损坏模型 → 端点报 `corrupt` 且引擎是**可定位的错误态**（不是"旧引擎继续 ready"）；还原后同一端点恢复 `ready` 并**真的重建会话**（建会话次数 +1）；缓存命中之后调用它 `computed == 计划文件数`（每个文件的 `cause` 都不是 `cache_hit`）；**公式检测模型在 `files[]` 里且这一次真的重算了它的摘要**；并发调用一个真跑、另一个立刻 503 `busy`（确定性地用钩子构造重叠），且 `busy` 由 accept 线程产生（序列不在 accept 线程上）；有 body → 400 |
 | 一份运行计划（P1，本轮） | 同一份清单经四个入口读回来必须一致：`/api/models.pipelines.*.files`、A2 的 `files[].name`（同序）、`FormulaPolicy` 的两个路径与两个声明摘要、公式队列 409 点名的文件（身份断言用例）；公式启用时损坏的**检测模型**与**识别模型**都让 `--reverify-models` 失败并点名管线；公式未启用时同一个损坏不影响启动、且不被哈希；集合之外的 `--formula-detector` 没有声明摘要时在计划里、`sha256: null`、按"存在 + 可读 + 像 ONNX"判定（写垃圾 → `corrupt` → 公式队列 409），文本 OCR 全程 202 |
 | 逐管线报告（P1，本轮） | A2 在"文本健康 + 公式识别模型损坏"时**同时**给出 `pipelines.text.outcome=ready`/`complete=true` 与 `pipelines.formula.corrupt=["fx.onnx"]`（顶层 `missing`/`corrupt` 保持文本作用域）；`/api/models` 的 `pipelines.formula.in_plan=false`（公式未启用）时 `files`/`blocked` 为空；页面读取并显示 `pipelines`（无内联 handler/style，占位符计数不变） |
@@ -1184,43 +1577,43 @@ cargo run --features serve -- serve --port 8760 --open
 curl.exe -s -D - -o NUL http://127.0.0.1:8760/
 
 # 模型状态（含 source 字段）
-curl.exe -s -i http://127.0.0.1:8760/api/models -H "X-RapidOCR-Token: <token>"
+curl.exe -s -i http://127.0.0.1:8760/api/models -H "X-RapidStructure-Token: <token>"
 
 # 提交任务（202 + job_id）
 # 必须显式声明 Content-Type：curl 的 --data-binary 会把类型设成
 # application/x-www-form-urlencoded，而准入顺序里的媒体类型白名单只接受
 # application/octet-stream（§4.4、src/bin/serve/admit.rs）。
-curl.exe -s -X POST --data-binary "@D:\100_Projects\110_Daily\SnapClip\OCR-test-image\01基础多位置文本.png" `
+curl.exe -s -X POST --data-binary "@<repo>\datasets/text\01基础多位置文本.png" `
   "http://127.0.0.1:8760/api/ocr?max_side=2000" `
   -H "Content-Type: application/octet-stream" `
-  -H "X-RapidOCR-Token: <token>" -H "Origin: http://127.0.0.1:8760"
+  -H "X-RapidStructure-Token: <token>" -H "Origin: http://127.0.0.1:8760"
 
 # 轮询 / 取结果 / 导出
-curl.exe -s http://127.0.0.1:8760/api/jobs/<id> -H "X-RapidOCR-Token: <token>"
-curl.exe -s http://127.0.0.1:8760/api/jobs/<id>/result -H "X-RapidOCR-Token: <token>" -o target\serve-ocr.json
-curl.exe -s -D - "http://127.0.0.1:8760/api/jobs/<id>/export?format=html" -H "X-RapidOCR-Token: <token>" -o target\serve-report.html
+curl.exe -s http://127.0.0.1:8760/api/jobs/<id> -H "X-RapidStructure-Token: <token>"
+curl.exe -s http://127.0.0.1:8760/api/jobs/<id>/result -H "X-RapidStructure-Token: <token>" -o target\serve-ocr.json
+curl.exe -s -D - "http://127.0.0.1:8760/api/jobs/<id>/export?format=html" -H "X-RapidStructure-Token: <token>" -o target\serve-report.html
 
 # 模型下载（M2；需要 --allow-download，请求体**只有** set_id，body 不得携带 URL）
 # set_id 必须来自 GET /api/models 的 sets[].id：未知 id 是 404 model_set_not_found，
 # 不会被猜成"第一个集合"。
 curl.exe -s -X POST "http://127.0.0.1:8760/api/models/download" `
   -H "Content-Type: application/json" `
-  -H "X-RapidOCR-Token: <token>" -H "Origin: http://127.0.0.1:8760" `
+  -H "X-RapidStructure-Token: <token>" -H "Origin: http://127.0.0.1:8760" `
   -d '{"set_id":"PP-OCRv6-small-ch"}'
 # 进度与取消：同一个 job 生命周期（download{files_done,files_total,bytes_done,bytes_total,current_file}）
-curl.exe -s http://127.0.0.1:8760/api/jobs/<download-job-id> -H "X-RapidOCR-Token: <token>"
+curl.exe -s http://127.0.0.1:8760/api/jobs/<download-job-id> -H "X-RapidStructure-Token: <token>"
 curl.exe -s -X POST http://127.0.0.1:8760/api/jobs/<download-job-id>/cancel `
-  -H "X-RapidOCR-Token: <token>" -H "Origin: http://127.0.0.1:8760"
+  -H "X-RapidStructure-Token: <token>" -H "Origin: http://127.0.0.1:8760"
 # 运行中的下载在**文件边界**生效：响应里 state 仍是 running + cancel_requested=true，
 # 轮询到 cancelled 才是真的停下（§6.6）。
 
 # 显式创建/重建引擎（M2；无请求体）。响应里的 engine 与 /api/status 的同一字段同形：
 # {"outcome":"ready|blocked_models_missing|failed","engine":{…},"missing":[…],"load_ms":…}
 curl.exe -s -X POST http://127.0.0.1:8760/api/engine/reload `
-  -H "X-RapidOCR-Token: <token>" -H "Origin: http://127.0.0.1:8760"
+  -H "X-RapidStructure-Token: <token>" -H "Origin: http://127.0.0.1:8760"
 
 # 与 CLI 对照（区域数应逐张一致）
-.\target\release\rapidocr.exe run --img-path "D:\100_Projects\110_Daily\SnapClip\OCR-test-image\01基础多位置文本.png" --config "D:\100_Projects\110_Daily\SnapClip\OCR-Model\test-config-small.yaml" --json
+.\target\release\rapidstruct.exe run --img-path "<repo>\datasets/text\01基础多位置文本.png" --config "<repo>\models\configs\test-config-small.yaml" --json
 ```
 
 ---
@@ -1276,7 +1669,7 @@ curl.exe -s -X POST http://127.0.0.1:8760/api/engine/reload `
 
 ### 17.1 一次上传的流动日志
 
-服务端（`--log-level flow` / `RAPID_OCR_SERVE_LOG=flow`）为每个请求与每个任务各写若干行，
+服务端（`--log-level flow` / `RAPID_STRUCTURE_SERVE_LOG=flow`）为每个请求与每个任务各写若干行，
 **共用同一个请求 id**：
 
 ```text
@@ -1354,4 +1747,3 @@ serve-flow: req=11 job=job-0000000000000005 queue=text terminal state=failed sta
 其他已记录的未覆盖风险见各里程碑记录（真实加速器上的 provider 切换成功路径、original_evicted 只能由单任务超预算触发、M2 的目标损坏重下只在库层验证等）。
 
 ---
-

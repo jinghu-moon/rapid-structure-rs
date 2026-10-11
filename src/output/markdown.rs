@@ -1,3 +1,9 @@
+// 这一行覆盖的是 **遗留入口** `to_markdown` / `to_markdown_texts`（按 `boxes`/`txts`
+// 入参，与 `to_output_markdown(&OcrOutput)` 并存，`json.rs` 的 `to_json_items` 是同类）。
+// E15 试过删掉这一行：`-D warnings` 立刻报出「`to_markdown` is never used」「`to_markdown_texts`
+// is never used」「field `center_y` is never read」——第三条是前两条的连带（`center_y` 只在
+// `to_markdown` 的换行判定里读）。它们不是 E15 引入的死代码，删不删是"遗留入口统一清理"的
+// 决定（要不要连带删 `to_json_items` 等），不属于输出三通道这一阶段，故保留并在此登记。
 #![allow(dead_code)]
 
 use crate::{OcrOutput, Quad, TextOrder, error::Result};
@@ -96,7 +102,53 @@ pub fn to_markdown_texts(txts: &[String]) -> String {
     txts.join("\n")
 }
 
+/// 被表格区域消费掉的行（`TableOutcome::source_line_indices`）。
+///
+/// 这些行**已经**以单元格文本的形式出现在表格里。Markdown 通道若再输出一次，
+/// 同一段文字就会出现两遍（`docs/11` §3 E15.4）。返回与 `regions` 等长的位图，
+/// 避免为几次查表引入 `HashSet` 依赖。
+///
+/// 注意：`plain_text`（`src/api.rs:1036`）**不**做这个扣除 —— 它只取 `recognition`，
+/// 而表格区域没有 `recognition`，所以"被消费的行恰好出现一次"是它的自然结果。
+/// 两条通道的差异是刻意的：纯文本要的是页面文字内容，Markdown 要的是结构。
+fn consumed_by_tables(output: &OcrOutput) -> Vec<bool> {
+    let mut consumed = vec![false; output.regions.len()];
+    for region in &output.regions {
+        let Some(table) = region.table.as_ref() else {
+            continue;
+        };
+        for &id in &table.source_line_indices {
+            if let Some(slot) = consumed.get_mut(id) {
+                *slot = true;
+            }
+        }
+    }
+    consumed
+}
+
+/// 按阅读顺序取出表格的 Markdown 网格（空表格的块为空串，由调用方过滤）。
+fn table_markdown_blocks(output: &OcrOutput, order: TextOrder) -> Vec<String> {
+    output
+        .tables(order)
+        .into_iter()
+        .map(|(_, table)| table.markdown.clone())
+        .collect()
+}
+
+/// 与 [`OcrOutput::plain_text`] 同口径，但跳过被表格消费的行。
+fn plain_text_without_consumed(output: &OcrOutput, consumed: &[bool]) -> String {
+    output
+        .reading_order()
+        .into_iter()
+        .filter(|id| !consumed.get(*id).copied().unwrap_or(false))
+        .filter_map(|id| output.regions.get(id)?.recognition.as_ref())
+        .map(|recognition| recognition.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn to_output_markdown(output: &OcrOutput) -> String {
+    let consumed = consumed_by_tables(output);
     // 整图文本输入没有多边形，无法参与阅读顺序分组；此时退回“纯文本 + 公式块”，
     // 仍保证公式 LaTeX 不丢失。
     let polygonless_text = output
@@ -104,13 +156,20 @@ pub fn to_output_markdown(output: &OcrOutput) -> String {
         .iter()
         .any(|region| region.recognition.is_some() && region.polygon.is_none());
     if polygonless_text {
+        // 这个退化分支按“先文本、再公式、再表格”分段，组间顺序已经与原文一致地丢失了
+        // （本分支的目的只是别丢内容），表格块同样追加在最后。
         let mut sections: Vec<String> = Vec::new();
-        let text = output.plain_text(TextOrder::Reading);
+        let text = plain_text_without_consumed(output, &consumed);
         if !text.is_empty() {
             sections.push(text);
         }
         for (_, latex) in output.formula_latex(TextOrder::Reading) {
             let block = crate::formula::output::to_markdown_block(latex, false);
+            if !block.is_empty() {
+                sections.push(block);
+            }
+        }
+        for block in table_markdown_blocks(output, TextOrder::Reading) {
             if !block.is_empty() {
                 sections.push(block);
             }
@@ -128,7 +187,8 @@ pub fn to_output_markdown(output: &OcrOutput) -> String {
     for group in output.reading_order_groups() {
         let mut parts = Vec::new();
         let mut group_props: Option<BoxProps> = None;
-        let mut group_has_formula = false;
+        // 公式与表格都是多行块：同一组里出现它们时必须换行拼接，不能用行内分隔符。
+        let mut group_has_block = false;
 
         for id in group {
             let Some(region) = output.regions.get(id) else {
@@ -143,12 +203,23 @@ pub fn to_output_markdown(output: &OcrOutput) -> String {
                 None => props,
             });
 
+            if let Some(table) = &region.table {
+                // 表格区域用 Markdown 表格表示自己，并顺带说明跨度损失（说明行由
+                // `src/table/emitter.rs` 的 `emit_markdown` 注入，见 docs/11 §3.5）。
+                group_has_block = true;
+                parts.push(table.markdown.clone());
+                continue;
+            }
             if let Some(formula) = &region.formula {
                 // 公式区域使用 display math，不当作普通文本转义。
                 let block =
                     crate::formula::output::to_markdown_block(&formula.latex, formula.truncated);
-                group_has_formula = true;
+                group_has_block = true;
                 parts.push(block);
+                continue;
+            }
+            if consumed.get(id).copied().unwrap_or(false) {
+                // 这一行已经被表格的单元格吸收，不再重复输出。
                 continue;
             }
             let Some(recognition) = &region.recognition else {
@@ -168,8 +239,8 @@ pub fn to_output_markdown(output: &OcrOutput) -> String {
                 blocks.push(String::new());
             }
         }
-        // 含公式的分组按行分隔，避免 display math 与正文挤在同一行。
-        blocks.push(if group_has_formula {
+        // 含公式或表格的分组按行分隔，避免 display math / 表格与正文挤在同一行。
+        blocks.push(if group_has_block {
             parts.join("\n")
         } else {
             parts.join("   ")
@@ -211,7 +282,7 @@ mod tests {
         GenericProviderPreference as ProviderPreference, ImageInfo, ImageSize, InputTimings,
         OcrOutput, OcrRegion, OcrTimings, Polygon, ProviderInfo, ProviderResolutionInfo,
         RecognitionOutcome, RegionKind, RegionSource, ResolvedProvider, StageReport, StageReports,
-        StageState,
+        StageState, TextOrder,
     };
 
     #[test]
@@ -237,6 +308,7 @@ mod tests {
                 model_id: "pp_formulanet_plus_m".to_string(),
                 token_ids: None,
             }),
+            table: None,
         }
     }
 
@@ -342,6 +414,7 @@ mod tests {
                     timing: None,
                 },
                 formula: StageReport::default(),
+                table: StageReport::default(),
             },
             regions,
             timings: OcrTimings::default(),
@@ -354,6 +427,142 @@ mod tests {
                 },
             },
         }
+    }
+
+    fn table_region(
+        id: usize,
+        points: [[f32; 2]; 4],
+        markdown: &str,
+        source_line_indices: Vec<usize>,
+    ) -> OcrRegion {
+        OcrRegion {
+            source: RegionSource::Detected { detector_index: id },
+            kind: RegionKind::Table,
+            polygon: Some(Polygon { points }),
+            detection: Some(crate::DetectionOutcome { score: 0.7 }),
+            classification: None,
+            // 表格区域**没有** recognition：它的文字表示就是表格本身。
+            recognition: None,
+            formula: None,
+            table: Some(crate::TableOutcome {
+                html: "<html><body><table></table></body></html>".to_string(),
+                table_html: "<table></table>".to_string(),
+                markdown: markdown.to_string(),
+                rows: 1,
+                cols: 2,
+                confidence: crate::TableStructureConfidence::High,
+                degradations: Vec::new(),
+                holes: 0,
+                cells: Vec::new(),
+                source_line_indices,
+                model_id: "slanet-plus".to_string(),
+            }),
+        }
+    }
+
+    fn count_occurrences(haystack: &str, needle: &str) -> usize {
+        haystack.matches(needle).count()
+    }
+
+    /// 一页三行文字，其中前两行被表格消费。
+    fn page_with_a_consuming_table() -> OcrOutput {
+        output_with_regions(vec![
+            text_region(
+                0,
+                [[10.0, 10.0], [90.0, 10.0], [90.0, 30.0], [10.0, 30.0]],
+                "A",
+            ),
+            text_region(
+                1,
+                [[10.0, 40.0], [90.0, 40.0], [90.0, 60.0], [10.0, 60.0]],
+                "B",
+            ),
+            table_region(
+                2,
+                [[0.0, 0.0], [200.0, 0.0], [200.0, 100.0], [0.0, 100.0]],
+                "| h1 | h2 |\n| --- | --- |\n| A | B |",
+                vec![0, 1],
+            ),
+            text_region(
+                3,
+                [[10.0, 150.0], [90.0, 150.0], [90.0, 170.0], [10.0, 170.0]],
+                "C",
+            ),
+        ])
+    }
+
+    /// `docs/11` §3 E15.4：Markdown 通道把表格渲染成网格，**并且**不再重复它消费掉的行。
+    #[test]
+    fn a_table_region_replaces_the_lines_it_consumed() {
+        let markdown = super::to_output_markdown(&page_with_a_consuming_table());
+        assert!(markdown.contains("| h1 | h2 |"), "markdown: {markdown}");
+        assert!(markdown.contains("| --- | --- |"), "markdown: {markdown}");
+        assert!(markdown.contains("| A | B |"), "markdown: {markdown}");
+        // A 与 B 只作为单元格出现一次，不再作为独立行出现第二次。
+        assert_eq!(count_occurrences(&markdown, "A"), 1, "markdown: {markdown}");
+        assert_eq!(count_occurrences(&markdown, "B"), 1, "markdown: {markdown}");
+        // 没有被消费的行照常输出。
+        assert_eq!(count_occurrences(&markdown, "C"), 1, "markdown: {markdown}");
+        // 表格块是独立块：不与相邻文本挤在同一行。
+        assert!(
+            markdown.lines().any(|line| line == "| A | B |"),
+            "the grid must keep its own line: {markdown}"
+        );
+    }
+
+    /// `plain_text` 与 Markdown 通道的**刻意**差异。
+    ///
+    /// 纯文本是"页面的文字内容"（CER 评测、网页复制全文、搜索）：被表格消费的行必须
+    /// 出现且只出现一次，而 Markdown 的 `|` / `---` 是标记，不得混进去。
+    #[test]
+    fn plain_text_keeps_the_consumed_lines_and_ignores_the_table() {
+        let output = page_with_a_consuming_table();
+        let text = output.plain_text(TextOrder::Reading);
+        assert_eq!(text.lines().count(), 3, "plain_text: {text:?}");
+        for needle in ["A", "B", "C"] {
+            assert_eq!(count_occurrences(&text, needle), 1, "plain_text: {text:?}");
+        }
+        assert!(!text.contains('|'), "plain_text: {text:?}");
+        assert!(!text.contains("---"), "plain_text: {text:?}");
+    }
+
+    /// 表格的跨度说明行（由 `src/table/emitter.rs` 的 `emit_markdown` 注入）必须原样
+    /// 穿过 Markdown 通道 —— 否则"跨度被静默丢失"就回到未修复状态。
+    #[test]
+    fn the_span_note_survives_the_markdown_channel() {
+        let output = page_with_a_consuming_table();
+        let markdown = super::to_output_markdown(&output);
+        // 本夹具的 markdown 里没有说明行；换成带说明行的表格再断言它不被吃掉。
+        let _ = markdown;
+        let with_note = output_with_regions(vec![table_region(
+            0,
+            [[0.0, 0.0], [200.0, 0.0], [200.0, 100.0], [0.0, 100.0]],
+            "<!-- 表格含跨行/跨列 -->\n| a |  |\n| --- | --- |\n|  | c |\n<!-- 表格含跨行/跨列 -->",
+            vec![],
+        )]);
+        let markdown = super::to_output_markdown(&with_note);
+        assert!(
+            markdown.contains("<!-- 表格含跨行/跨列 -->"),
+            "markdown: {markdown}"
+        );
+    }
+
+    /// `docs/11` §3.2 第 ④ 条：没有表格的页面，Markdown 输出与表格通道引入之前相同。
+    #[test]
+    fn a_page_without_tables_renders_exactly_as_before() {
+        let output = output_with_regions(vec![
+            text_region(
+                0,
+                [[10.0, 10.0], [60.0, 10.0], [60.0, 30.0], [10.0, 30.0]],
+                "L1",
+            ),
+            text_region(
+                1,
+                [[10.0, 40.0], [60.0, 40.0], [60.0, 60.0], [10.0, 60.0]],
+                "L2",
+            ),
+        ]);
+        assert_eq!(super::to_output_markdown(&output), "L1\nL2");
     }
 
     #[derive(serde::Deserialize)]

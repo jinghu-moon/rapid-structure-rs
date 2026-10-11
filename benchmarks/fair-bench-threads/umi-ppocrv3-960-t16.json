@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "engine": "Umi PaddleOCR-json v1.4.1",
+    "model": "PP-OCRv3",
+    "side": 960,
+    "threads": 16,
+    "cls": false,
+    "image_count": 3,
+    "rounds": 3,
+    "warmup_rounds": 1,
+    "startup_ms": 560.5967000010423,
+    "init_lines": [
+      "PaddleOCR-json v1.4.1",
+      "OCR anonymous pipe mode.",
+      "OCR init completed."
+    ]
+  },
+  "stats": {
+    "count": 9,
+    "avg_ms": 790.6375000052826,
+    "p50_ms": 837.5121999997646,
+    "p90_ms": 1066.0594000073615,
+    "min_ms": 474.91570000420325,
+    "max_ms": 1069.778300006874
+  }
+}

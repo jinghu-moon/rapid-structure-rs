@@ -40,7 +40,7 @@
 //! - `BlockedModelsMissing` → 409 `models_missing`；
 //! - `Failed` → 503 `engine_unavailable`，且**必须**带上 `reason`。
 
-use rapid_ocr_rs::{EngineConfig, ProviderPreference, RapidOcrError};
+use rapid_structure_rs::{EngineConfig, ProviderPreference, RapidOcrError};
 use serde::Serialize;
 
 use super::limits::{RawServeLimits, ServeConfigError, ServeLimits};
@@ -366,7 +366,7 @@ pub enum StartupConfigError {
     Engine(RapidOcrError),
     /// provider 名称或对应 feature 非法（库内 `runtime::provider` 的既有措辞）。
     Provider(RapidOcrError),
-    /// `--log-level` / `RAPID_OCR_SERVE_LOG` 的取值不是 `off` / `flow`（M5）。
+    /// `--log-level` / `RAPID_STRUCTURE_SERVE_LOG` 的取值不是 `off` / `flow`（M5）。
     ///
     /// 非法取值**拒绝启动**而不是静默按 `off` 处理：把开关名写错的用户看到的应该是
     /// "期望 off 或 flow"，而不是"日志开关看起来没生效"。
@@ -383,7 +383,10 @@ impl std::fmt::Display for StartupConfigError {
             Self::Engine(error) => write!(f, "engine configuration rejected: {error}"),
             Self::Provider(error) => write!(f, "provider configuration rejected: {error}"),
             Self::LogLevel(error) => {
-                write!(f, "--log-level / RAPID_OCR_SERVE_LOG rejected: {error}")
+                write!(
+                    f,
+                    "--log-level / RAPID_STRUCTURE_SERVE_LOG rejected: {error}"
+                )
             }
         }
     }
@@ -473,7 +476,7 @@ impl ServeConfigPlan {
 
         // 只用库里的**同一套**实现做配置探测，因此"feature 未编译进来"这句话
         // 与 `run`/`evaluate` 完全一致。
-        match rapid_ocr_rs::resolve_execution_providers(
+        match rapid_structure_rs::resolve_execution_providers(
             &requested,
             engine.runtime.enable_cpu_mem_arena,
             false,
@@ -500,7 +503,7 @@ impl ServeConfigPlan {
 
     /// `requested` 的展示文本（`/api/status` 的 `requested` 字段）。
     pub fn requested_label(&self) -> String {
-        rapid_ocr_rs::format_provider_preference(self.requested)
+        rapid_structure_rs::format_provider_preference(self.requested)
     }
 
     /// M3：运行期切换 provider 时**重新应用同一套规则**。
@@ -531,7 +534,7 @@ impl ServeConfigPlan {
 
 #[cfg(test)]
 mod tests {
-    use rapid_ocr_rs::{EngineConfig, ProviderPreference, RapidOcrError};
+    use rapid_structure_rs::{EngineConfig, ProviderPreference, RapidOcrError};
 
     use super::{
         EngineState, EngineStateMachine, ModelReadiness, OcrAdmission, ProviderStatus,

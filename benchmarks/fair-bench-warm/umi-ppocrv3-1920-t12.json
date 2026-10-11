@@ -1,0 +1,114 @@
+{
+  "meta": {
+    "engine": "Umi PaddleOCR-json v1.4.1",
+    "model": "PP-OCRv3",
+    "side": 1920,
+    "threads": 12,
+    "cls": false,
+    "image_count": 3,
+    "rounds": 3,
+    "warmup_rounds": 1,
+    "startup_ms": 551.9809999968857,
+    "init_lines": [
+      "PaddleOCR-json v1.4.1",
+      "OCR anonymous pipe mode.",
+      "OCR init completed."
+    ]
+  },
+  "stats": {
+    "count": 9,
+    "avg_ms": 1161.666733332418,
+    "p50_ms": 1105.3388000000268,
+    "p90_ms": 1702.6125999982469,
+    "min_ms": 648.4010000131093,
+    "max_ms": 1704.8025999974925
+  },
+  "warmup": [
+    {
+      "round": 0,
+      "image": "PixPin_2026-09-30_11-28-57.png",
+      "wall_ms": 1130.5011000076775,
+      "code": 100,
+      "items": 87
+    },
+    {
+      "round": 0,
+      "image": "PixPin_2026-09-30_11-29-07.png",
+      "wall_ms": 1752.5951999996323,
+      "code": 100,
+      "items": 51
+    },
+    {
+      "round": 0,
+      "image": "PixPin_2026-09-30_11-29-12.png",
+      "wall_ms": 682.2553999954835,
+      "code": 100,
+      "items": 18
+    }
+  ],
+  "samples": [
+    {
+      "round": 1,
+      "image": "PixPin_2026-09-30_11-28-57.png",
+      "wall_ms": 1105.3388000000268,
+      "code": 100,
+      "items": 87
+    },
+    {
+      "round": 1,
+      "image": "PixPin_2026-09-30_11-29-07.png",
+      "wall_ms": 1702.6125999982469,
+      "code": 100,
+      "items": 51
+    },
+    {
+      "round": 1,
+      "image": "PixPin_2026-09-30_11-29-12.png",
+      "wall_ms": 648.4010000131093,
+      "code": 100,
+      "items": 18
+    },
+    {
+      "round": 2,
+      "image": "PixPin_2026-09-30_11-28-57.png",
+      "wall_ms": 1071.026499994332,
+      "code": 100,
+      "items": 87
+    },
+    {
+      "round": 2,
+      "image": "PixPin_2026-09-30_11-29-07.png",
+      "wall_ms": 1699.2165999836288,
+      "code": 100,
+      "items": 51
+    },
+    {
+      "round": 2,
+      "image": "PixPin_2026-09-30_11-29-12.png",
+      "wall_ms": 704.3753000034485,
+      "code": 100,
+      "items": 18
+    },
+    {
+      "round": 3,
+      "image": "PixPin_2026-09-30_11-28-57.png",
+      "wall_ms": 1139.3021999974735,
+      "code": 100,
+      "items": 87
+    },
+    {
+      "round": 3,
+      "image": "PixPin_2026-09-30_11-29-07.png",
+      "wall_ms": 1704.8025999974925,
+      "code": 100,
+      "items": 51
+    },
+    {
+      "round": 3,
+      "image": "PixPin_2026-09-30_11-29-12.png",
+      "wall_ms": 679.9250000040047,
+      "code": 100,
+      "items": 18
+    }
+  ]
+}

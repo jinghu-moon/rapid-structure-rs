@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "engine": "Umi PaddleOCR-json v1.4.1",
+    "model": "PP-OCRv3",
+    "side": 1280,
+    "threads": 12,
+    "cls": false,
+    "image_count": 3,
+    "rounds": 2,
+    "init_lines": [
+      "PaddleOCR-json v1.4.1",
+      "OCR anonymous pipe mode.",
+      "OCR init completed."
+    ],
+    "startup_ms": 557.9555000003893
+  },
+  "stats": {
+    "count": 6,
+    "avg_ms": 1029.5656166611782,
+    "p50_ms": 989.6757999958936,
+    "p90_ms": 1446.1701000109315,
+    "min_ms": 603.4660000004806,
+    "max_ms": 1479.978499992285
+  },
+  "samples": [
+    {
+      "round": 1,
+      "image": "PixPin_2026-09-30_11-28-57.png",
+      "wall_ms": 1048.7649999849964,
+      "code": 100,
+      "items": 87
+    },
+    {
+      "round": 1,
+      "image": "PixPin_2026-09-30_11-29-07.png",
+      "wall_ms": 1479.978499992285,
+      "code": 100,
+      "items": 62
+    },
+    {
+      "round": 1,
+      "image": "PixPin_2026-09-30_11-29-12.png",
+      "wall_ms": 603.4660000004806,
+      "code": 100,
+      "items": 18
+    },
+    {
+      "round": 2,
+      "image": "PixPin_2026-09-30_11-28-57.png",
+      "wall_ms": 989.6757999958936,
+      "code": 100,
+      "items": 87
+    },
+    {
+      "round": 2,
+      "image": "PixPin_2026-09-30_11-29-07.png",
+      "wall_ms": 1446.1701000109315,
+      "code": 100,
+      "items": 62
+    },
+    {
+      "round": 2,
+      "image": "PixPin_2026-09-30_11-29-12.png",
+      "wall_ms": 609.3382999824826,
+      "code": 100,
+      "items": 18
+    }
+  ]
+}

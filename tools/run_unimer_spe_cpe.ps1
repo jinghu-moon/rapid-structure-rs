@@ -18,10 +18,9 @@
 
 $ErrorActionPreference = 'Stop'
 
-$Crate = 'D:\100_Projects\110_Daily\SnapClip\crates\rapid-ocr-rs'
-$Root = 'D:\100_Projects\110_Daily\SnapClip'
-$Model = Join-Path $Root 'OCR-Model\Formula-Recognition-Models\onnx\pp_formulanet_plus_m.onnx'
-$TestSet = Join-Path $Root 'Formula-TestSet'
+$Crate = Split-Path -Parent $PSScriptRoot
+$Model = Join-Path $Crate 'models\formula\recognition\onnx\pp_formulanet_plus_m.onnx'
+$TestSet = Join-Path $Crate 'datasets\formula'
 $Eval = Join-Path $Crate 'target\release\formula_eval.exe'
 $Out = Join-Path $Crate 'target\formula-eval'
 

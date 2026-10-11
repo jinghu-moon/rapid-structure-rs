@@ -5,7 +5,7 @@
     "intra_threads": 16,
     "rounds": 3,
     "warmup_rounds": 1,
-    "images_dir": "D:\\100_Projects\\110_Daily\\SnapClip\\OCR-test-image"
+    "images_dir": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\datasets/text"
   },
   "providers": [
     {

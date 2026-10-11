@@ -1,6 +1,6 @@
 {
   "environment": {
-    "collected_at_utc": "2026-10-03T03:32:49.4899954Z",
+    "collected_at_utc": "2026-10-08T12:46:58.6540037Z",
     "target": "x86_64-pc-windows-msvc",
     "frozen_targets": [
       "x86_64-pc-windows-msvc"
@@ -42,46 +42,45 @@
     "ort_crate": "=2.0.0-rc.13"
   },
   "build_stats": {
-    "collected_at_utc": "2026-10-03T03:33:07.6860815Z",
+    "collected_at_utc": "2026-10-08T12:47:26.4309817Z",
     "profile": "release",
-    "crate_rebuild_ms": 17400,
-    "crate_rebuild_scope": "cargo clean -p rapid-ocr-rs --release; cargo build --release --bins",
+    "crate_rebuild_ms": 26392,
+    "crate_rebuild_scope": "cargo clean -p rapid-structure-rs --release; cargo build --release --bins",
     "binary_bytes": {
-      "rapidocr": 34611712,
-      "bench_warm_e2e": 34365440,
-      "formula_eval": 29712384,
-      "formula_bench": 29022208
+      "bench_warm_e2e": 33304576,
+      "formula_eval": 28444160,
+      "formula_bench": 27734016
     },
-    "target_dir_bytes": 18539595174.0
+    "target_dir_bytes": 43762586127.0
   },
   "bench": [
     {
       "max_side_len": 2000,
-      "init_ms": 143.5503,
-      "ocr_total_p50_ms": 1001.101318359375,
-      "ocr_total_p90_ms": 1153.647705078125,
-      "ocr_total_avg_ms": 990.8543395996094,
-      "wall_p50_ms": 1002.1278,
+      "init_ms": 146.7348,
+      "ocr_total_p50_ms": 982.04541015625,
+      "ocr_total_p90_ms": 1091.39990234375,
+      "ocr_total_avg_ms": 972.4330851236979,
+      "wall_p50_ms": 982.7149,
       "regions_avg": 34.833333333333336,
-      "peak_working_set_bytes": 1346371584
+      "peak_working_set_bytes": 1348026368
     },
     {
       "max_side_len": 1280,
-      "init_ms": 148.98520000000002,
-      "ocr_total_p50_ms": 664.3169555664062,
-      "ocr_total_p90_ms": 753.505859375,
-      "ocr_total_avg_ms": 644.1852366129557,
-      "wall_p50_ms": 665.0204,
+      "init_ms": 128.0911,
+      "ocr_total_p50_ms": 644.9581298828125,
+      "ocr_total_p90_ms": 761.9999389648438,
+      "ocr_total_avg_ms": 633.650868733724,
+      "wall_p50_ms": 645.5305999999999,
       "regions_avg": 33.416666666666664,
-      "peak_working_set_bytes": 944357376
+      "peak_working_set_bytes": 941637632
     }
   ],
   "evaluation": {
     "mean_cer": 0.44765135645866394,
     "exact_match_rate": 0.0,
     "cases": 12,
-    "peak_working_set_bytes": 1219309568,
+    "peak_working_set_bytes": 1219506176,
     "memory_source": "windows:GetProcessMemoryInfo.PeakWorkingSetSize",
-    "manifest": "D:\\100_Projects\\110_Daily\\SnapClip\\OCR-test-image\\golden-manifest.json"
+    "manifest": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\datasets\\text\\golden-manifest.json"
   }
 }

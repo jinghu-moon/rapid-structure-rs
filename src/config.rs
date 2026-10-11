@@ -250,6 +250,33 @@ impl RuntimeConfig {
         let set = |value: Option<usize>| value.filter(|value| *value > 0).is_some();
         set(self.intra_threads) || set(self.inter_threads) || set(self.rayon_threads)
     }
+
+    /// 返回一份把 intra 线程数**钉死**为 `threads` 的副本。
+    ///
+    /// # 为什么不是"设一个字段"就完事
+    ///
+    /// 只写 `intra_threads = Some(n)` 是不够的：`inter_threads` 仍会由
+    /// [`Self::effective_session_threads`] 的自动推导填成 1、`auto_tune_threads` 仍为
+    /// `true`。那样得到的 `(intra, inter)` 恰好一样，但**语义不同** —— 它表示"运行时
+    /// 觉得合适"，而不是"调用方要求这个数字"。两者在下一次有人改动
+    /// [`crate::runtime::profile::auto_tuned_thread_budget`] 或 inter 推导规则时会分叉，
+    /// 而分叉的那一侧是"实验记录里的线程数悄悄变了"。
+    ///
+    /// 因此这里一次性把三个字段写成**自洽的显式请求**：`intra = n`、`inter = 1`
+    /// （ORT 的 inter 并行对本 workload 无益，见 [`Self::effective_session_threads`]）、
+    /// `auto_tune_threads = false`。调用方拿到的就是"这些线程数，且只有这些"。
+    ///
+    /// `threads == 0` 时原样返回（`0` 在本类型里表示"未设置"，钉一个"零线程"没有意义）。
+    pub fn with_pinned_intra_threads(&self, threads: usize) -> Self {
+        if threads == 0 {
+            return self.clone();
+        }
+        let mut pinned = self.clone();
+        pinned.intra_threads = Some(threads);
+        pinned.inter_threads = Some(1);
+        pinned.auto_tune_threads = false;
+        pinned
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -388,6 +415,42 @@ mod tests {
             err.to_string()
                 .contains("image width and height must be greater than zero")
         );
+    }
+
+    /// 钉住线程数必须同时关掉自动推导，否则它只是"碰巧等于这个数字"。
+    #[test]
+    fn pinning_the_threads_turns_auto_tuning_off_and_pins_inter_to_one() {
+        let base = RuntimeConfig {
+            intra_threads: Some(16),
+            auto_tune_threads: true,
+            ..RuntimeConfig::default()
+        };
+        let pinned = base.with_pinned_intra_threads(4);
+
+        assert_eq!(pinned.intra_threads, Some(4));
+        assert_eq!(pinned.inter_threads, Some(1));
+        assert!(!pinned.auto_tune_threads);
+        // 反向对照：没有被钉住的基配置仍然按自动推导走，所以上面三条不是恒真的。
+        assert!(base.auto_tune_threads);
+        assert_ne!(
+            base.effective_session_threads(),
+            pinned.effective_session_threads(),
+            "pinning must be observable in the resolved thread pair"
+        );
+        assert_eq!(pinned.effective_session_threads(), (Some(4), Some(1)));
+    }
+
+    /// `0` 在本类型里表示"未设置"，钉一个"零线程"没有意义 —— 必须原样返回。
+    #[test]
+    fn pinning_zero_threads_is_a_no_op() {
+        let base = RuntimeConfig {
+            intra_threads: Some(7),
+            inter_threads: Some(3),
+            auto_tune_threads: false,
+            ..RuntimeConfig::default()
+        };
+        let pinned = base.with_pinned_intra_threads(0);
+        assert_eq!(pinned.effective_session_threads(), (Some(7), Some(3)));
     }
 
     #[test]

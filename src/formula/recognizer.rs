@@ -678,7 +678,7 @@ mod tests {
         );
 
         let directory = std::env::temp_dir().join(format!(
-            "rapid-ocr-rs-formula-loader-{}",
+            "rapid-structure-rs-formula-loader-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&directory).expect("temp dir");

@@ -57,11 +57,15 @@ pub enum ModelRole {
     Tokenizer,
     FormulaDetector,
     FormulaRecognizer,
+    /// 表格结构模型（SLANet 系列）。与公式模型一样属于**可选**角色：
+    /// 它不在页面 OCR 的必需集合里，缺它只表示表格模块降级到轻量档，
+    /// 不表示模型集合不完整。
+    TableStructure,
 }
 
 impl ModelRole {
     /// 全部角色，顺序即错误信息里“缺失 role”列表的稳定顺序。
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Detector,
         Self::Classifier,
         Self::Recognizer,
@@ -69,6 +73,7 @@ impl ModelRole {
         Self::Tokenizer,
         Self::FormulaDetector,
         Self::FormulaRecognizer,
+        Self::TableStructure,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -80,6 +85,7 @@ impl ModelRole {
             Self::Tokenizer => "tokenizer",
             Self::FormulaDetector => "formula_detector",
             Self::FormulaRecognizer => "formula_recognizer",
+            Self::TableStructure => "table_structure",
         }
     }
 }
@@ -690,6 +696,19 @@ mod tests {
         let error = serde_json::from_str::<ModelRole>("\"unknown_role\"")
             .expect_err("an unknown role must not parse");
         assert!(error.to_string().contains("unknown_role"), "{error}");
+    }
+
+    /// `models/table/manifest.json` 用 `role: "table_structure"` 登记表格模型；
+    /// 这个拼写是清单里的字面量，改名会让清单静默解析失败。
+    #[test]
+    fn the_table_structure_role_is_spelled_as_the_manifest_writes_it() {
+        assert_eq!(ModelRole::TableStructure.as_str(), "table_structure");
+        assert_eq!(
+            serde_json::to_string(&ModelRole::TableStructure).expect("role should serialize"),
+            "\"table_structure\""
+        );
+        assert_eq!(ModelRole::ALL.len(), 8);
+        assert!(ModelRole::ALL.contains(&ModelRole::TableStructure));
     }
 
     #[test]

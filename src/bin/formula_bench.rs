@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::{Parser, ValueEnum};
-use rapid_ocr_rs::{
+use rapid_structure_rs::{
     FormulaPreprocessor, FormulaSession, FormulaTokenizer, FormulaTokenizerMetadata,
     ProviderPreference, RuntimeConfig, sha256_file,
 };
@@ -64,8 +64,8 @@ struct Cli {
     output: Option<PathBuf>,
 }
 
-use rapid_ocr_rs::evaluation::stats::Stats;
-use rapid_ocr_rs::{peak_memory_source, peak_working_set_bytes};
+use rapid_structure_rs::evaluation::stats::Stats;
+use rapid_structure_rs::{peak_memory_source, peak_working_set_bytes};
 
 /// 分阶段耗时统计；统计口径来自共享层，避免 benchmark 与评测工具各写一套。
 #[derive(Debug, Serialize)]
@@ -401,7 +401,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if memory_end.is_none() {
         notes.push(format!(
             "峰值工作集采集失败：{}",
-            rapid_ocr_rs::peak_memory_failure_reason()
+            rapid_structure_rs::peak_memory_failure_reason()
                 .unwrap_or_else(|| "GetProcessMemoryInfo 未返回数据".to_string())
         ));
     }

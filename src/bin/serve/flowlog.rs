@@ -16,7 +16,7 @@
 //! # 默认关闭，且关闭时不付代价
 //!
 //! 级别只有两档（[`LogLevel::Off`] 默认 / [`LogLevel::Flow`]），由 `--log-level` 或
-//! 环境变量 `RAPID_OCR_SERVE_LOG` 给出（CLI 优先，见 [`LogLevel::resolve`]）。
+//! 环境变量 `RAPID_STRUCTURE_SERVE_LOG` 给出（CLI 优先，见 [`LogLevel::resolve`]）。
 //! 关闭时出口是 [`FlowSink::Off`]：所有记录函数在第一行就返回，不做任何格式化。
 //!
 //! # 为什么有一个 `Capture` 出口
@@ -60,11 +60,11 @@ impl LogLevel {
         }
     }
 
-    /// 生效级别：**`--log-level` > `RAPID_OCR_SERVE_LOG` > 默认 `off`**。
+    /// 生效级别：**`--log-level` > `RAPID_STRUCTURE_SERVE_LOG` > 默认 `off`**。
     ///
     /// 与 `--provider` / `--max-side` 无关：那两条的优先级是 CLI > YAML > 默认，而日志
     /// 级别没有 YAML 面（它不是引擎配置），因此只有两层。空字符串按"未给出"处理，
-    /// 这样 `RAPID_OCR_SERVE_LOG=` 不会变成一条难以定位的启动期错误。
+    /// 这样 `RAPID_STRUCTURE_SERVE_LOG=` 不会变成一条难以定位的启动期错误。
     pub(super) fn resolve(cli: Option<&str>, env: Option<&str>) -> Result<Self, String> {
         if let Some(raw) = cli.filter(|raw| !raw.trim().is_empty()) {
             return Self::parse(raw);

@@ -1,6 +1,6 @@
 """`tools/summarize_formula_eval.py` 的回归测试。
 
-运行方式（在本 crate 根目录，即 `crates/rapid-ocr-rs/`）：
+运行方式（在本 crate 根目录，即 `crates/rapid-structure-rs/`）：
 
 ```powershell
 # 推荐：pytest（若已安装）

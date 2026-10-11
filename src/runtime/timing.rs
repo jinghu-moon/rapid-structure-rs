@@ -6,11 +6,11 @@
 //! `OcrTimings` 里有两类时间，而且它们**不是**互斥的：
 //!
 //! - **外层窗口** `preprocess_ms`：`RapidOcrEngine::recognize_text` 从进入预处理
-//!   （`rapid_ocr.rs:619`）到 `inner.run()` 调用之前（`rapid_ocr.rs:719`）的整个窗口；
+//!   （`rapid_structure.rs:619`）到 `inner.run()` 调用之前（`rapid_structure.rs:719`）的整个窗口；
 //! - **阶段计时**：detector / classifier / recognizer 各自的 `preprocess_ms` /
 //!   `infer_ms` / `postprocess_ms`（它们的和等于 `detect_ms` / `classify_ms` /
 //!   `recognize_ms`），以及页面级 `postprocess_ms`。这些都在 `inner.run()`
-//!   （`rapid_ocr.rs:106` 起 e2e 计时，`rapid_ocr.rs:130` 结束）内部测量。
+//!   （`rapid_structure.rs:106` 起 e2e 计时，`rapid_structure.rs:130` 结束）内部测量。
 //!
 //! 于是“Rust 成本”如果只取 `page_total.preprocess_ms + page_total.postprocess_ms`，会同时
 //! 犯两个错：
@@ -22,9 +22,9 @@
 //!
 //! # 两个窗口是**串行**的（这是本模块最重要的实现事实）
 //!
-//! 外层窗口在 `rapid_ocr.rs:619` 开始、`:719` 结束，`inner.run()` 在 `:720` 才被调用。
+//! 外层窗口在 `rapid_structure.rs:619` 开始、`:719` 结束，`inner.run()` 在 `:720` 才被调用。
 //! 两者在墙钟上**首尾相接、不重叠**：`total_ms` 的构造是
-//! `rapid_ocr.rs:910` 的 `total_ms = exec.e2e_ms + preprocess_ms`，即“外层窗口 + 内层窗口”。
+//! `rapid_structure.rs:910` 的 `total_ms = exec.e2e_ms + preprocess_ms`，即“外层窗口 + 内层窗口”。
 //! 因此**任何“两个窗口重叠、同一段墙钟被算两次”的说法都与实现矛盾**，本模块不得再这样写。
 //!
 //! # 账本的定义
@@ -55,7 +55,7 @@
 //!
 //! **`input_ms() <= preprocess_ms` 是按构造成立的**：外层窗口里单独命名的
 //! `decode_ms` / `resize_ms` / `crop_ms` 是在 `inner.run()` 的 `prepare_image`
-//! （`rapid_ocr.rs:150`）里量的，与外层的 `preprocess_ms` 是**两个口径**，它们之和可以
+//! （`rapid_structure.rs:150`）里量的，与外层的 `preprocess_ms` 是**两个口径**，它们之和可以
 //! **大于**外层窗口。超出部分**不会被悄悄丢掉**：它被记为
 //! [`TimingLedger::input_overflow_ms`]，并入口径残差；`input_ms()` 则按外层窗口截断。
 //! 这一选择见 `input_ms()` 的文档。
@@ -80,11 +80,11 @@
 //!
 //! | `inner.run()` 里未被命名的部分 | 代码位置 | 实测量级 |
 //! | --- | --- | --- |
-//! | `prepare_image` 内的 `resize_image_within_bounds`（记在 `resize_ms`，但 `resize_ms` 不参与任何阶段的 pre/infer/post） | `rapid_ocr.rs:156-162` | ≈ 4.7 ms/页 |
-//! | `apply_vertical_padding`（`proc_img.clone()` + 填充，在检测阶段但不在 `detect_ms` 里） | `rapid_ocr.rs:189-195` | 0.8–3.5 ms/页 |
-//! | `crop_text_regions`（记在 `crop_ms`，同样不属于任何阶段计时） | `rapid_ocr.rs:210-212` | 1.5–2.5 ms/页 |
+//! | `prepare_image` 内的 `resize_image_within_bounds`（记在 `resize_ms`，但 `resize_ms` 不参与任何阶段的 pre/infer/post） | `rapid_structure.rs:156-162` | ≈ 4.7 ms/页 |
+//! | `apply_vertical_padding`（`proc_img.clone()` + 填充，在检测阶段但不在 `detect_ms` 里） | `rapid_structure.rs:189-195` | 0.8–3.5 ms/页 |
+//! | `crop_text_regions`（记在 `crop_ms`，同样不属于任何阶段计时） | `rapid_structure.rs:210-212` | 1.5–2.5 ms/页 |
 //! | recognizer 在三次求和之外的批次装配 / 排序 / bidi | `rec/recognizer.rs:89-98, 222-231` | 0.2–2.1 ms/页 |
-//! | `run()` 内阶段之间的其余零头（`e2e_ms` 与各阶段 elapsed 之差） | `rapid_ocr.rs:106-132` | ≈ 0.2 ms/页 |
+//! | `run()` 内阶段之间的其余零头（`e2e_ms` 与各阶段 elapsed 之差） | `rapid_structure.rs:106-132` | ≈ 0.2 ms/页 |
 //!
 //! 这些项之和（约 8–13 ms/页）覆盖了实测残差（约 5.3–9.7 ms/页，均值 6.75）。因此这里的
 //! 结论是**口径差异**：`total_ms` 是“一个总窗口”，`attributed_ms` 是“若干子窗口之和”，
@@ -148,8 +148,8 @@ pub struct LedgerConservation {
     pub conserved: bool,
     /// 口径残差的量级：`max(0, -residual_ms)`（残差为正、即命名分量之和大于总额时为 `0.0`）。
     ///
-    /// 它**不是**“重叠时长”。两个窗口是串行的（`rapid_ocr.rs:619-719` 的外层窗口，
-    /// 然后 `rapid_ocr.rs:106-130` 的内层窗口），因此没有任何一段墙钟被算两次。
+    /// 它**不是**“重叠时长”。两个窗口是串行的（`rapid_structure.rs:619-719` 的外层窗口，
+    /// 然后 `rapid_structure.rs:106-130` 的内层窗口），因此没有任何一段墙钟被算两次。
     /// 这个数字的含义是“账本各分量的占比能用多细”的显式上界。
     ///
     /// 本机实测（release，12 张页面）为 `6.75` ms/页（0.69%）。`conserved = true` 时为 `0.0`。
@@ -224,6 +224,21 @@ pub struct TimingLedger {
     pub recognizer_postprocess_ms: f64,
     /// 页面级公式路由（检测 + 裁剪 + 公式识别）；未启用时为 0。
     pub formula_ms: f64,
+    /// 页面级表格定位（表格区域检测）；未启用表格时为 0。
+    ///
+    /// 与 [`TimingLedger::table_structure_infer_ms`] / [`TimingLedger::table_backfill_ms`]
+    /// 一起构成表格域的命名分量。三者与 [`OcrTimings`] 的同名字段一一对应，也在
+    /// [`StageReports::table`] 里以 preprocess/infer/postprocess 三段呈现。
+    pub table_detect_ms: f64,
+    /// 表格结构识别的 ONNX Runtime 推理；未启用表格时为 0。
+    ///
+    /// 它是**推理**，因此进入 [`TimingLedger::inference_ms`]（与检测/分类/识别的推理同侧），
+    /// 而不是 [`TimingLedger::rust_ms`]。
+    pub table_structure_infer_ms: f64,
+    /// 表格单元格内容回填（整页检测复用 + 几何匹配）；未启用表格时为 0。
+    ///
+    /// 它是 Rust 侧成本，因此进入 [`TimingLedger::rust_ms`]。
+    pub table_backfill_ms: f64,
     /// 页面级后处理。
     pub page_postprocess_ms: f64,
     /// `total_ms` 减去上面所有被命名项后的余量（正数 = 报告的总时间里有一部分没有被任何
@@ -272,6 +287,9 @@ impl TimingLedger {
             recognizer_infer_ms: value(timings.recognizer_infer_ms),
             recognizer_postprocess_ms: value(timings.recognizer_postprocess_ms),
             formula_ms: value(timings.formula_ms),
+            table_detect_ms: value(timings.table_detect_ms),
+            table_structure_infer_ms: value(timings.table_structure_infer_ms),
+            table_backfill_ms: value(timings.table_backfill_ms),
             page_postprocess_ms: value(timings.postprocess_ms),
             unattributed_ms: 0.0,
         };
@@ -299,12 +317,21 @@ impl TimingLedger {
             + self.recognizer_infer_ms
             + self.recognizer_postprocess_ms
             + self.formula_ms
+            + self.table_detect_ms
+            + self.table_structure_infer_ms
+            + self.table_backfill_ms
             + self.page_postprocess_ms
     }
 
-    /// 全部 ONNX Runtime 推理时间（三个阶段相加）。
+    /// 全部 ONNX Runtime 推理时间（检测 / 分类 / 识别三段，加上表格结构识别）。
+    ///
+    /// 表格结构识别是**推理**，所以它在这一侧；表格定位与单元格回填是 Rust 侧，
+    /// 在 [`TimingLedger::rust_ms`]。
     pub fn inference_ms(&self) -> f64 {
-        self.detector_infer_ms + self.classifier_infer_ms + self.recognizer_infer_ms
+        self.detector_infer_ms
+            + self.classifier_infer_ms
+            + self.recognizer_infer_ms
+            + self.table_structure_infer_ms
     }
 
     /// 全部模型预处理时间（三个阶段相加）。
@@ -343,9 +370,10 @@ impl TimingLedger {
         self.input_named_within_ms + self.input_other_ms
     }
 
-    /// 全部 Rust 侧时间（输入 + 模型前后处理 + 页面后处理 + 公式路由）。
+    /// 全部 Rust 侧时间（输入 + 模型前后处理 + 页面后处理 + 公式路由 + 表格定位 + 表格回填）。
     ///
-    /// **不含** ORT 推理，也不含 `unattributed_ms`。
+    /// **不含**任何 ORT 推理（表格结构识别在 [`TimingLedger::inference_ms`]），
+    /// 也不含 `unattributed_ms`。
     ///
     /// 输入侧用的是截断后的 [`TimingLedger::input_ms`]（外层窗口覆盖到的部分），因此
     /// `rust_ms() + inference_ms()` 在 `input_overflow_ms > 0` 时**小于**
@@ -357,6 +385,8 @@ impl TimingLedger {
             + self.model_postprocess_ms()
             + self.page_postprocess_ms
             + self.formula_ms
+            + self.table_detect_ms
+            + self.table_backfill_ms
     }
 
     /// 守恒检查：`attributed_ms` 是否与报告的 `total_ms` 在容差内一致。
@@ -415,6 +445,9 @@ impl TimingLedger {
             recognizer_postprocess_share: share(self.recognizer_postprocess_ms),
             page_postprocess_share: share(self.page_postprocess_ms),
             formula_share: share(self.formula_ms),
+            table_detect_share: share(self.table_detect_ms),
+            table_structure_infer_share: share(self.table_structure_infer_ms),
+            table_backfill_share: share(self.table_backfill_ms),
             rust_share: share(self.rust_ms()),
             unattributed_share: share(self.unattributed_ms),
         })
@@ -448,6 +481,9 @@ impl TimingLedger {
             recognizer_infer_ms: sum(|l| l.recognizer_infer_ms),
             recognizer_postprocess_ms: sum(|l| l.recognizer_postprocess_ms),
             formula_ms: sum(|l| l.formula_ms),
+            table_detect_ms: sum(|l| l.table_detect_ms),
+            table_structure_infer_ms: sum(|l| l.table_structure_infer_ms),
+            table_backfill_ms: sum(|l| l.table_backfill_ms),
             page_postprocess_ms: sum(|l| l.page_postprocess_ms),
             unattributed_ms: sum(|l| l.unattributed_ms),
         }
@@ -459,8 +495,8 @@ impl TimingLedger {
 /// 文本会原样进入 JSON 报告，因此用英文写（报告里的其它 `basis` / `note` 字段也是英文）。
 ///
 /// **硬约束**：这段文案**不得**声称两个计时窗口重叠/同一段墙钟被算两次。实现事实是
-/// 外层窗口（`rapid_ocr.rs:619-719`）与 `inner.run()` 的 e2e 窗口（`rapid_ocr.rs:106-130`）
-/// **串行**，`total_ms = exec.e2e_ms + preprocess_ms`（`rapid_ocr.rs:910`）。
+/// 外层窗口（`rapid_structure.rs:619-719`）与 `inner.run()` 的 e2e 窗口（`rapid_structure.rs:106-130`）
+/// **串行**，`total_ms = exec.e2e_ms + preprocess_ms`（`rapid_structure.rs:910`）。
 fn conservation_interpretation(residual_ms: f64, total_ms: f64, tolerance_ms: f64) -> String {
     let share = |value: f64| {
         if total_ms > 0.0 {
@@ -481,15 +517,15 @@ fn conservation_interpretation(residual_ms: f64, total_ms: f64, tolerance_ms: f6
              between total_ms and the sum of its named parts. residual_ms = {residual_ms:.6}, \
              i.e. the named components sum to {gap_ms:.6} ms ({share:.2}% of total_ms) LESS than \
              total_ms. The two timing windows are SEQUENTIAL and do not overlap: the outer \
-             OcrTimings::preprocess_ms window runs from rapid_ocr.rs:619 to :719 and \
+             OcrTimings::preprocess_ms window runs from rapid_structure.rs:619 to :719 and \
              inner.run() is only entered at :720, whose own end-to-end window runs from \
-             rapid_ocr.rs:106 to :130; total_ms is their sum \
-             (total_ms = exec.e2e_ms + preprocess_ms, rapid_ocr.rs:910). No wall-clock interval \
+             rapid_structure.rs:106 to :130; total_ms is their sum \
+             (total_ms = exec.e2e_ms + preprocess_ms, rapid_structure.rs:910). No wall-clock interval \
              is therefore counted twice. What the residual measures is the part of inner.run()'s \
              own window that falls outside every named stage window and therefore has no \
              component in this ledger: the resize inside prepare_image \
-             (rapid_ocr.rs:156-162), apply_vertical_padding (rapid_ocr.rs:189-195), \
-             crop_text_regions (rapid_ocr.rs:210-212), and the recognizer's batch assembly \
+             (rapid_structure.rs:156-162), apply_vertical_padding (rapid_structure.rs:189-195), \
+             crop_text_regions (rapid_structure.rs:210-212), and the recognizer's batch assembly \
              (rec/recognizer.rs:89-98, 222-231). total_ms is a single wall-clock measurement and \
              is unaffected by how the parts are named; conversely, because the parts were \
              measured independently, this ledger alone cannot decide which side is closer to \
@@ -508,7 +544,7 @@ fn conservation_interpretation(residual_ms: f64, total_ms: f64, tolerance_ms: f6
              component whose measurement scope reaches outside the window that total_ms covers, \
              or a component measured twice relative to it), not a statement about the accuracy \
              of total_ms, and it says nothing about the two windows overlapping: they are \
-             sequential (rapid_ocr.rs:619-719 then :106-130). This ledger is a DIAGNOSTIC \
+             sequential (rapid_structure.rs:619-719 then :106-130). This ledger is a DIAGNOSTIC \
              instrument, not acceptance evidence: every share is valid only to within \
              {residual_ms:.6} ms ({share:.2}% of total_ms).",
             share = share(residual_ms),
@@ -535,6 +571,9 @@ pub struct LedgerShares {
     pub recognizer_postprocess_share: f64,
     pub page_postprocess_share: f64,
     pub formula_share: f64,
+    pub table_detect_share: f64,
+    pub table_structure_infer_share: f64,
+    pub table_backfill_share: f64,
     pub rust_share: f64,
     pub unattributed_share: f64,
 }
@@ -544,8 +583,12 @@ mod tests {
     use super::TimingLedger;
     use crate::api::OcrTimings;
 
-    /// 三个阶段的 preprocess/infer/postprocess 必须与阶段总时间一致，否则
-    /// `preprocess_ms` / `detect_ms` 这些“外层”字段就与分阶段字段脱节了。
+    /// 各阶段的 preprocess/infer/postprocess 必须与阶段总时间一致，且页面级恒等式
+    /// （`total_ms` = 各阶段之和）必须成立，否则 `preprocess_ms` / `detect_ms` 这些
+    /// “外层”字段就与分阶段字段脱节了。
+    ///
+    /// 表格域的定位与结构识别是**两个并列的独立分量**（不是某个阶段的三段分解），
+    /// 因此它们直接进入页面级恒等式，而不参与 `detect_ms` / `recognize_ms` 的分解检查。
     fn assert_stage_totals(timings: &OcrTimings) {
         assert!(
             (f64::from(timings.detector_preprocess_ms)
@@ -581,6 +624,9 @@ mod tests {
                 + f64::from(timings.recognize_ms)
                 + f64::from(timings.postprocess_ms)
                 + f64::from(timings.formula_ms)
+                + f64::from(timings.table_detect_ms)
+                + f64::from(timings.table_structure_infer_ms)
+                + f64::from(timings.table_backfill_ms)
                 - f64::from(timings.total_ms))
             .abs()
                 < 1e-3,
@@ -611,6 +657,9 @@ mod tests {
             recognizer_postprocess_ms: 40.0,
             recognize_ms: 324.0,
             formula_ms: 0.0,
+            table_detect_ms: 0.0,
+            table_structure_infer_ms: 0.0,
+            table_backfill_ms: 0.0,
             postprocess_ms: 7.0,
             total_ms: 13.0 + 523.0 + 3.5 + 324.0 + 7.0,
         };
@@ -700,6 +749,9 @@ mod tests {
             recognizer_postprocess_ms: 437.192,
             recognize_ms: 825.0736,
             formula_ms: 0.0,
+            table_detect_ms: 0.0,
+            table_structure_infer_ms: 0.0,
+            table_backfill_ms: 0.0,
             postprocess_ms: 0.0716,
             total_ms: 1779.9879,
         };
@@ -762,9 +814,9 @@ mod tests {
     /// 必须给出残差量级与“不是验收依据”的框架，并且**不得**出现任何“重叠”的说法。
     ///
     /// 这条测试存在的原因：旧文案把负残差写成“两个窗口重叠、同一段墙钟被算两次”，
-    /// 而实现里外层窗口（`rapid_ocr.rs:619-719`）与 `inner.run()` 的 e2e 窗口
-    /// （`rapid_ocr.rs:106-130`）是首尾相接的，`total_ms = exec.e2e_ms + preprocess_ms`
-    /// （`rapid_ocr.rs:910`）。文案与实现矛盾时必须在测试里被拦住。
+    /// 而实现里外层窗口（`rapid_structure.rs:619-719`）与 `inner.run()` 的 e2e 窗口
+    /// （`rapid_structure.rs:106-130`）是首尾相接的，`total_ms = exec.e2e_ms + preprocess_ms`
+    /// （`rapid_structure.rs:910`）。文案与实现矛盾时必须在测试里被拦住。
     #[test]
     fn interpretation_states_sequential_windows_and_never_claims_overlap() {
         // 用真实量级的合成样本，命中的是“命名分量之和小于 total_ms”这一支。
@@ -790,9 +842,9 @@ mod tests {
             "residual_ms = -92.000000",
             "the named components sum to 92.000000 ms",
             "SEQUENTIAL and do not overlap",
-            "rapid_ocr.rs:619 to :719",
-            "rapid_ocr.rs:106 to :130",
-            "rapid_ocr.rs:910",
+            "rapid_structure.rs:619 to :719",
+            "rapid_structure.rs:106 to :130",
+            "rapid_structure.rs:910",
             "No wall-clock interval is therefore counted twice",
             "SCOPE difference",
             "prepare_image",
@@ -863,7 +915,7 @@ mod tests {
         assert!(
             conservation
                 .interpretation
-                .contains("they are sequential (rapid_ocr.rs:619-719 then :106-130)"),
+                .contains("they are sequential (rapid_structure.rs:619-719 then :106-130)"),
             "a positive residual must still cite the sequential window relationship: {}",
             conservation.interpretation
         );
@@ -875,8 +927,8 @@ mod tests {
     /// 并且必须体现在口径残差里。
     ///
     /// 这个分支不是虚构的：`decode_ms` / `resize_ms` / `crop_ms` 在 `inner.run()` 内测量
-    /// （`rapid_ocr.rs:150-178, 210-212`），外层 `preprocess_ms` 是另一个窗口
-    /// （`rapid_ocr.rs:619-719`），两者口径不同，前者之和完全可以更大
+    /// （`rapid_structure.rs:150-178, 210-212`），外层 `preprocess_ms` 是另一个窗口
+    /// （`rapid_structure.rs:619-719`），两者口径不同，前者之和完全可以更大
     /// （例如 `Pixels` 输入走 `to_bgr` 而外层不做解码）。
     #[test]
     fn input_overflow_keeps_the_input_invariant_by_construction() {
@@ -899,6 +951,9 @@ mod tests {
             recognizer_postprocess_ms: 2.0,
             recognize_ms: 23.0,
             formula_ms: 0.0,
+            table_detect_ms: 0.0,
+            table_structure_infer_ms: 0.0,
+            table_backfill_ms: 0.0,
             postprocess_ms: 3.0,
             total_ms: 5.0 + 12.0 + 0.0 + 23.0 + 3.0,
         };
@@ -973,7 +1028,7 @@ mod tests {
         assert!(
             conservation
                 .interpretation
-                .contains("they are sequential (rapid_ocr.rs:619-719 then :106-130)"),
+                .contains("they are sequential (rapid_structure.rs:619-719 then :106-130)"),
             "the overflow interpretation must still cite the sequential relationship: {}",
             conservation.interpretation
         );
@@ -1094,6 +1149,9 @@ mod tests {
             recognizer_postprocess_ms: 40.0,
             recognize_ms: 324.0,
             formula_ms: 0.0,
+            table_detect_ms: 0.0,
+            table_structure_infer_ms: 0.0,
+            table_backfill_ms: 0.0,
             postprocess_ms: 7.0,
             total_ms: 11.0 + 523.0 + 0.0 + 324.0 + 7.0,
         };
@@ -1134,6 +1192,9 @@ mod tests {
             recognizer_postprocess_ms: 2.0,
             recognize_ms: 23.0,
             formula_ms: 50.0,
+            table_detect_ms: 0.0,
+            table_structure_infer_ms: 0.0,
+            table_backfill_ms: 0.0,
             postprocess_ms: 3.0,
             total_ms: 4.0 + 12.0 + 0.0 + 23.0 + 3.0 + 50.0,
         };
@@ -1146,6 +1207,80 @@ mod tests {
         assert!(ledger.conservation().conserved);
         let shares = ledger.shares().expect("shares");
         assert!(shares.formula_share > 0.5, "formula must dominate here");
+    }
+
+    /// 表格域的三个命名分量进入账本，并且**落在正确的两侧**：结构识别是推理
+    /// （进入 `inference_ms()`），定位与回填是 Rust 侧（进入 `rust_ms()`）。
+    ///
+    /// 这是 09 文档 E1 的判据：表格分量既不能被吸进 `unattributed_ms`（否则账本会
+    /// 谎称“表格没花钱”），也不能破坏
+    /// `rust_ms + inference_ms + input_overflow_ms + unattributed_ms == total_ms`。
+    ///
+    /// 表格未启用时（`OcrTimings::table_*_ms` 全为 0）三个分量仍是账本里的显式字段，
+    /// 因此前后对比始终有可读的 `0` 而不是缺失键。
+    #[test]
+    fn ledger_accounts_for_the_table_stage() {
+        let timings = OcrTimings {
+            decode_ms: 1.0,
+            resize_ms: 2.0,
+            crop_ms: 0.5,
+            preprocess_ms: 4.0,
+            detector_preprocess_ms: 1.0,
+            detector_infer_ms: 10.0,
+            detector_postprocess_ms: 1.0,
+            detect_ms: 12.0,
+            classifier_preprocess_ms: 0.0,
+            classifier_infer_ms: 0.0,
+            classifier_postprocess_ms: 0.0,
+            classify_ms: 0.0,
+            recognizer_preprocess_ms: 1.0,
+            recognizer_infer_ms: 20.0,
+            recognizer_postprocess_ms: 2.0,
+            recognize_ms: 23.0,
+            formula_ms: 0.0,
+            table_detect_ms: 5.0,
+            table_structure_infer_ms: 40.0,
+            table_backfill_ms: 3.0,
+            postprocess_ms: 2.0,
+            total_ms: 4.0 + 12.0 + 0.0 + 23.0 + 2.0 + 5.0 + 40.0 + 3.0,
+        };
+        assert_stage_totals(&timings);
+
+        let ledger = TimingLedger::from_timings(&timings);
+        assert_eq!(ledger.table_detect_ms, 5.0);
+        assert_eq!(ledger.table_structure_infer_ms, 40.0);
+        assert_eq!(ledger.table_backfill_ms, 3.0);
+
+        // 推理侧：检测 10 + 识别 20 + 表格结构 40 = 70。
+        assert_eq!(ledger.inference_ms(), 70.0);
+        // Rust 侧：输入 4.0 + 模型前处理 2.0 + 模型后处理 3.0 + 页面后处理 2.0
+        // + 表格定位 5.0 + 表格回填 3.0 = 19.0。
+        assert_eq!(ledger.rust_ms(), 19.0);
+
+        assert!(
+            ledger.unattributed_ms.abs() < 1e-9,
+            "table components must stay named, not fall into the residual: {ledger:?}"
+        );
+        let conservation = ledger.conservation();
+        assert!(conservation.conserved, "{conservation:?}");
+
+        assert!(
+            (ledger.rust_ms()
+                + ledger.inference_ms()
+                + ledger.input_overflow_ms
+                + ledger.unattributed_ms
+                - ledger.total_ms)
+                .abs()
+                < 1e-9,
+            "the timing_split identity must survive the table components: {ledger:?}"
+        );
+
+        let shares = ledger.shares().expect("shares");
+        assert!(shares.table_structure_infer_share > 0.0);
+        assert!(shares.table_detect_share > 0.0);
+        assert!(shares.table_backfill_share > 0.0);
+        // 公式未启用时表格三分量必须在场且为 0（可读的 0，不是缺失键）。
+        assert_eq!(shares.formula_share, 0.0);
     }
 
     /// **守恒回归**：余量必须把差额暴露出来，而不是被悄悄吸收；两个方向都要显式报告。

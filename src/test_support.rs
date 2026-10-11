@@ -2,20 +2,21 @@
 //!
 //! 模型权重和公开测试集体积很大，不随 crate 提交，只能通过环境变量引用：
 //!
-//! - `RAPID_OCR_MODEL_ROOT`：模型根目录（例如 `<workspace>/OCR-Model`），也可以直接
+//! - `RAPID_STRUCTURE_MODEL_ROOT`：模型根目录（例如 `<workspace>/models`），也可以直接
 //!   指向 `pp_formulanet_plus_m.onnx`；
-//! - `RAPID_OCR_FORMULA_MODEL`：直接指向公式 ONNX，优先于根目录；
-//! - `RAPID_OCR_FORMULA_TEST_ROOT`：公式测试集根目录（例如 `<workspace>/Formula-TestSet`）。
+//! - `RAPID_STRUCTURE_FORMULA_MODEL`：直接指向公式 ONNX，优先于根目录；
+//! - `RAPID_STRUCTURE_FORMULA_TEST_ROOT`：公式测试集根目录（例如 `<workspace>/datasets/formula`）；
+//! - `RAPID_STRUCTURE_TABLE_STRUCTURE_MODEL`：直接指向 SLANet-plus ONNX，优先于根目录
+//!   （不设时先找仓库内 `models/table/slanet-plus.onnx`，再找模型根目录下的同名相对路径）。
 //!
 //! 缺失资产时测试必须 **skip**，不允许 panic，也不允许回落到开发机绝对路径，
 //! 否则干净 clone / CI 无法复现测试结论。需要在缺少资产时失败的流水线可以设置
-//! `RAPID_OCR_REQUIRE_EXTERNAL_ASSETS=1`，此时缺失资产会 panic 并说明原因。
+//! `RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS=1`，此时缺失资产会 panic 并说明原因。
 
 use std::path::{Path, PathBuf};
 
 /// 公式模型在模型根目录下的标准相对路径。
-pub const FORMULA_MODEL_RELATIVE: &str =
-    "Formula-Recognition-Models/onnx/pp_formulanet_plus_m.onnx";
+pub const FORMULA_MODEL_RELATIVE: &str = "formula/recognition/onnx/pp_formulanet_plus_m.onnx";
 
 fn env_path(name: &str) -> Option<PathBuf> {
     let raw = std::env::var(name).ok()?;
@@ -27,7 +28,7 @@ fn env_path(name: &str) -> Option<PathBuf> {
 }
 
 fn require_external_assets() -> bool {
-    std::env::var("RAPID_OCR_REQUIRE_EXTERNAL_ASSETS")
+    std::env::var("RAPID_STRUCTURE_REQUIRE_EXTERNAL_ASSETS")
         .map(|value| value.trim() == "1")
         .unwrap_or(false)
 }
@@ -43,7 +44,7 @@ pub fn asset(description: &str, value: Option<PathBuf>) -> Option<PathBuf> {
             if require_external_assets() {
                 panic!(
                     "missing external test asset: {description}; set the documented \
-                     RAPID_OCR_MODEL_ROOT / RAPID_OCR_FORMULA_TEST_ROOT environment variables"
+                     RAPID_STRUCTURE_MODEL_ROOT / RAPID_STRUCTURE_FORMULA_TEST_ROOT environment variables"
                 );
             }
             eprintln!("skipping test: {description} is not available in this environment");
@@ -61,10 +62,10 @@ pub fn fixture_dir(kind: &str) -> PathBuf {
 
 /// PP-FormulaNet_plus-M ONNX 路径；缺失时返回 `None`。
 pub fn formula_model_path() -> Option<PathBuf> {
-    let candidate = env_path("RAPID_OCR_FORMULA_MODEL")
+    let candidate = env_path("RAPID_STRUCTURE_FORMULA_MODEL")
         .filter(|path| path.is_file())
         .or_else(|| {
-            let root = env_path("RAPID_OCR_MODEL_ROOT")?;
+            let root = env_path("RAPID_STRUCTURE_MODEL_ROOT")?;
             if root.is_file() {
                 return Some(root);
             }
@@ -72,56 +73,119 @@ pub fn formula_model_path() -> Option<PathBuf> {
             direct.is_file().then_some(direct)
         });
     asset(
-        "PP-FormulaNet_plus-M onnx (set RAPID_OCR_MODEL_ROOT or RAPID_OCR_FORMULA_MODEL)",
+        "PP-FormulaNet_plus-M onnx (set RAPID_STRUCTURE_MODEL_ROOT or RAPID_STRUCTURE_FORMULA_MODEL)",
         candidate,
     )
 }
 
 /// `pix2text-mfd-1.5.onnx` 页面公式检测模型路径；缺失时返回 `None`。
 pub fn formula_detector_path() -> Option<PathBuf> {
-    let candidate = env_path("RAPID_OCR_FORMULA_DETECT_MODEL")
+    let candidate = env_path("RAPID_STRUCTURE_FORMULA_DETECT_MODEL")
         .filter(|path| path.is_file())
         .or_else(|| {
-            let root = env_path("RAPID_OCR_MODEL_ROOT")?;
-            let direct = root.join("Formula-Detection-Model/pix2text-mfd-1.5.onnx");
+            let root = env_path("RAPID_STRUCTURE_MODEL_ROOT")?;
+            let direct = root.join("formula/detection/pix2text-mfd-1.5.onnx");
             direct.is_file().then_some(direct)
         });
     asset(
-        "pix2text-mfd-1.5 onnx (set RAPID_OCR_MODEL_ROOT or RAPID_OCR_FORMULA_DETECT_MODEL)",
+        "pix2text-mfd-1.5 onnx (set RAPID_STRUCTURE_MODEL_ROOT or RAPID_STRUCTURE_FORMULA_DETECT_MODEL)",
         candidate,
     )
 }
 
-/// 普通 OCR 模型根目录（`OCR-Model`）；缺失时返回 `None`。
+/// SLANet-plus 表格结构模型在模型根目录下的标准相对路径。
+pub const TABLE_STRUCTURE_MODEL_RELATIVE: &str = "table/slanet-plus.onnx";
+
+/// SLANet-plus 表格结构 ONNX 路径；缺失时返回 `None`。
+pub fn table_structure_model_path() -> Option<PathBuf> {
+    let candidate = env_path("RAPID_STRUCTURE_TABLE_STRUCTURE_MODEL")
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let direct = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("models")
+                .join(TABLE_STRUCTURE_MODEL_RELATIVE);
+            if direct.is_file() {
+                return Some(direct);
+            }
+            let root = env_path("RAPID_STRUCTURE_MODEL_ROOT")?;
+            let nested = root.join(TABLE_STRUCTURE_MODEL_RELATIVE);
+            nested.is_file().then_some(nested)
+        });
+    asset(
+        "SLANet-plus onnx (set RAPID_STRUCTURE_MODEL_ROOT or RAPID_STRUCTURE_TABLE_STRUCTURE_MODEL)",
+        candidate,
+    )
+}
+
+/// 普通 OCR 模型根目录（`models`）；缺失时返回 `None`。
 pub fn ocr_model_root() -> Option<PathBuf> {
-    let candidate = env_path("RAPID_OCR_MODEL_ROOT").filter(|path| path.is_dir());
-    asset("OCR model root (set RAPID_OCR_MODEL_ROOT)", candidate)
+    let candidate = env_path("RAPID_STRUCTURE_MODEL_ROOT").filter(|path| path.is_dir());
+    asset("OCR model root (set RAPID_STRUCTURE_MODEL_ROOT)", candidate)
 }
 
 /// 页面级集成测试用的真实页面图片。
 ///
-/// 位置从模型根目录的**同级目录**推导（`<workspace>/OCR-test-image`），也可以通过
-/// `RAPID_OCR_TEST_IMAGES` 覆盖；两者都不可用时返回 `None` 并跳过测试。
+/// 位置默认取仓库根下的 `datasets/text`（也可通过 `RAPID_STRUCTURE_TEST_IMAGES` 覆盖）；
+/// 两者都不可用时返回 `None` 并跳过测试。
 pub fn page_fixture(name: &str) -> Option<PathBuf> {
-    let candidate = env_path("RAPID_OCR_TEST_IMAGES")
+    let candidate = env_path("RAPID_STRUCTURE_TEST_IMAGES")
         .map(|root| root.join(name))
         .filter(|path| path.is_file())
         .or_else(|| {
-            let root = env_path("RAPID_OCR_MODEL_ROOT")?;
-            let root = root.parent()?.join("OCR-test-image").join(name);
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("datasets")
+                .join("text")
+                .join(name);
             root.is_file().then_some(root)
         });
     asset(
-        &format!("page fixture `{name}` (set RAPID_OCR_TEST_IMAGES or RAPID_OCR_MODEL_ROOT)"),
+        &format!(
+            "page fixture `{name}` (set RAPID_STRUCTURE_TEST_IMAGES or RAPID_STRUCTURE_MODEL_ROOT)"
+        ),
         candidate,
     )
 }
 
 /// 公式测试集根目录；缺失时返回 `None`。
 pub fn formula_dataset_root() -> Option<PathBuf> {
-    let candidate = env_path("RAPID_OCR_FORMULA_TEST_ROOT").filter(|path| path.is_dir());
+    let candidate = env_path("RAPID_STRUCTURE_FORMULA_TEST_ROOT").filter(|path| path.is_dir());
     asset(
-        "formula test set (set RAPID_OCR_FORMULA_TEST_ROOT)",
+        "formula test set (set RAPID_STRUCTURE_FORMULA_TEST_ROOT)",
+        candidate,
+    )
+}
+
+/// 表格定位验收用的真实页面图片；缺失时返回 `None`。
+///
+/// 三张图里有两张来自 `refer/RapidTable-main/tests/test_files`（参考项目的测试资产，
+/// `refer/` 整个目录 **git 未跟踪**），一张来自仓库的 `datasets/text`（同样未跟踪）。
+/// 所以这里和 [`table_structure_model_path`] 一样必须优雅跳过：
+/// 资产不在仓库内，缺失时**不许 panic，也不许回落到开发机绝对路径**。
+pub fn table_detection_fixture(name: &str) -> Option<PathBuf> {
+    let candidate = env_path("RAPID_STRUCTURE_TABLE_DETECTION_IMAGES")
+        .map(|root| root.join(name))
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("refer")
+                .join("RapidTable-main")
+                .join("tests")
+                .join("test_files")
+                .join(name);
+            root.is_file().then_some(root)
+        })
+        .or_else(|| {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("datasets")
+                .join("text")
+                .join(name);
+            root.is_file().then_some(root)
+        });
+    asset(
+        &format!(
+            "table detection fixture `{name}` (set RAPID_STRUCTURE_TABLE_DETECTION_IMAGES, or place it \
+             under refer/RapidTable-main/tests/test_files or datasets/text)"
+        ),
         candidate,
     )
 }
@@ -141,7 +205,7 @@ impl TempDir {
             .expect("system clock should be after unix epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "rapid-ocr-rs-{label}-{}-{suffix}",
+            "rapid-structure-rs-{label}-{}-{suffix}",
             std::process::id()
         ));
         std::fs::create_dir_all(&path).expect("temp dir should be creatable");

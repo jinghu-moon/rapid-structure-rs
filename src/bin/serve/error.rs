@@ -69,7 +69,7 @@
 //! serve 侧只有 [`DownloadErrorMapping`] 这一层 HTTP 映射；因此 M0c 报告的接缝
 //! （"同一件事有两套错误表示"）在这里被彻底消除。
 
-use rapid_ocr_rs::{DownloadError, RapidOcrError};
+use rapid_structure_rs::{DownloadError, RapidOcrError};
 use serde::Serialize;
 
 use super::state::OcrAdmission;
@@ -141,7 +141,7 @@ impl DownloadErrorMapping for DownloadError {
                     "the model host answered with a redirect to `{location}` whose chain is not \
                      trusted (only https, an allow-listed host, the same file name, and at most \
                      {} hops are followed; see docs/05 §6.1 item 2)",
-                    rapid_ocr_rs::MAX_REDIRECT_HOPS
+                    rapid_structure_rs::MAX_REDIRECT_HOPS
                 ),
                 None => "the model host answered with a redirect that carries no usable \
                          `Location` header"
@@ -296,7 +296,7 @@ pub enum ServeError {
     /// **M4 新增的变体**：`POST /api/evaluate` 的评估请求无法执行。
     ///
     /// `code` 复用 §11.1 已有的 `bad_request`（400），但 `detail.reason` 必须给出**可定位**
-    /// 的原因：清单读不出来、不是 `rapidocr evaluate` 的格式、用例数超过 `--max-eval-cases`、
+    /// 的原因：清单读不出来、不是 `rapidstruct evaluate` 的格式、用例数超过 `--max-eval-cases`、
     /// 或某一张图路径解析不到。这些都不是"服务器内部错误"，也不该压成一句 `bad_request`
     /// 的默认文案（用户需要知道改哪一个输入）。
     Evaluation {
@@ -498,7 +498,7 @@ impl ServeError {
     pub fn message(&self) -> String {
         match self {
             Self::BadRequest => "the request is malformed".to_string(),
-            Self::Unauthorized => "missing or invalid X-RapidOCR-Token".to_string(),
+            Self::Unauthorized => "missing or invalid X-RapidStructure-Token".to_string(),
             Self::BadOrigin => {
                 "state-changing requests must carry an Origin equal to this server's origin"
                     .to_string()
@@ -707,7 +707,7 @@ pub struct ErrorBody {
 mod tests {
     use std::path::PathBuf;
 
-    use rapid_ocr_rs::RapidOcrError;
+    use rapid_structure_rs::RapidOcrError;
 
     use super::{DownloadError, DownloadErrorMapping, ServeError};
 
@@ -968,7 +968,7 @@ mod tests {
 
     /// `RapidOcrError` 的每一个变体都在同一张表里映射（无字符串匹配）。
     #[test]
-    fn every_rapid_ocr_error_variant_is_mapped() {
+    fn every_rapid_structure_error_variant_is_mapped() {
         let http = reqwest::blocking::Client::new()
             .get("http://127.0.0.1:99999/")
             .send()

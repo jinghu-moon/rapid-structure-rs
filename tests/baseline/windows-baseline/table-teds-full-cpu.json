@@ -1,0 +1,608 @@
+{
+  "backfill": {
+    "backfill_ms": {
+      "count": 7084,
+      "max": 4.0768,
+      "mean": 0.012872797854319629,
+      "min": 0.0014,
+      "p50": 0.0079,
+      "p90": 0.024300000000000002
+    },
+    "blank_cells": 0,
+    "cells": 143456,
+    "lines_above_table": 73,
+    "lines_considered": 144641,
+    "matched_lines_total": 139931,
+    "multi_line_cells": 20970,
+    "non_empty_cells": 106350,
+    "non_empty_rate": 0.7413422931072943,
+    "recognizer_calls": 0,
+    "recognizer_calls_note": "gate G2: the backfill path must never call the recognizer, so a non-zero count here is a failure",
+    "single_line_cells": 85380,
+    "text_confidence": 0.9600353837013245,
+    "unmatched_cells": 37106
+  },
+  "cell_count_agreement": {
+    "comparable_samples": 7084,
+    "difference_histogram": {
+      "-1": 173,
+      "-10": 133,
+      "-11": 66,
+      "-12": 136,
+      "-13": 50,
+      "-14": 71,
+      "-15": 33,
+      "-16": 36,
+      "-17": 32,
+      "-18": 40,
+      "-19": 27,
+      "-2": 378,
+      "-20": 22,
+      "-21": 21,
+      "-22": 20,
+      "-23": 16,
+      "-24": 19,
+      "-25": 8,
+      "-26": 21,
+      "-27": 10,
+      "-28": 9,
+      "-29": 11,
+      "-3": 257,
+      "-30": 12,
+      "-31": 8,
+      "-32": 19,
+      "-33": 10,
+      "-34": 11,
+      "-35": 8,
+      "-36": 9,
+      "-37": 2,
+      "-38": 3,
+      "-39": 3,
+      "-4": 275,
+      "-40": 4,
+      "-41": 4,
+      "-42": 2,
+      "-43": 2,
+      "-44": 1,
+      "-45": 4,
+      "-46": 3,
+      "-47": 1,
+      "-48": 2,
+      "-49": 1,
+      "-5": 160,
+      "-50": 4,
+      "-51": 1,
+      "-52": 1,
+      "-53": 1,
+      "-54": 2,
+      "-55": 2,
+      "-56": 5,
+      "-58": 3,
+      "-6": 222,
+      "-60": 1,
+      "-61": 2,
+      "-62": 1,
+      "-63": 5,
+      "-64": 2,
+      "-65": 2,
+      "-66": 4,
+      "-67": 1,
+      "-68": 4,
+      "-69": 1,
+      "-7": 134,
+      "-70": 1,
+      "-71": 1,
+      "-74": 1,
+      "-75": 1,
+      "-78": 1,
+      "-79": 1,
+      "-8": 157,
+      "-80": 1,
+      "-82": 3,
+      "-84": 2,
+      "-86": 1,
+      "-9": 105,
+      "-90": 1,
+      "0": 3310,
+      "1": 174,
+      "10": 22,
+      "11": 17,
+      "12": 20,
+      "123": 1,
+      "13": 11,
+      "134": 1,
+      "135": 2,
+      "14": 11,
+      "15": 6,
+      "154": 1,
+      "16": 8,
+      "17": 11,
+      "18": 7,
+      "19": 7,
+      "2": 151,
+      "20": 13,
+      "21": 6,
+      "22": 2,
+      "23": 1,
+      "24": 11,
+      "25": 1,
+      "26": 2,
+      "27": 2,
+      "28": 1,
+      "29": 1,
+      "3": 100,
+      "30": 4,
+      "31": 1,
+      "32": 4,
+      "33": 4,
+      "34": 1,
+      "35": 4,
+      "36": 2,
+      "37": 1,
+      "39": 8,
+      "4": 100,
+      "40": 1,
+      "41": 1,
+      "42": 1,
+      "43": 2,
+      "44": 2,
+      "45": 1,
+      "46": 2,
+      "47": 3,
+      "48": 3,
+      "49": 1,
+      "5": 58,
+      "50": 1,
+      "51": 1,
+      "53": 1,
+      "54": 2,
+      "55": 3,
+      "57": 1,
+      "58": 1,
+      "59": 4,
+      "6": 45,
+      "60": 1,
+      "62": 4,
+      "64": 1,
+      "65": 1,
+      "67": 2,
+      "69": 2,
+      "7": 40,
+      "70": 1,
+      "72": 1,
+      "75": 1,
+      "8": 32,
+      "87": 1,
+      "88": 1,
+      "89": 1,
+      "9": 20,
+      "90": 1,
+      "92": 1,
+      "93": 1,
+      "94": 1,
+      "96": 1
+    },
+    "exact": 3310,
+    "exact_fraction": 0.46725014116318464,
+    "note": "predicted cell count minus true cell count, counted as occurrences of `<td` in each html string. Under-counting dominates, i.e. the model merges or drops cells far more often than it invents them.",
+    "over_counted": 967,
+    "under_counted": 2807
+  },
+  "config": {
+    "fix_input_shape": true,
+    "input_side_len": 488,
+    "inter_threads": 1,
+    "intra_threads": 14,
+    "session_input_dims": [
+      -1,
+      3,
+      488,
+      488
+    ]
+  },
+  "content_source": "page_reuse",
+  "dataset": {
+    "content_sha256": "2f9f70824c739bf9df30ddf8cb8b356c3ac68487ca34abbb542866b0cb535768",
+    "decodable": 7084,
+    "failed": 20,
+    "failure_scoring": "a failed sample is written as an empty prediction, which the official metric scores as 0.0; failures are never dropped",
+    "html_hashes_verified": 7104,
+    "manifest": "datasets/table/tabrecset\\derived\\pubtabnet_val.jsonl",
+    "manifest_bytes": "b",
+    "manifest_sha256": "0",
+    "root": "datasets/table/tabrecset",
+    "sample_set_sha256": "7493f29405c7cedbb8a5367fc7a30f66378242f2c32083ab53cac5655efce090",
+    "samples_loaded": 7104,
+    "selected": 7104,
+    "selection": "hash-based (sha256 of relative_path + \\x1f + ground truth, ascending), limit 0 = all"
+  },
+  "determinism": {
+    "identical_prediction_digests": true,
+    "method": "same configuration, full val set, 3 run(s); the prediction artifacts are compared byte for byte. Byte-identical predictions imply an identical TEDS, which is a stronger statement than agreement of the means and is what E8 needs when fixing epsilon.",
+    "prediction_bytes": [
+      3744372,
+      3744372,
+      3744372
+    ],
+    "prediction_sha256": [
+      "df6bd2c0e17bdba5f17bfa74f3d9146c30f30a3ec98f2feae53f38c727d840d2",
+      "df6bd2c0e17bdba5f17bfa74f3d9146c30f30a3ec98f2feae53f38c727d840d2",
+      "df6bd2c0e17bdba5f17bfa74f3d9146c30f30a3ec98f2feae53f38c727d840d2"
+    ],
+    "runs": 3,
+    "teds_stddev_across_runs": 0.0,
+    "timing_across_runs": {
+      "loop_wall_ms": [
+        1346731.8906999999,
+        255920.367,
+        246862.4517
+      ],
+      "total_ms_mean": [
+        34.802486801242274,
+        35.457641840767806,
+        34.167882199322456
+      ],
+      "total_ms_p50": [
+        30.3675,
+        31.0687,
+        29.876099999999997
+      ]
+    }
+  },
+  "failure_kinds": {
+    "decoding failed: table structure closes `</tbody>` without a matching open tag": 2,
+    "decoding failed: table structure ends with 1 unclosed tag(s)": 12,
+    "decoding failed: table structure ends with 2 unclosed tag(s)": 5,
+    "decoding failed: table structure has a fragment ` colspan=\"18\"` that is neither a cell start nor a tag this decoder knows; a bare `>` or ` colspan=\u2026` here means the `<td` that should have opened it is missing": 1
+  },
+  "failures": [
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "1178256895_0_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/1178256895_0_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "2589156065_1_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/2589156065_1_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "3650741302_2_0_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/3650741302_2_0_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 2 unclosed tag(s)",
+      "file_name": "3922996804_0_all-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/3922996804_0_all-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "16_144be8eac8d361a40d6a29dcbb77860f_segR__tR__hl_0_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/16_144be8eac8d361a40d6a29dcbb77860f_segR__tR__hl_0_no-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure closes `</tbody>` without a matching open tag",
+      "file_name": "2663359606_0_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/2663359606_0_no-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "2426225665_1_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/2426225665_1_no-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "13_107c0c3c11db6cd242e2be1b47b1f6c2_segR__tR__yf_0_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/13_107c0c3c11db6cd242e2be1b47b1f6c2_segR__tR__yf_0_no-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 2 unclosed tag(s)",
+      "file_name": "_R_8632664557_ljh_0_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/_R_8632664557_ljh_0_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 2 unclosed tag(s)",
+      "file_name": "3548192251_0_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/3548192251_0_no-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 2 unclosed tag(s)",
+      "file_name": "3548192251_0_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/3548192251_0_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure closes `</tbody>` without a matching open tag",
+      "file_name": "16_08ad60f05222e667cbd5751ff42e296c_segR__tR__hl_0_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/16_08ad60f05222e667cbd5751ff42e296c_segR__tR__hl_0_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "1121574436_2_0_all-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/1121574436_2_0_all-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "0bkxf0e8_0_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/0bkxf0e8_0_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "2326672306_0_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/2326672306_0_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "3276096782_0_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/3276096782_0_no-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "2236082063_1_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/2236082063_1_no-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 1 unclosed tag(s)",
+      "file_name": "344i988j_1_three-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/344i988j_1_three-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure ends with 2 unclosed tag(s)",
+      "file_name": "2671992180_0_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/2671992180_0_no-line.jpg"
+    },
+    {
+      "error": "decoding failed: table structure has a fragment ` colspan=\"18\"` that is neither a cell start nor a tag this decoder knows; a bare `>` or ` colspan=\u2026` here means the `<td` that should have opened it is missing",
+      "file_name": "18_09c739dc56403807331039e13a400a4d_segR__tR__hl_0_no-line.jpg",
+      "image_path": "cropped_datasets_1Tab_per_img/val/18_09c739dc56403807331039e13a400a4d_segR__tR__hl_0_no-line.jpg"
+    }
+  ],
+  "generated_utc": "2026-10-09T02:46:10Z",
+  "metric": {
+    "comparability": "TEDS on TabRecSet val, with cell text produced by this project's page-level OCR matched onto the predicted cell polygons. NOT comparable with the SLANet TEDS 95.89 in the PubTabNet paper: different dataset (Chinese/mixed TabRecSet val vs English PubTabNet test), a different split, and PubTabNet scores TEDS against ground-truth cell text rather than recognised text. SLANet_plus 63.69 is a PaddleX internal-set Accuracy, not a TEDS, and is not comparable either.",
+    "definition": "1 - APTED tree edit distance / max(node_count_pred, node_count_true)",
+    "implementation": "https://raw.githubusercontent.com/ibm-aur-nlp/PubTabNet/master/src/metric.py",
+    "implementation_sha256": "a9aedd313678b42e55b06c4b0a365d658ef495aaf3abb7fd6012a6e9f334f9f9",
+    "name": "TEDS",
+    "not_reported": [],
+    "note": "the official implementation is not bounded below by 0: when the predicted tree is much smaller than the true tree the edit distance can exceed the normaliser, so negative scores occur and are reported as produced.",
+    "structure_only": false
+  },
+  "model": {
+    "box_output_name": "save_infer_model/scale_0.tmp_0",
+    "bytes": 7758305,
+    "class_count": 50,
+    "eos_class_index": 49,
+    "input_dims": [
+      -1,
+      3,
+      -1,
+      -1
+    ],
+    "input_name": "x",
+    "path": "models/table/slanet-plus.onnx",
+    "sha256": "d57a942af6a2f57d6a4a0372573c696a2379bf5857c45e2ac69993f3b334514b",
+    "sos_class_index": 0,
+    "structure_last_dim": 50,
+    "structure_output_name": "save_infer_model/scale_1.tmp_0",
+    "token_count": 48
+  },
+  "ocr_resolution": {
+    "applies_to": "page_reuse",
+    "limit_side_len": 736,
+    "limit_type": "max",
+    "live_knob": "max_side_len (det ignores limit_side_len under limit_type=max)",
+    "max_side_len": 736
+  },
+  "page_ocr": {
+    "cache_hits": 0,
+    "cache_misses": 7104,
+    "cache_path": "Temp\\e13-cache-baseline.json",
+    "engine": "page OCR: models/configs/test-config-small.yaml",
+    "engine_fingerprint": "d9a392227d36c028eb793c2125e3571b154efaeb9ba10813f6b5ed3754dc233b",
+    "ocr_ms": {
+      "count": 7104,
+      "max": 1042.9908,
+      "mean": 154.1108021114864,
+      "min": 5.2433000000000005,
+      "p50": 116.483,
+      "p90": 306.7218
+    },
+    "regions_seen": 145377
+  },
+  "protocol": {
+    "authoritative_grid_source": "token_stream",
+    "document": "docs/10-table-evaluation-protocol.md",
+    "epsilon_evidence": "prediction artifacts compared byte for byte; byte-identical predictions imply an identical score, which is stronger than comparing means",
+    "loop_trip_cap": 500,
+    "loop_trip_cap_source": "the `Loop` node's trip-count constant in the ONNX graph; ORT does not expose graph internals, so this is a constant whose staleness shows up as a growing deducted-sample count",
+    "repeat_epsilon": 0.0,
+    "repeat_epsilon_meaning": "0 means bit-identical, not approximately equal; a non-zero difference between two same-configuration runs is a nondeterminism defect, not noise",
+    "runs_agree_within_epsilon": true,
+    "source": "read from the report's `protocol` section; never restated in this script",
+    "uncovered_position_rule": "keep_hole",
+    "upper_bound_policy": "samples whose truth cannot be expressed by the model (span beyond the vocabulary, or a structure stream longer than the loop trip cap) are counted in the headline metric but excluded from the regression criterion"
+  },
+  "result": {
+    "decodable_samples": 7084,
+    "exact_one": 0,
+    "exact_zero": 24,
+    "histogram": [
+      {
+        "count": 2,
+        "fraction": 0.00028153153153153153,
+        "score": -0.3
+      },
+      {
+        "count": 1,
+        "fraction": 0.00014076576576576576,
+        "score": -0.2
+      },
+      {
+        "count": 7,
+        "fraction": 0.0009853603603603603,
+        "score": -0.1
+      },
+      {
+        "count": 121,
+        "fraction": 0.017032657657657657,
+        "score": 0.0
+      },
+      {
+        "count": 423,
+        "fraction": 0.05954391891891892,
+        "score": 0.1
+      },
+      {
+        "count": 568,
+        "fraction": 0.07995495495495496,
+        "score": 0.2
+      },
+      {
+        "count": 506,
+        "fraction": 0.07122747747747747,
+        "score": 0.3
+      },
+      {
+        "count": 619,
+        "fraction": 0.08713400900900901,
+        "score": 0.4
+      },
+      {
+        "count": 667,
+        "fraction": 0.09389076576576577,
+        "score": 0.5
+      },
+      {
+        "count": 794,
+        "fraction": 0.11176801801801801,
+        "score": 0.6
+      },
+      {
+        "count": 790,
+        "fraction": 0.11120495495495496,
+        "score": 0.7
+      },
+      {
+        "count": 1190,
+        "fraction": 0.16751126126126126,
+        "score": 0.8
+      },
+      {
+        "count": 1363,
+        "fraction": 0.19186373873873874,
+        "score": 0.9
+      },
+      {
+        "count": 53,
+        "fraction": 0.007460585585585586,
+        "score": 1.0
+      }
+    ],
+    "max": 0.9906534601531541,
+    "mean": 0.5834044577250798,
+    "mean_decodable_only": 0.5850515623488095,
+    "min": -0.31446153846153857,
+    "samples": 7104,
+    "stddev": 0.2647658000299499
+  },
+  "span_exceedance": {
+    "cells_exceeding": 6,
+    "cells_total": 161925,
+    "examples": [
+      {
+        "file_name": "174515708_ljh_1_no-line.jpg",
+        "kind": "colspan",
+        "value": 24
+      },
+      {
+        "file_name": "174515708_ljh_1_no-line.jpg",
+        "kind": "colspan",
+        "value": 24
+      },
+      {
+        "file_name": "174515708_ljh_1_all-line.jpg",
+        "kind": "colspan",
+        "value": 24
+      },
+      {
+        "file_name": "174515708_ljh_1_all-line.jpg",
+        "kind": "colspan",
+        "value": 24
+      },
+      {
+        "file_name": "174515708_ljh_1_three-line.jpg",
+        "kind": "colspan",
+        "value": 24
+      },
+      {
+        "file_name": "174515708_ljh_1_three-line.jpg",
+        "kind": "colspan",
+        "value": 24
+      }
+    ],
+    "fraction": 0.0004222972972972973,
+    "observed_max_colspan": 24,
+    "observed_max_rowspan": 16,
+    "tables": 7104,
+    "tables_exceeding": 3
+  },
+  "stage": "E13 (docs/09-table-recognition-execution.md section 14)",
+  "structure_confidence": {
+    "degradations": {
+      "grid_holes": 350,
+      "truncated": 0
+    },
+    "high": 6734,
+    "holes_total": 2209,
+    "low": 350,
+    "scoring": "a low-confidence sample is still scored; the flag says the model could not express the truth, not that the prediction is unusable",
+    "why_grid_holes": "the model cannot emit a span outside its vocabulary (SLANet-plus stops at 20, the data reaches colspan=24); it then declares a smaller span and the logical grid is left with a hole, which the emitter is the only place able to notice",
+    "why_truncated": "the structure `Loop` hit its trip cap before emitting `eos`, so the tail of the structure is missing even though the token stream looks well-formed"
+  },
+  "timing": {
+    "cells": {
+      "count": 7084,
+      "max": 235.0,
+      "mean": 20.250705815923208,
+      "min": 1.0,
+      "p50": 14.0,
+      "p90": 43.0
+    },
+    "decode_ms": {
+      "count": 7084,
+      "max": 4.148899999999999,
+      "mean": 0.048133145115753805,
+      "min": 0.0103,
+      "p50": 0.036399999999999995,
+      "p90": 0.0871
+    },
+    "infer_ms": {
+      "count": 7084,
+      "max": 143.00050000000002,
+      "mean": 32.38577018633536,
+      "min": 13.240699999999999,
+      "p50": 28.3386,
+      "p90": 47.199
+    },
+    "loop_wall_ms": 1346731.8906999999,
+    "preprocess_ms": {
+      "count": 7084,
+      "max": 16.331100000000003,
+      "mean": 1.129054009034443,
+      "min": 0.1044,
+      "p50": 0.969,
+      "p90": 2.1186
+    },
+    "scope": "per-sample, wall clock around each stage; NOT the timing ledger",
+    "total_ms": {
+      "count": 7084,
+      "max": 159.03300000000002,
+      "mean": 34.802486801242274,
+      "min": 13.8232,
+      "p50": 30.3675,
+      "p90": 50.812599999999996
+    }
+  },
+  "tool": "tools/build_table_teds_baseline.py"
+}

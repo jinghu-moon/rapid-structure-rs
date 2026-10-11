@@ -4,7 +4,7 @@
 //! 供阶段 9 的数值回归使用。它不依赖 `ocr` 或 `formula` 生产识别器，
 //! 也不做任何模型推理。
 //!
-//! 数据事实（来自 `Formula-TestSet`）：
+//! 数据事实（来自 `datasets/formula`）：
 //! - `im2latex_formulas.norm.lst` 中存在空标签行；`im2latex_test_filter.lst` 有 71 条索引引用
 //!   空标签。这些样本仍然“可定位”（图片存在），但 `ground_truth` 为空，必须用
 //!   [`FormulaSample::has_ground_truth`] / [`FormulaFixture::scorable`] 排除出精确匹配统计，
@@ -533,7 +533,7 @@ mod tests {
 
     use super::*;
 
-    const TEST_ROOT_ENV: &str = "RAPID_OCR_FORMULA_TEST_ROOT";
+    const TEST_ROOT_ENV: &str = "RAPID_STRUCTURE_FORMULA_TEST_ROOT";
 
     /// 公开测试集不随 crate 提交；缺失时必须 skip，不允许 panic 或回落到绝对路径。
     fn launcher_root(relative: &str) -> Option<PathBuf> {
@@ -554,7 +554,7 @@ mod tests {
 
     fn temp_root(name: &str) -> PathBuf {
         let mut root = std::env::temp_dir();
-        root.push(format!("rapid-ocr-rs-{name}-{}", std::process::id()));
+        root.push(format!("rapid-structure-rs-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("temp dir");
         root
