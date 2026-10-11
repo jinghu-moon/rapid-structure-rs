@@ -283,6 +283,21 @@
   ④ 页面 `colspan` 下界由 `>1` 改为 `>=1`，与引擎的 `[1,64]` 一致，保证双重净化幂等。
 - 新增用例：span 边界（1✓ / 64✓ / 65✗ / 1000✗）、`align`/`valign` 拒绝、转义字节对照、fingerprint 三份对拍。
 
+## 评测域字节摘要单点化（P1-8，未发布）
+
+对应 `docs/12-structure-refactor-plan.md` 的 P1-8（M-3/M-5 周边，状态：批准）：评测域里
+**逐字同形**的 SHA-256 小写十六进制摘要实现收敛到 `src/evaluation/digest.rs` 的
+`pub fn digest_hex(bytes: &[u8]) -> String`。行为等价：同算法、同输出，manifest/报告哈希不变。
+
+- 合并点：`evaluation::formula::sampling` 与 `evaluation::table::fixture` 的局部 `digest_hex`（已删），
+  以及 `evaluation::table::run` 的两处同形内联（`engine_fingerprint` 与 `digest_file` 的哈希段）。
+- 旁证用例：已知答案向量（FIPS 180-2 示例 + 空输入）钉"小写 64 字符"；`digest_file` 与
+  `digest_hex` 对同一字节给出同一摘要。sampling/fixture 侧由其既有 manifest/digest 测试继续钉行为。
+- **明确不合并**（不同域，且各自的"独立性"是有意的）：`model_store` 测试模块与
+  `output::json` 快照测试里的 `sha256_hex` 是构造期望值的参照实现，不与被测单点合并；
+  `formula/preprocess` 的 golden 哈希比对同理。`bin/formula_eval` 参考文件摘要（审计未列入
+  P1-8 的第四处生产拷贝）本批不动，已在 docs/12 §9 登记为后续候选。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

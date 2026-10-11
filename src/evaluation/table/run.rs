@@ -57,7 +57,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::{
     api::{
@@ -67,6 +66,7 @@ use crate::{
     config::{RecImage, RuntimeConfig},
     error::{RapidOcrError, Result},
     evaluation::{
+        digest::digest_hex,
         runtime_report::attach_runtime_fields,
         table::{
             fixture::{
@@ -925,9 +925,7 @@ fn engine_fingerprint(config: &EngineConfig) -> Result<String> {
             "the engine config cannot be fingerprinted: {error}"
         ))
     })?;
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_bytes());
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(digest_hex(canonical.as_bytes()))
 }
 
 impl OcrCache {
@@ -1520,9 +1518,7 @@ fn write_predictions(path: &Path, predictions: &BTreeMap<String, String>) -> Res
 /// 文件的 `(字节数, sha256)`。
 pub fn digest_file(path: &Path) -> Result<(u64, String)> {
     let bytes = std::fs::read(path)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    Ok((bytes.len() as u64, format!("{:x}", hasher.finalize())))
+    Ok((bytes.len() as u64, digest_hex(&bytes)))
 }
 
 /// 报告里的耗时/计数分布。

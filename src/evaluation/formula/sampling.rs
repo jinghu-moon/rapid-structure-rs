@@ -12,8 +12,8 @@
 //!   重跑必须得到同一个哈希。
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
+use crate::evaluation::digest::digest_hex;
 use crate::evaluation::formula::fixture::FormulaSample;
 
 /// 抽样策略。
@@ -41,12 +41,6 @@ impl SampleStrategy {
 /// 也不含图像内容，理由见模块文档。
 fn sample_key(sample: &FormulaSample) -> String {
     format!("{}\u{1f}{}", sample.relative_path(), sample.ground_truth)
-}
-
-fn digest_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
 }
 
 /// 选择评测样本；`limit == 0` 表示全量。

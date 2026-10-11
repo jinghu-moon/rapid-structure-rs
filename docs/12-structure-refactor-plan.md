@@ -1243,6 +1243,7 @@ node tools\check-page-result-contract.mjs
 | 7 · P1-4 | `819f6d0` | `PageTextLine` 规范视图 + 装配点单点转换（第一批） | bbox 唯一生成点 = `aabb_from_flat8`，与旧逐位一致；旧结构原样保留 | lib 724、serve 串行 289 | §8.1/§8.2 全绿 | 删旧结构属第二批，本批未做 |
 | 7 · P1-6 | `bc4dbb6` | 权威 `assets/table_html_whitelist.json` + 生成器 + fingerprint 三份对拍 | **产品可见收紧（§4.2 行 864 要求登记）**：标签统一 28（页面 11→28）、移除 align/valign、引擎 span 1000→64、页面 colspan 下界 >1→>=1；escape 全链单点 | lib 728、serve 串行 289、serve_startup、node 契约 | §8.1/§8.2 + `generate-table-whitelist.mjs --check` 全绿 | 捕获的 42 区域页面 fixture 不含表格，大表格双重净化路径未由真实捕获体覆盖（由构造用例覆盖） |
 | 7 · P1-7 | 无代码改动（取消） | 临时 `#[ignore]` 探针 `cargo test --lib --features serve p17_measure_json_view_payload_and_time -- --ignored --nocapture`，量测后 `git checkout` 还原 | debug min-of-300：`to_value`=232µs、`to_output_json`=728µs、视图构造增量 **496µs（0.496ms）**；`result-real-42-regions.json` 派生视图占 full 30366B 的 **39.4%**（items 10340B + text 1582B 复制 regions；此页无表格、formulas 空） | 新量测（无改前/改后对比：投影重构保持输出字节不变） | **结论：取消投影重构** —— 收益 <0.5ms（debug 最坏值，release 更低）且相对完整序列化路径 <5%，命中本文"收益不明显则取消"判据；三视图按协议用途原样保留 | payload 39.4% 冗余真实存在，但删 items/text 属**破坏性输出协议变更**（评审二.8 排除出 P1，需独立版本标记与对外说明），另议 |
+| 随时 · P1-8 | （本批） | `evaluation/digest.rs` 单点 `digest_hex`，三处改调（含 run 侧第二处同形内联 engine_fingerprint） | 行为等价；已知答案向量 + digest_file 一致性旁证；sampling/fixture 既有 manifest 测试不变 | lib 730（新增 2 条旁证）、serve 串行 289、全套件无回归 | §8.1/§8.2 全绿（本次提交） | `bin/formula_eval:1134` 是审计未列入的**第四处生产拷贝**（bin 链接公开 `evaluation::digest` 可达），本批按"不超规模"裁决未动，后续候选；测试内的 sha256_hex 参照实现（model_store/json/formula-preprocess golden）有意不合并 |
 
 ---
 

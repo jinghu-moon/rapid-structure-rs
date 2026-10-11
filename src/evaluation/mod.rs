@@ -7,7 +7,10 @@
 //! `evaluation::runtime_report` 是唯一**跨域共享**的一层：它只管报告里那四个与域无关的
 //! 运行时字段（峰值工作集、内存口径、ORT 指纹与版本）。共享它不违反上面那条规则 ——
 //! 共享的是"两份报告跑在同一份运行库上"这个证据，不是指标本身。
+//!
+//! `evaluation::digest` 是评测域内字节摘要的单点（P1-8）：三处同形实现已合并到这里。
 
+pub mod digest;
 pub mod formula;
 pub mod ocr;
 pub mod runtime_report;
