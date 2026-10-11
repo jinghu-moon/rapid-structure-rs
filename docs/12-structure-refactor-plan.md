@@ -893,8 +893,12 @@ node tools\check-page-result-contract.mjs
 
 **目标设计（重写：先测量，收益不明显就取消）**
 
-1. **先测**：对真实页面（含大表格）测 payload 体积与 `serde_json` 序列化耗时，改前/改后各一次。
+1. **先测**：对真实页面（含大表格）测 payload 体积与 `serde_json` 序列化耗时。
+   裁决补充（审核点 3）：投影重构的定义就是**保持输出字节不变**，因此不存在“改后字节”可比；
+   判据落在**成本结构**上 —— 分别量视图构造时间、序列化时间、负载体积三项。
 2. 若收益不明显（例如 < 5% 且绝对值 < 数毫秒）→ **取消本项**，只在本文登记测量结果。
+   首次登记（`f713ded`）的样本是无表格页，审核点 3 判定其不能支撑表格场景结论；
+   已补表格场景重测（入库夹具 + 保留探针，见 §9 审核修复行），重测后取消结论维持。
 3. 若确实要改：
    - 保留 `regions` 为唯一事实源；`items`/`tables` 改为**从 `output.regions` 派生的投影**，不再各自遍历多个字段；
    - 这属于**独立的破坏性输出协议变更**（不是 P1 等价重构），需要自己的版本标记与对外说明；
@@ -907,9 +911,9 @@ node tools\check-page-result-contract.mjs
 
 **测试清单**
 
-- [x] 测量脚本/命令与结果（体积、耗时、改前后对比）写进 §9（临时 `#[ignore]` 探针，量测后已 `git checkout` 还原；零产品改动）
-- [x] 三通道快照对拍（与 P0-1 共用）：`json.rs` 未被触碰，快照护栏与 `assert_result_satisfies_page_contract` 保持绿
-- [x] 若做投影重构：`items`/`tables` 与 `regions` 的一致性断言 —— **未做**：量测命中取消判据（视图构造增量 <0.5ms debug 最坏值、相对完整序列化路径 <5%，投影保持输出字节不变），三视图按协议用途原样保留
+- [x] 测量脚本/命令与结果（体积、耗时、成本结构）写进 §9（首次量测用临时 `#[ignore]` 探针，量测后已 `git checkout` 还原；审核点 3 的重测探针 + 两份表格夹具**已入库**，可重复跑）
+- [x] 三通道快照对拍（与 P0-1 共用）：首次量测时 `json.rs` 未被触碰；重测批只在 `json.rs` 参加 `#[cfg(test)]` 探针，`to_output_json`/`to_output_items` 生产体零改动，快照护栏与 `assert_result_satisfies_page_contract` 保持绿
+- [x] 若做投影重构：`items`/`tables` 与 `regions` 的一致性断言 —— **未做**：首次量测（无表格样本）命中取消判据；审核点 3 要求补表格场景重测，重测（真实捕获表页 + 8×100 格大 HTML 合成页）同样命中（大表页派生视图总增量 0.61–0.65ms，其中可被投影重构消掉的只有视图遍历本体 <0.4ms，投影保持输出字节不变），三视图按协议用途原样保留（数据见 §9）
 
 ---
 
@@ -1243,6 +1247,8 @@ node tools\check-page-result-contract.mjs
 | 7 · P1-4 | `819f6d0` | `PageTextLine` 规范视图 + 装配点单点转换（第一批） | bbox 唯一生成点 = `aabb_from_flat8`，与旧逐位一致；旧结构原样保留 | lib 724、serve 串行 289 | §8.1/§8.2 全绿 | 删旧结构属第二批，本批未做 |
 | 7 · P1-6 | `bc4dbb6` | 权威 `assets/table_html_whitelist.json` + 生成器 + fingerprint 三份对拍 | **产品可见收紧（§4.2 行 864 要求登记）**：标签统一 28（页面 11→28）、移除 align/valign、引擎 span 1000→64、页面 colspan 下界 >1→>=1；escape 全链单点 | lib 728、serve 串行 289、serve_startup、node 契约 | §8.1/§8.2 + `generate-table-whitelist.mjs --check` 全绿 | 捕获的 42 区域页面 fixture 不含表格，大表格双重净化路径未由真实捕获体覆盖（由构造用例覆盖） |
 | 7 · P1-7 | 无代码改动（取消） | 临时 `#[ignore]` 探针 `cargo test --lib --features serve p17_measure_json_view_payload_and_time -- --ignored --nocapture`，量测后 `git checkout` 还原 | debug min-of-300：`to_value`=232µs、`to_output_json`=728µs、视图构造增量 **496µs（0.496ms）**；`result-real-42-regions.json` 派生视图占 full 30366B 的 **39.4%**（items 10340B + text 1582B 复制 regions；此页无表格、formulas 空） | 新量测（无改前/改后对比：投影重构保持输出字节不变） | **结论：取消投影重构** —— 收益 <0.5ms（debug 最坏值，release 更低）且相对完整序列化路径 <5%，命中本文"收益不明显则取消"判据；三视图按协议用途原样保留 | payload 39.4% 冗余真实存在，但删 items/text 属**破坏性输出协议变更**（评审二.8 排除出 P1，需独立版本标记与对外说明），另议 |
+| 7 · P1-7（审核点 3 重测） | 审核修复批 | 保留探针（`#[ignore]`，不再还原）+ 入库夹具 `tests/fixtures/json-output/p17-table-{real,synthetic}.json`：`cargo test --lib --features serve p17_measure_json_table_views_payload_and_time -- --ignored --nocapture`；合成夹具由 `Temp/p17_build_fixtures.py` 构造（真实表 region 为模板，未入库） | debug min-of-300×3 轮一致：**真实捕获表页**（74 regions、1 张 10 格表，full 36560B/源 25733B，派生视图 29.6%）`to_value`=253–279µs、`to_output_json`=707–713µs、构造增量 **427–460µs**；**合成大表页**（8 张 100 格表、每表 HTML+table_html ≈63KB，full 1.44MB/源 667KB，派生视图 54%）`to_value`=2.134–2.140ms、`to_output_json`=2.753–2.792ms、构造增量仅 **613–652µs（占完整路径 22–24%，可被重构消掉的视图遍历本体只占 2.2–5.9%）**，items/text/tables 视图本体构造 16/133/126µs | 旧测量（无表格页 496µs）不能代表表格场景；新测量分列成本结构后：可被投影重构消掉的只有视图遍历本体（大表页 16–133µs/视图，最坏合计仍 <0.4ms debug），而派生负载自身的序列化（把 items 264KB + tables 508KB 再走一遍 `to_value`）占增量大头，且字节不变约束下无法消 | §8.1 全套通过（fmt/clippy/`--all-targets` lib 734+serve 289/串行/serve_startup/两个 node 检）；本批另修一处 serve 顺序敏感断言（见下一行），修前串行首跑在该用例失败 | **重判定：取消结论维持**，判据改为成本结构而非前后字节对比；合成夹具是模板放大的压力样本非真实页面，其绝对耗时随机器与 CPU 负载浮动；协议变更（删 items/tables 重复字段）仍按裁决排除在重构外，另议；临时构造脚本在 `Temp/` 未入库，入库资产为两份夹具 + 探针本身 |
+| 门禁可信性（审核清单外，用户批准） | 审核修复批 | `src/bin/serve/tests.rs`：`Scripted.tables` 由 `Vec<TablePolicy>` 改 `Vec<(String, TablePolicy)>`，请求体与策略在 `recognize` 的**同一次加锁**内成对记录；`the_table_stage_runs_from_the_model_set_when_requested` 的 `policies[0]/[1]/[2]/[3]` 下标断言改为按请求体（`plain`/`text+table`/`formula+table`/`explicit off`）取策略，并保留“恰好两次 enabled”的计数断言 | 根因：记录顺序是**后端进入顺序**，多 worker 下不等于提交顺序；`?table=1` 落在哪一格随机，故下标断言偶发失败（既可在并行复现，**也可在 `--test-threads=1` 复现** —— 推翻此前“串行恒绿”的登记）。改后断言强度不降反升：`table=0` 被当开、或公式队列漏接 `table=1` 都会被具体请求体钉住 | 单测隔离复跑 10/10 通过（改前 12 次隔离复跑 0 失败，证明是顺序竞态而非逻辑回归）；随后 §8.1 全套通过 | `formulas()` 上存在同类下标断言（同文件 `the_formula_queue_runs_…`，两队列各一单，尚未复现失败），本批按最小改动原则**未动**，登记为后续候选；修复手段是脚本化最小替换 + `git diff` 逐字节核验（该文件禁止用编辑工具批量改） |
 | 随时 · P1-8 | （本批） | `evaluation/digest.rs` 单点 `digest_hex`，三处改调（含 run 侧第二处同形内联 engine_fingerprint） | 行为等价；已知答案向量 + digest_file 一致性旁证；sampling/fixture 既有 manifest 测试不变 | lib 730（新增 2 条旁证）、serve 串行 289、全套件无回归 | §8.1/§8.2 全绿（本次提交） | `bin/formula_eval:1134` 是审计未列入的**第四处生产拷贝**（bin 链接公开 `evaluation::digest` 可达），本批按"不超规模"裁决未动，后续候选；测试内的 sha256_hex 参照实现（model_store/json/formula-preprocess golden）有意不合并 |
 
 ---

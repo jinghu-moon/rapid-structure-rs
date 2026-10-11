@@ -342,6 +342,30 @@ ORT 加载的可能是新内容。本批把“校验对象 = 加载对象”从�
   摘要不符用例（tampered 的 `HashMismatch` 断言移到凭证构造点，并保留探针入口的
   同类拦截）成对钉住；其余全部 `open` 调用点迁入凭证形态。lib 测试 732 → 733。
 
+## P1-7 表格场景重测（审核点 3，未发布）
+
+对应外部审核结论第 3 条（中）：原取消测量用的是 `result-real-42-regions.json`（该页无表格、
+formulas 空），其 0.496ms 不能代表标题所指的表格场景。本批补齐表格负载并重判定：
+
+- 入库两份可复现夹具：`tests/fixtures/json-output/p17-table-real.json`（真实捕获页，74 区域、
+  1 张 10 格表）与 `p17-table-synthetic.json`（以真实表 region 为模板放大：8 张 100 格表、
+  每表 HTML+table_html ≈ 63 KB）。
+- 量测探针 `p17_measure_json_table_views_payload_and_time`（`#[ignore]`，不依赖模型）**保留入库**，
+  分列三个量：视图本体构造时间、序列化时间、负载体积；另加一条非 ignored 守卫用例钉住
+  夹具可加载与派生视图键集合（lib 测试 733 → 734）。
+- 数据（debug min-of-300，3 轮一致）：真实表页 `to_value`=253–279µs、`to_output_json`=707–713µs、
+  派生视图占 payload 29.6%；合成大表页 `to_value`=2.134–2.140ms、`to_output_json`=2.753–2.792ms，
+  items/tables 视图负载 264 KB / 508 KB（占 full 1.44 MB 的 54%）。
+- **重判定：取消结论维持**，但理由改口径：在“投影重构保持输出字节不变”的约束下，可消掉的
+  只有视图遍历本体（16–133µs/视图，合计 <0.4ms），而增量的大头是派生负载自身再序列化一遍，
+  字节不变就无法避免。删 `items`/`tables` 重复字段属独立的破坏性协议变更，按裁决与本项分开验收。
+- 本项零生产代码改动（`to_output_json`/`to_output_items` 未动），入库只涉及探针与夹具。
+- 门禁可信性修复（审核清单外，用户批准）：`serve` 测试的记录器改为把 `TablePolicy` 与请求体在
+  **同一次加锁**内成对记录，`the_table_stage_runs_from_the_model_set_when_requested` 按请求体
+  取策略而非按下标。根因是记录顺序为后端进入顺序，不等于提交顺序；此前登记的
+  “串行 289 恒绿”并不成立（本批首跑即在 `--test-threads=1` 下复现），该用例隔离复跑
+  12/12（改前）+ 10/10（改后）均通过，证明是竞态而非逻辑回归；不改变产品行为。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

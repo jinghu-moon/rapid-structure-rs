@@ -832,4 +832,104 @@ mod tests {
             },
         }
     }
+
+    /// P1-7 表格测量夹具的守卫（非 `#[ignore]`）：入库资产不能只服务于一个手动探针。
+    ///
+    /// 只钉三件事：夹具仍能反序列化成 `OcrOutput`（协议未漂移）、表格区域仍在、
+    /// `to_output_json` 仍产出四个派生视图键。量测本身走下面的 `--ignored` 探针。
+    #[test]
+    fn p17_table_fixtures_still_load_and_carry_the_table_view() {
+        for (name, table_regions) in [
+            ("p17-table-real.json", 1usize),
+            ("p17-table-synthetic.json", 8usize),
+        ] {
+            let raw = std::fs::read(crate::test_support::fixture_dir("json-output").join(name))
+                .expect("fixture");
+            let output: OcrOutput = serde_json::from_slice(&raw).expect("fixture must load");
+            assert_eq!(
+                output
+                    .regions
+                    .iter()
+                    .filter(|region| region.table.is_some())
+                    .count(),
+                table_regions,
+                "{name} must keep its table regions"
+            );
+            let doc = to_output_json(&output).expect("doc");
+            for key in ["items", "tables", "formulas", "text"] {
+                assert!(doc.get(key).is_some(), "{name} loses derived key `{key}`");
+            }
+            assert_eq!(
+                doc["tables"].as_array().expect("tables").len(),
+                table_regions
+            );
+        }
+    }
+
+    /// P1-7 表格场景测量探针（审核点 3：旧测量样本无表格，不能支撑取消结论）。
+    ///
+    /// 输入是入库的可复现夹具（`tests/fixtures/json-output/`）：真实捕获页（含 1 张
+    /// 10 格表）与合成放大变体（8 张 100 格表、每表 31 KB 级 HTML）。只量三件事：
+    /// 派生视图构造时间、序列化时间、负载体积；不依赖模型，`--ignored` 手动跑。
+    #[test]
+    #[ignore = "P1-7 量测探针，手动 --ignored 运行"]
+    fn p17_measure_json_table_views_payload_and_time() {
+        fn time_it<T>(label: &str, runs: u32, mut f: impl FnMut() -> T) {
+            let mut best = u128::MAX;
+            let mut last = None;
+            for _ in 0..runs {
+                let t = std::time::Instant::now();
+                let value = f();
+                best = best.min(t.elapsed().as_nanos());
+                // 只留最后一份防止整个构造被优化掉；前一份在下一轮赋值时释放。
+                last = Some(value);
+            }
+            std::hint::black_box(&last);
+            println!("P17 {label}_min_ns={best}");
+        }
+
+        for name in ["p17-table-real.json", "p17-table-synthetic.json"] {
+            let raw = std::fs::read(crate::test_support::fixture_dir("json-output").join(name))
+                .expect("fixture");
+            let output: OcrOutput = serde_json::from_slice(&raw).expect("fixture must load");
+            let runs = 300;
+            println!("P17 sample={name} regions={}", output.regions.len());
+            time_it("to_value", runs, || {
+                serde_json::to_value(&output).expect("to_value")
+            });
+            time_it("to_output_json", runs, || {
+                to_output_json(&output).expect("doc")
+            });
+            time_it("items_view_only", runs, || to_output_items(&output));
+            time_it("text_view_only", runs, || {
+                output.plain_text(crate::TextOrder::Reading)
+            });
+            time_it("tables_view_only", runs, || {
+                output
+                    .tables(crate::TextOrder::Reading)
+                    .into_iter()
+                    .map(|(i, _)| i)
+                    .collect::<Vec<_>>()
+            });
+            time_it("formulas_view_only", runs, || {
+                output
+                    .formula_latex(crate::TextOrder::Reading)
+                    .into_iter()
+                    .map(|(i, _)| i)
+                    .collect::<Vec<_>>()
+            });
+            let doc = to_output_json(&output).expect("doc");
+            let full_bytes = serde_json::to_string(&doc).expect("compact").len();
+            let source_bytes = serde_json::to_string(&serde_json::to_value(&output).expect("v"))
+                .expect("compact")
+                .len();
+            for key in ["items", "tables", "formulas", "text"] {
+                println!(
+                    "P17 payload_{key}_bytes={}",
+                    serde_json::to_string(&doc[key]).expect("slice bytes").len()
+                );
+            }
+            println!("P17 payload_full_bytes={full_bytes} payload_source_bytes={source_bytes}");
+        }
+    }
 }

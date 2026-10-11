@@ -75,8 +75,11 @@ struct Scripted {
     served: Arc<Mutex<Vec<String>>>,
     /// 每次识别收到的 `FormulaPolicy`（M4：公式队列真的把公式管线接上了）。
     formulas: Arc<Mutex<Vec<FormulaPolicy>>>,
-    /// 每次识别收到的 `TablePolicy`（E16.2：`?table=1` 真的把表格阶段接上了）。
-    tables: Arc<Mutex<Vec<TablePolicy>>>,
+    /// 每次识别收到的（请求体, `TablePolicy`）（E16.2：`?table=1` 真的把表格阶段接上了）。
+    ///
+    /// 两者在**同一次加锁**内成对记录：多 worker 下 `recognize` 的进入顺序不等于提交顺序，
+    /// 只按顺序取下标会偶发错位，因此断言改为用请求体把策略关联回具体请求。
+    tables: Arc<Mutex<Vec<(String, TablePolicy)>>>,
     /// 可选的闸门：识别在返回**之前**阻塞，直到测试放行（M4 的单飞测试用它把
     /// "评估正在跑"变成确定性事实，而不是靠 sleep 猜时序）。
     gate: Option<Arc<Gate>>,
@@ -140,11 +143,21 @@ impl Scripted {
             .clone()
     }
 
-    /// 每次识别收到的表格策略（时间顺序；E16.2）。
-    fn tables(&self) -> Vec<TablePolicy> {
+    /// 每次识别收到的（请求体, 表格策略），按后端进入顺序；E16.2。
+    fn tables(&self) -> Vec<(String, TablePolicy)> {
         self.tables
             .lock()
             .expect("the scripted recorder is not poisoned")
+            .clone()
+    }
+
+    /// 指定请求体收到的表格策略；一次都没记录时直接 panic（漏跑也是回归）。
+    fn table_policy(&self, body: &str) -> TablePolicy {
+        self.tables()
+            .iter()
+            .find(|(recorded, _)| recorded == body)
+            .unwrap_or_else(|| panic!("no table policy recorded for request body {body:?}"))
+            .1
             .clone()
     }
 
@@ -166,6 +179,13 @@ struct ScriptedBackend {
 impl OcrBackend for ScriptedBackend {
     fn recognize(&mut self, request: OcrRequest) -> Result<OcrOutput, RapidOcrError> {
         self.state.calls.fetch_add(1, Ordering::SeqCst);
+        // 请求体是各次提交之间唯一互不相同的标识，用它把策略关联回具体请求。
+        let body = match &request.input {
+            rapid_structure_rs::ImageInput::Encoded(bytes) => {
+                String::from_utf8_lossy(bytes).to_string()
+            }
+            other => format!("<non-encoded input: {other:?}>"),
+        };
         self.state
             .formulas
             .lock()
@@ -175,7 +195,7 @@ impl OcrBackend for ScriptedBackend {
             .tables
             .lock()
             .expect("the scripted recorder is not poisoned")
-            .push(request.table.clone());
+            .push((body, request.table.clone()));
         self.state
             .served
             .lock()
@@ -2691,10 +2711,23 @@ fn the_table_stage_runs_from_the_model_set_when_requested() {
     }
 
     // 策略逐条断言：**只有** `?table=1` 的那两次开启了表格阶段。
+    //
+    // 按请求体取策略，不按下标：后端进入顺序不等于提交顺序，下标断言曾在门禁里偶发错位。
     let policies = scripted.tables();
     assert_eq!(policies.len(), 4, "one request per job");
-    assert!(!policies[0].enabled, "absent means off");
-    assert!(!policies[3].enabled, "`?table=0` is an explicit off");
+    assert!(
+        !scripted.table_policy("plain").enabled,
+        "absent means off; every recorded policy: {policies:?}"
+    );
+    assert!(
+        !scripted.table_policy("explicit off").enabled,
+        "`?table=0` is an explicit off; every recorded policy: {policies:?}"
+    );
+    assert_eq!(
+        policies.iter().filter(|(_, policy)| policy.enabled).count(),
+        2,
+        "only the two `?table=1` requests may enable the stage: {policies:?}"
+    );
     // 清单声明的那份摘要（断言两侧都必须真的有值——否则这条断言恒真）。
     let declared = models["sets"][0]["files"]
         .as_array()
@@ -2704,8 +2737,11 @@ fn the_table_stage_runs_from_the_model_set_when_requested() {
         .and_then(|file| file["sha256"].as_str())
         .expect("the fixture manifest declares the table structure model")
         .to_string();
-    for (index, label) in [(1usize, "?table=1"), (2, "?queue=formula&table=1")] {
-        let policy = &policies[index];
+    for (body, label) in [
+        ("text+table", "?table=1"),
+        ("formula+table", "?queue=formula&table=1"),
+    ] {
+        let policy = scripted.table_policy(body);
         assert!(policy.enabled, "{label} must enable the table stage");
         assert_eq!(
             policy.model_path.as_deref(),
