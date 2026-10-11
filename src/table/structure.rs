@@ -186,16 +186,6 @@ pub struct TableStructureConfig {
     /// 是否值得改由 `docs/09-table-recognition-execution.md` §13.3 的实测判据决定 ——
     /// p50 必须超出 ±10–15 % 噪声带才允许提交，落在带内就回退。
     pub intra_threads: Option<usize>,
-    /// 期望的模型 SHA-256；`None` = 取模型同目录清单里的登记（见
-    /// [`crate::table::registration`]）。
-    ///
-    /// **为什么是配置而不是常量**：期望值属于**部署**（这个文件是不是我们以为的那个），
-    /// 不属于算法。把它写成常量会让"换一个自己导出的模型"变成改代码；
-    /// 把它写成"只在下载时校验"则会让磁盘上的替换无人察觉 ——
-    /// 校验必须发生在**加载入口**，也就是这里。
-    ///
-    /// 校验在打开任何 ONNX Runtime 会话**之前**执行，因此被替换的模型永远到不了 ORT。
-    pub expected_sha256: Option<String>,
 }
 
 impl Default for TableStructureConfig {
@@ -204,7 +194,6 @@ impl Default for TableStructureConfig {
             input_side_len: TABLE_STRUCTURE_SIDE_LEN,
             fix_input_shape: true,
             intra_threads: None,
-            expected_sha256: None,
         }
     }
 }
@@ -332,24 +321,20 @@ pub struct TableStructureSession {
 }
 
 impl TableStructureSession {
+    /// 从**已验证凭证**打开表格结构会话（审核点 1/2：与文本、公式域同一契约）。
+    ///
+    /// 完整性校验（存在性、可选的期望摘要）与内容绑定都发生在凭证构造点：调用方用
+    /// [`crate::table::registration::verified_registered_model`]（显式期望优先、否则取登记）
+    /// 或 [`crate::model_verify::VerifiedModel::verify`] 自己解析“期望从哪来”。探针会话与
+    /// 正式会话都从凭证的**内容快照**字节打开（`open_verified`）：同一次读取、同一个
+    /// 对象，“校验与打开之间被替换”的窗口在表格路径（曾经最长）上不存在；而“拿不到
+    /// 凭证就建不了会话”在类型上成立。
     pub fn open(
-        model_path: &Path,
+        model: &crate::model_verify::VerifiedModel,
         runtime_cfg: &RuntimeConfig,
         config: &TableStructureConfig,
     ) -> Result<Self> {
-        if !model_path.is_file() {
-            return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
-        }
-
-        // 完整性校验是**第一步**：被替换或损坏的模型必须在打开任何 ONNX Runtime 会话之前
-        // 就被拒掉。凭证不只做一次哈希——它把校验那一刻的内容绑定为快照，探针会话与
-        // 正式会话都从这份字节打开（`open_verified`）：同一次读取、同一个对象，
-        // “两次开卷之间被替换”的窗口在表格路径（本来最长）上也不存在了（审核点 1）。
-        // 期望哈希的“从哪来”（显式优先、否则取登记）仍留在 registration 分层里（I-5）。
-        let model = crate::table::registration::verified_registered_model(
-            model_path,
-            config.expected_sha256.as_deref(),
-        )?;
+        let model_path = model.path();
 
         // 线程要求在**开任何会话之前**就落到运行时配置上：探针会话与正式会话必须是同一套
         // 线程设置，否则"这个会话用了几个线程"会有两个答案，而探针那次的开销会被记到别处。
@@ -358,7 +343,7 @@ impl TableStructureSession {
         // 先开一个"什么都不固定"的会话：override 只能按符号名寻址，而符号名只有模型自己知道，
         // 所以必须先探一次。这一次会话在拿到符号名之后立即释放。
         // 两次会话消费同一份凭证字节，不再第二次开卷路径。
-        let probe_session = OrtSession::open_verified(&model, &runtime_cfg, &[])?;
+        let probe_session = OrtSession::open_verified(model, &runtime_cfg, &[])?;
         let probe = probe_session.probe_io()?;
         let contract = validate_table_structure_contract(&probe, model_path)?;
         // 词表与契约在**同一次**探针会话里取出：解码需要 `character` 词表，而它和
@@ -384,7 +369,7 @@ impl TableStructureSession {
         let overrides = config.dimension_overrides(&probe, model_path)?;
         drop(probe_session);
 
-        let session = OrtSession::open_verified(&model, &runtime_cfg, &overrides)?;
+        let session = OrtSession::open_verified(model, &runtime_cfg, &overrides)?;
         let actual = session.probe_io()?;
         config.require_applied(&actual, model_path)?;
         let input_dims = actual.inputs[0].dims.clone();
@@ -556,6 +541,11 @@ mod tests {
 
     fn rt() -> RuntimeConfig {
         RuntimeConfig::default()
+    }
+
+    /// 测试构造凭证的公共入口：会话只能从凭证打开，路径形态的 `open` 已不存在（审核点 2）。
+    fn cred(path: &std::path::Path) -> crate::model_verify::VerifiedModel {
+        crate::model_verify::VerifiedModel::verify(path, None).expect("test credential")
     }
 
     fn probe_fixture(name: &str) -> Result<TableStructureContract> {
@@ -756,8 +746,9 @@ mod tests {
     #[test]
     fn fixing_the_shape_is_observable_on_the_opened_session() {
         let path = fixture("table_ok.onnx");
-        let session = TableStructureSession::open(&path, &rt(), &TableStructureConfig::default())
-            .expect("fixed session must open");
+        let session =
+            TableStructureSession::open(&cred(&path), &rt(), &TableStructureConfig::default())
+                .expect("fixed session must open");
 
         assert_eq!(
             session.input_dims(),
@@ -784,8 +775,8 @@ mod tests {
             fix_input_shape: false,
             ..TableStructureConfig::default()
         };
-        let session =
-            TableStructureSession::open(&path, &rt(), &config).expect("unfixed session must open");
+        let session = TableStructureSession::open(&cred(&path), &rt(), &config)
+            .expect("unfixed session must open");
 
         assert_eq!(session.input_dims(), [-1, 3, -1, -1]);
         assert_eq!(session.config(), &config);
@@ -846,6 +837,9 @@ mod tests {
     /// §14.2② 的核心断言：**加载路径**自己校验，不依赖下载期或 `/api/models` 的显示。
     ///
     /// 同一个路径上内容被换掉，是下载期校验看不见的情形；只有加载期校验能拦住它。
+    ///
+    /// 审核点 2 之后拒绝发生在**凭证构造点**（registration 层，`open` 只接收凭证）：拿不到
+    /// 凭证就到不了 ORT，"先探针再开会话"的调用方也无法在校验之前创建会话。
     #[test]
     fn a_model_whose_registered_hash_does_not_match_never_reaches_ort() {
         let scratch = ScratchModelDir::new("tampered");
@@ -853,15 +847,14 @@ mod tests {
         // 真哈希不是全零；登记一个全零哈希等价于"文件被换过了"。
         scratch.register(&"0".repeat(64));
 
-        let error = TableStructureSession::open(&path, &rt(), &TableStructureConfig::default())
-            .expect_err("a mismatching hash must be refused");
+        let error = crate::table::registration::verified_registered_model(&path, None)
+            .expect_err("a mismatching hash must be refused at credential construction");
         assert!(
             matches!(error, RapidOcrError::HashMismatch { .. }),
             "the refusal must be locatable, got {error:?}"
         );
 
-        // 探针是另一条加载入口，必须同样被拦住 —— 否则"先探针再开会话"的调用方
-        // 会在校验之前就已经创建过一次 ORT 会话。
+        // 探针是另一条加载入口，必须同样被拦住 —— 它自己构造凭证，摘要不符时同样到不了 ORT。
         let error = TableStructureModelInfo::probe(&path, &rt())
             .expect_err("the probe must be refused as well");
         assert!(
@@ -879,13 +872,21 @@ mod tests {
         let real = crate::model_verify::sha256_file_cached(&path).expect("hash should compute");
         scratch.register(&real);
 
-        let session = TableStructureSession::open(&path, &rt(), &TableStructureConfig::default())
-            .expect("a correctly registered model must load");
+        let credential = crate::table::registration::verified_registered_model(&path, None)
+            .expect("the registered hash must be accepted");
+        assert_eq!(
+            credential.actual_sha256(),
+            Some(real.as_str()),
+            "the credential must record the digest it verified"
+        );
+        let session =
+            TableStructureSession::open(&credential, &rt(), &TableStructureConfig::default())
+                .expect("a correctly registered model must load");
         assert_eq!(session.contract().input_name, "x");
     }
 
-    /// 显式哈希优先于登记：`TableStructureConfig::expected_sha256` 是**部署**的决定，
-    /// 清单只是它的默认来源。
+    /// 显式期望优先于登记：摘要在**凭证构造点**解析（`verified_registered_model`），
+    /// 清单只是默认来源，显式参数是**部署**的决定（审核点 2：与文本、公式同一契约）。
     #[test]
     fn an_explicit_expected_hash_overrides_the_registration() {
         let scratch = ScratchModelDir::new("explicit");
@@ -893,13 +894,12 @@ mod tests {
         scratch.register(&"0".repeat(64));
         let real = crate::model_verify::sha256_file_cached(&path).expect("hash should compute");
 
-        let config = TableStructureConfig {
-            expected_sha256: Some(real),
-            ..TableStructureConfig::default()
-        };
-        TableStructureSession::open(&path, &rt(), &config).expect(
-            "the explicit hash is the right one, so the wrong registration must not matter",
-        );
+        let credential = crate::table::registration::verified_registered_model(&path, Some(&real))
+            .expect(
+                "the explicit hash is the right one, so the wrong registration must not matter",
+            );
+        TableStructureSession::open(&credential, &rt(), &TableStructureConfig::default())
+            .expect("the credential built from the explicit hash must load");
     }
 
     /// 没有清单时登记查找退化为“无期望凭证”（存在性照查、内容照绑定），而不是
@@ -909,8 +909,38 @@ mod tests {
         let scratch = ScratchModelDir::new("no-manifest");
         let path = scratch.with_ok_model();
 
-        TableStructureSession::open(&path, &rt(), &TableStructureConfig::default())
+        let credential = crate::table::registration::verified_registered_model(&path, None)
             .expect("a model with no registration has nothing to verify against");
+        assert!(
+            !credential.is_verified(),
+            "no manifest must mean no verified digest"
+        );
+        TableStructureSession::open(&credential, &rt(), &TableStructureConfig::default())
+            .expect("the credential must still bind the content it read");
+    }
+
+    /// 审核点 2 要求的表格级替换回归（与文本、公式域同一形状）：凭证在 `open` 这一层
+    /// 消费的就是**校验那一刻的内容** —— 构造凭证之后把路径上的文件换成非 ONNX 字节，
+    /// `TableStructureSession::open` 必须仍然成功，而此刻按路径重新构造凭证再开会失败。
+    #[test]
+    fn table_session_opens_the_bytes_the_credential_verified() {
+        let scratch = ScratchModelDir::new("replaced-at-open");
+        let path = scratch.with_ok_model();
+        let credential = cred(&path);
+
+        std::fs::write(&path, b"not an onnx model any more").expect("replace after credential");
+
+        let session =
+            TableStructureSession::open(&credential, &rt(), &TableStructureConfig::default())
+                .expect("the bound content must open even though the path was replaced");
+        assert_eq!(session.contract().input_name, "x");
+
+        // 反面对照：此刻**重新**从路径构造凭证，绑定的是替换后的新字节，开卷必然失败 ——
+        // 上面那次成功只能来自凭证里的那份快照。
+        let stale = cred(&path);
+        let failing = TableStructureSession::open(&stale, &rt(), &TableStructureConfig::default())
+            .expect_err("the replaced content must not load");
+        assert!(matches!(failing, RapidOcrError::Decode(_)), "{failing}");
     }
 
     /// 审核点 1 的端到端回归：凭证把**校验那一刻的内容**交给 ORT，而不是重新开卷路径。
@@ -1036,7 +1066,7 @@ mod tests {
     fn run_with_returns_typed_views_in_contract_order() {
         let path = fixture("table_ok.onnx");
         let mut session =
-            TableStructureSession::open(&path, &rt(), &TableStructureConfig::default())
+            TableStructureSession::open(&cred(&path), &rt(), &TableStructureConfig::default())
                 .expect("session must open");
         let input = ndarray::Array4::<f32>::zeros((2, 3, 488, 488));
 
@@ -1062,22 +1092,22 @@ mod tests {
     }
 
     /// `open` 必须自己跑契约校验，而不是假定调用方已经探过一次。
+    ///
+    /// 存在性检查现在住在凭证构造点（`VerifiedModel::verify`）：文件不在时拿不到凭证，
+    /// 错误类型与地点都必须可定位。
     #[test]
     fn session_open_validates_the_contract() {
         let renamed = TableStructureSession::open(
-            &fixture("table_renamed_output.onnx"),
+            &cred(&fixture("table_renamed_output.onnx")),
             &rt(),
             &TableStructureConfig::default(),
         )
         .expect_err("renamed outputs must be rejected before any inference");
         assert!(renamed.to_string().contains("output mismatch"), "{renamed}");
 
-        let missing = TableStructureSession::open(
-            &fixture("does_not_exist.onnx"),
-            &rt(),
-            &TableStructureConfig::default(),
-        )
-        .expect_err("a missing model must be located");
+        let missing =
+            crate::model_verify::VerifiedModel::verify(&fixture("does_not_exist.onnx"), None)
+                .expect_err("a missing model must be located at credential construction");
         assert!(
             matches!(missing, RapidOcrError::FileNotFound(_)),
             "{missing}"
@@ -1213,7 +1243,10 @@ mod real_model_tests {
     }
 
     fn open(session_path: &std::path::Path, config: TableStructureConfig) -> TableStructureSession {
-        TableStructureSession::open(session_path, &RuntimeConfig::default(), &config)
+        // 与探针同样走 registration 解析期望（审核点 2）：真实模型旁的清单会在这里生效。
+        let credential = crate::table::registration::verified_registered_model(session_path, None)
+            .expect("credential must build");
+        TableStructureSession::open(&credential, &RuntimeConfig::default(), &config)
             .expect("session must open")
     }
 
@@ -1380,8 +1413,11 @@ mod direct_ml_experiment {
             return;
         };
         let runtime = direct_ml_runtime();
+        let credential = crate::table::registration::verified_registered_model(&path, None)
+            .expect("the real model must pass load-time verification");
 
-        let opened = TableStructureSession::open(&path, &runtime, &TableStructureConfig::default());
+        let opened =
+            TableStructureSession::open(&credential, &runtime, &TableStructureConfig::default());
         let mut session = match opened {
             Ok(session) => session,
             Err(error) => {

@@ -816,8 +816,10 @@ mod tests {
             return;
         };
         let config = crate::table::structure::TableStructureConfig::default();
+        let credential = crate::model_verify::VerifiedModel::verify(&path, None)
+            .expect("the real model must be readable");
         let session = crate::table::structure::TableStructureSession::open(
-            &path,
+            &credential,
             &RuntimeConfig::default(),
             &config,
         )

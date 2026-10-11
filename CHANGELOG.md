@@ -324,6 +324,24 @@ ORT 加载的可能是新内容。本批把“校验对象 = 加载对象”从�
   把文件换成非 ONNX 字节，从凭证打开仍成功且契约成立，按路径再开必须失败
   （`table::structure`）；`registration` 既有 14 条迁入凭证形态，断言只增不减。
 
+## 表格会话凭证入口（审核点 2，未发布）
+
+对应外部审核结论第 2 条（中高）：日志声称“三个域的构造器已统一改收凭证”，但
+`TableStructureSession::open` 实际仍接收 `&Path` 并在内部自行校验后按路径开卷，
+评测入口也是路径调用。本批把表格域统一到与文本、公式相同的凭证契约：
+
+- `TableStructureSession::open` 签名改为接收 `&VerifiedModel`：“拿不到凭证就建不了
+  会话”在类型上成立；探针会话与正式会话都从凭证的内容快照打开。
+- `TableStructureConfig::expected_sha256` 字段**删除**（它是公开面 `exports.rs` 重导出的
+  struct 的字段）：摘要期望属于“打开之前的凭证构造”，不属于推理配置。需要显式期望的
+  调用方在凭证构造点用 `registration::verified_registered_model(path, Some(hash))` 表达。
+- 生产调用点迁移：`ocr::pipeline::rapid_structure`（rebuild 时用 policy 的期望走
+  registration 解析）与 `evaluation::table::run`（登记摘要在 probe 前解析，凭证显式构造）。
+- 测试：新增表格级替换回归 `table_session_opens_the_bytes_the_credential_verified`（凭证
+  构造后替换文件，`open` 仍成功；重新构造的凭证绑定新字节后 `open` 必失败），与
+  摘要不符用例（tampered 的 `HashMismatch` 断言移到凭证构造点，并保留探针入口的
+  同类拦截）成对钉住；其余全部 `open` 调用点迁入凭证形态。lib 测试 732 → 733。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

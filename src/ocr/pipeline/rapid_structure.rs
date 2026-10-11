@@ -1358,14 +1358,22 @@ impl RapidOcrEngine {
             .is_none_or(|(current, _)| *current != identity);
         if rebuild {
             let runtime = self.inner.runtime_profile().session_runtime();
+            // 凭证在打开会话之前构造：期望摘要的“从哪来”（显式优先、否则取登记）留在
+            // registration 分层，会话本身只收凭证（审核点 2：与文本/公式同一契约）。
+            let credential = crate::table::registration::verified_registered_model(
+                &path,
+                policy.expected_model_sha256.as_deref(),
+            )?;
             let config = crate::table::structure::TableStructureConfig {
                 input_side_len: policy.input_side_len,
                 fix_input_shape: policy.fix_input_shape,
                 intra_threads: policy.intra_threads,
-                expected_sha256: policy.expected_model_sha256.clone(),
             };
-            let session =
-                crate::table::structure::TableStructureSession::open(&path, &runtime, &config)?;
+            let session = crate::table::structure::TableStructureSession::open(
+                &credential,
+                &runtime,
+                &config,
+            )?;
             self.table_session = Some((identity, session));
         }
         self.table_session

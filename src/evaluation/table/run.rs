@@ -398,17 +398,16 @@ pub fn run_table_evaluation(
 
     // 表格会话自己的配置（含线程旋钮）必须**在探测之前**建好：探针会话与正式会话共用同一套
     // 运行时配置，否则"这个会话用了几个线程"会有两个答案。
-    //
-    // 期望哈希**必须**来自登记：评测报告会写"这个结果出自哪个模型"，而一个没有可追溯哈希的
-    // 模型不该被静默接受（`require_registered_model_hash` 在没有登记时报错）。
     let table_config = TableStructureConfig {
         input_side_len: config.side_len,
         fix_input_shape: config.fix_input_shape,
         intra_threads: config.intra_threads,
-        expected_sha256: Some(crate::table::registration::require_registered_model_hash(
-            &config.model,
-        )?),
     };
+    // 期望哈希**必须**来自登记：评测报告会写"这个结果出自哪个模型"，而一个没有可追溯哈希的
+    // 模型不该被静默接受（`require_registered_model_hash` 在没有登记时报错）。凭证在会话
+    // 之前拿这份期望构造（审核点 2）：校验与加载消费同一份内容快照。
+    let registered_expected =
+        crate::table::registration::require_registered_model_hash(&config.model)?;
     // 运行时配置在这里是**默认值**：线程数不是由"评测"决定的，而是由表格会话自己的
     // `intra_threads` 决定的（经 `effective_runtime_config` 叠加）。把线程策略写在这一层
     // 会变成第二份实现 —— "钉住线程数"的语义只有 `RuntimeConfig::with_pinned_intra_threads`
@@ -459,7 +458,9 @@ pub fn run_table_evaluation(
         ),
     );
 
-    let mut session = TableStructureSession::open(&config.model, &runtime_cfg, &table_config)?;
+    let model_credential =
+        crate::model_verify::VerifiedModel::verify(&config.model, Some(&registered_expected))?;
+    let mut session = TableStructureSession::open(&model_credential, &runtime_cfg, &table_config)?;
     // 报告里写**会话自己**下发给 ORT 的那对数，而不是我们以为下发的那对：两者应当一致，
     // 不一致就说明线程要求在某个环节被丢掉了，而那正是这份报告会被用来回答的问题。
     let effective_threads = session.session_threads();
