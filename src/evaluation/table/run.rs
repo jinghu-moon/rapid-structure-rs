@@ -1578,6 +1578,28 @@ mod tests {
         assert_eq!(summarize(&[]), json!({ "count": 0 }));
     }
 
+    /// 表格报告 `summarize()` 的键集合（P0-0 契约）。
+    ///
+    /// 与页面基准（`avg/p50/p90/min/max`）、公式评测（`Stats` 的 `*_ms`）都不同：
+    /// 这一份用 `min/p50/p90/max/mean`。批 3 只把分位算法统一到 `stats::percentile`，
+    /// 键名保持不变，因此这里把键集合先钉住。
+    #[test]
+    fn the_table_report_summary_carries_a_frozen_key_set() {
+        let summary = summarize(&[1.0, 2.0, 3.0, 4.0]);
+        let mut keys: Vec<&str> = summary
+            .as_object()
+            .expect("non-empty summary must be an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["count", "max", "mean", "min", "p50", "p90"],
+            "the table report must keep exactly these summary keys"
+        );
+    }
+
     #[test]
     fn the_summary_reports_the_same_quartiles_as_the_report() {
         let summary = summarize(&[1.0, 2.0, 3.0, 4.0]);

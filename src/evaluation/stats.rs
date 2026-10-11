@@ -68,6 +68,44 @@ pub fn percentile(sorted: &[f64], fraction: f64) -> f64 {
 mod tests {
     use super::{Stats, percentile};
 
+    /// 公式评测报告把 `Stats` 当作字段整体序列化（`formula_eval.rs` 的
+    /// `per_image_ms`/`per_batch_ms`，`formula_bench.rs` 同理），所以这三份报告里
+    /// 公式评测这一份的键集合就是 `Stats` 的序列化键集合。P0-0 把它钉成契约：
+    /// 任何改动分位口径/字段名的重构都必须让这份键集合显式变更，而不是静默漂移。
+    #[test]
+    fn stats_serializes_the_frozen_contract_key_set() {
+        let value = serde_json::to_value(Stats::from_samples(vec![4.0, 1.0, 3.0, 2.0]))
+            .expect("Stats must serialize");
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .expect("Stats serializes as a JSON object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "max_ms",
+                "mean_ms",
+                "min_ms",
+                "p50_ms",
+                "p95_ms",
+                "samples",
+                "stddev_ms"
+            ],
+            "the formula report's Stats block must keep exactly these keys"
+        );
+        // 同一份定值样本的快照：键集合之外还要钉住线性插值分位的读数，
+        // 这样批 3 把三份报告统一接到 `stats::percentile` 时能对拍到逐值一致。
+        assert_eq!(value["samples"], 4);
+        assert!((value["min_ms"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+        assert!((value["max_ms"].as_f64().unwrap() - 4.0).abs() < 1e-12);
+        assert!((value["mean_ms"].as_f64().unwrap() - 2.5).abs() < 1e-12);
+        assert!((value["p50_ms"].as_f64().unwrap() - 2.5).abs() < 1e-12);
+        assert!((value["p95_ms"].as_f64().unwrap() - 3.85).abs() < 1e-12);
+    }
+
     #[test]
     fn percentile_matches_linear_interpolation() {
         let values = vec![1.0, 2.0, 3.0, 4.0];

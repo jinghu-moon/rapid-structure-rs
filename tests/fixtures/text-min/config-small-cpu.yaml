@@ -1,0 +1,66 @@
+# P0-0 小型文本回归 fixture 的引擎配置。
+#
+# 与 `models/configs/test-config-small.yaml` 参数完全一致，只把三个模型路径改成
+# **相对仓库根** 的形式（`cargo test` 的工作目录即 crate root），因此这份文件可以随
+# 仓库提交、任何机器都能读，不含任何开发机绝对路径。字符多重集就是用它跑出来的。
+#
+# provider 固定 CPU：多重集判据要求跨运行可复现，CPU ORT 对同一模型（SHA-256 已在
+# `models/serve/manifest.json` 钉死）逐位确定，不受 GPU/驱动差异影响。
+global:
+  text_score: 0.5
+  use_det: true
+  use_cls: false
+  use_rec: true
+  min_height: 30
+  width_height_ratio: 8.0
+  max_side_len: 2000
+  min_side_len: 30
+  return_word_box: false
+  return_single_char_box: false
+runtime:
+  intra_threads: null
+  inter_threads: null
+  auto_tune_threads: true
+  rayon_threads: null
+  enable_cpu_mem_arena: true
+  fail_if_provider_unavailable: false
+  provider_preference: cpu
+  formula_batch: 16
+det:
+  lang: multi
+  ocr_version: PP-OCRv6
+  model_type: small
+  model_path: models/text/small/PP-OCRv6_det_small.onnx
+  allow_download: false
+  limit_side_len: 736
+  limit_type: min
+  std: [0.5, 0.5, 0.5]
+  mean: [0.5, 0.5, 0.5]
+  thresh: 0.3
+  box_thresh: 0.5
+  max_candidates: 1000
+  unclip_ratio: 1.6
+  use_dilation: true
+  score_mode: fast
+  model_store_dir: null
+cls:
+  lang: ch
+  ocr_version: PP-OCRv4
+  model_type: mobile
+  model_path: null
+  allow_download: false
+  cls_image_shape: [3, 48, 192]
+  cls_batch_num: 6
+  cls_thresh: 0.9
+  label_list: ['0', '180']
+  model_store_dir: null
+rec:
+  model:
+    lang: ch
+    ocr_version: PP-OCRv6
+    model_type: small
+    model_path: models/text/small/PP-OCRv6_rec_small.onnx
+    rec_keys_path: models/text/small/ppocrv6_dict.txt
+    allow_download: false
+  rec_batch_num: 6
+  rec_img_shape: [3, 48, 320]

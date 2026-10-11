@@ -817,4 +817,56 @@ onnxruntime:
         assert_eq!(models, 40, "det+cls+rec entries in the default table");
         assert_eq!(dictionaries, 30, "dictionary entries in the default table");
     }
+
+    /// P0-0 模型摘要清单：三个域（文本 / 公式 / 表格）用到的模型路径 + 期望
+    /// SHA-256 必须写在一进仓库就能读的清单里。`assets/default_models.yaml` 已覆盖文本
+    /// 与公式（由上面 `every_default_table_entry_carries_a_sha256` 钉住），表格域则重用到
+    /// 已入库的 `models/serve/manifest.json` 与 `models/table/manifest.json`。
+    ///
+    /// 这份用例只读 JSON 清单（不依赖未入库的 `.onnx` 二进制），因此任何
+    /// 干净 clone 都能跑；它把“三域都有可校验摘要”钉成硬契约。
+    #[test]
+    fn all_three_domains_declare_model_digests_in_tracked_manifests() {
+        let is_sha256 =
+            |value: &str| value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit());
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        // 把一份 manifest.json 解析为 (role -> sha256)，顺便断言每个条目都带名称与摘要。
+        let read_manifest = |rel: &str| -> std::collections::HashMap<String, String> {
+            let text = std::fs::read_to_string(root.join(rel))
+                .unwrap_or_else(|error| panic!("read tracked manifest {rel}: {error}"));
+            let value: serde_json::Value = serde_json::from_str(&text)
+                .unwrap_or_else(|error| panic!("manifest {rel} must be valid JSON: {error}"));
+            let mut by_role = std::collections::HashMap::new();
+            let files = value["files"]
+                .as_array()
+                .expect("manifest must list `files`");
+            for file in files {
+                let role = file["role"].as_str().expect("file role").to_string();
+                let name = file["name"].as_str().expect("file name");
+                assert!(!name.is_empty(), "{rel}: {role} must name a file");
+                let sha = file["sha256"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{rel}: {role} ({name}) must declare a sha256"));
+                assert!(is_sha256(sha), "{rel}: {role} sha256 is malformed: {sha}");
+                by_role.insert(role, sha.to_string());
+            }
+            by_role
+        };
+
+        // 文本 + 公式域（serve manifest 同时携带两域）。
+        let serve = read_manifest("models/serve/manifest.json");
+        for role in ["detector", "recognizer", "dictionary", "formula_recognizer"] {
+            assert!(
+                serve.contains_key(role),
+                "the text/formula manifest must declare a `{role}` model with a digest"
+            );
+        }
+        // 表格域。
+        let table = read_manifest("models/table/manifest.json");
+        assert!(
+            table.contains_key("table_structure"),
+            "the table manifest must declare a `table_structure` model with a digest"
+        );
+    }
 }

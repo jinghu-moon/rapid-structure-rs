@@ -542,6 +542,38 @@ fn inference_share(ledgers: &[TimingLedger], total_avg: f64) -> serde_json::Valu
 mod tests {
     use super::*;
 
+    /// 页面基准报告里 `stats.<metric>` 的键集合（P0-0 契约）。
+    ///
+    /// 三份报告（页面基准 / 表格报告 / 公式评测）的分位口径不同，批 3 才统一；
+    /// 这一批先把键集合快照下来，保证“接到 `stats::percentile`”时只改数值算法、
+    /// 不改键名。空分布只报 `count`（不能 panic）。
+    #[test]
+    fn the_page_benchmark_stats_report_a_frozen_key_set() {
+        let full = stats(&[1.0, 2.0, 3.0, 4.0]);
+        let mut keys: Vec<&str> = full
+            .as_object()
+            .expect("non-empty stats must be an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["avg", "count", "max", "min", "p50", "p90"],
+            "the page benchmark must keep exactly these stats keys"
+        );
+
+        let empty = stats(&[]);
+        let empty_obj = empty.as_object().expect("empty stats must be an object");
+        let empty_keys: Vec<&str> = empty_obj.keys().map(String::as_str).collect();
+        assert_eq!(
+            empty_keys,
+            vec!["count"],
+            "an empty distribution reports only `count`"
+        );
+        assert_eq!(empty["count"], 0);
+    }
+
     /// 手工构造账本：只填恒等式用到的分量，其余为 0；
     /// `unattributed_ms` 与 `from_timings` 一样等于 `total_ms - attributed_ms()`。
     fn ledger(
