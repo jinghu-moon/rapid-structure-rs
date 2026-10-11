@@ -1244,13 +1244,13 @@ impl RapidOcrEngine {
             .as_ref()
             .is_none_or(|(current, _)| *current != identity)
         {
+            let detector_model = crate::model_verify::VerifiedModel::verify(
+                &path,
+                policy.expected_detector_sha256.as_deref(),
+            )?;
             self.formula_detector = Some((
                 identity,
-                crate::formula::detect::FormulaDetector::from_model_with_hash(
-                    &path,
-                    &runtime,
-                    policy.expected_detector_sha256.as_deref(),
-                )?,
+                crate::formula::detect::FormulaDetector::from_model(&detector_model, &runtime)?,
             ));
         }
         let detector = self
@@ -1293,12 +1293,14 @@ impl RapidOcrEngine {
             .as_ref()
             .is_none_or(|(current, _)| *current != identity);
         if rebuild {
-            let mut recognizer =
-                crate::formula::recognizer::FormulaRecognizer::from_model_with_hash(
-                    &path,
-                    &runtime,
-                    policy.expected_model_sha256.as_deref(),
-                )?;
+            let recognizer_model = crate::model_verify::VerifiedModel::verify(
+                &path,
+                policy.expected_model_sha256.as_deref(),
+            )?;
+            let mut recognizer = crate::formula::recognizer::FormulaRecognizer::from_model(
+                &recognizer_model,
+                &runtime,
+            )?;
             recognizer.set_max_batch_size(runtime.formula_batch)?;
             self.formula_recognizer = Some((identity, recognizer));
         }

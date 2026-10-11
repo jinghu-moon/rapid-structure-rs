@@ -343,7 +343,9 @@ impl TableStructureSession {
 
         // 完整性校验是**第一步**：被替换或损坏的模型必须在打开任何 ONNX Runtime 会话之前
         // 就被拒掉，否则"校验过"这句话覆盖的只是探针之后的路径，而探针本身已经执行过
-        // 一次 ORT 会话创建。
+        // 一次 ORT 会话创建。期望哈希的“从哪来”（显式优先、否则取登记）仍留在
+        // registration 分层里，而 registration 把校验动作委派给统一的 [`VerifiedModel`] 凭证
+        //（P0-3 / I-5）：三域共用同一个完整性原语。
         crate::table::registration::verify_registered_model(
             model_path,
             config.expected_sha256.as_deref(),

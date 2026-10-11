@@ -76,6 +76,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use crate::model_verify::VerifiedModel;
     use crate::runtime::session::OrtSession;
     use crate::{config::RuntimeConfig, formula::session::FormulaSession};
 
@@ -107,7 +108,8 @@ mod tests {
 
             // `FormulaSession::new` 在契约通过后可能因为 metadata 之外的运行原因失败，
             // 因此这里比较“契约层”的结论：契约失败必须同时让 session 失败。
-            let session_result = FormulaSession::new(&path, &runtime);
+            let session_result =
+                FormulaSession::new(&VerifiedModel::verify(&path, None).unwrap(), &runtime);
             if let Err(error) = &contract {
                 let session_error =
                     session_result.expect_err("contract failure must also fail the typed session");

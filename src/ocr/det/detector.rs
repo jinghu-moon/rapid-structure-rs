@@ -12,6 +12,7 @@ use crate::{
         DownloadRequest, default_model_store_dir, download_verified, require_model_hash,
         verify_existing_file,
     },
+    model_verify::VerifiedModel,
     ocr::session::{OcrSession, OcrSessionKind},
     runtime::provider::ProviderResolution,
 };
@@ -133,7 +134,11 @@ impl Detector {
             score_mode: config.score_mode,
             ..DbPostProcess::default()
         };
-        let session = OcrSession::new(&model_path, runtime, OcrSessionKind::Det)?;
+        // 文本模型的完整性在**准入/下载层**已保证（`verify_existing_file` /
+        // `download_verified` 都强制哈希）；会话层拿不到部署声明的期望摘要，因此
+        // 构造“无期望”凭证（仍检查存在性），结构上不再存在“忘记校验”的旁路。
+        let model = VerifiedModel::verify(&model_path, None)?;
+        let session = OcrSession::new(&model, runtime, OcrSessionKind::Det)?;
         Ok(Self {
             pre,
             post,

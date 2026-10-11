@@ -2,10 +2,9 @@
 //!
 //! # 为什么需要一个缓存（根因）
 //!
-//! `ModelFileSpec::state_in`（`/api/models` 的逐文件状态）与两条公式加载路径
-//! （`FormulaRecognizer::from_model_with_hash`、`FormulaDetector::from_model_with_hash`）
-//! 问的是**同一个问题**："这个文件的内容是不是声明的那一份"。它们各自直接调
-//! [`crate::model_store::sha256_file`]，于是：
+//! `ModelFileSpec::state_in`（`/api/models` 的逐文件状态）与三条域的模型加载路径
+//! （经 [`VerifiedModel::verify`] 的文本 / 公式 / 表格会话）
+//! 问的是**同一个问题**："这个文件的内容是不是声明的那一份"。
 //!
 //! 1. 566 MB 的公式识别模型在**每次 `/api/models`**（页面每 8 s 轮询一次就绪状态）
 //!    都被完整重读一遍——持续磁盘 I/O 与秒级延迟；
@@ -440,7 +439,14 @@ impl VerifiedModel {
     ///   因此会话也不会被创建。
     /// - `expected = None`：调用方没有可信摘要——**不报错**，但如实记录为“未校验”
     ///   （[`Self::is_verified`] 返回 `false`），不产生任何读盘哈希。
+    ///
+    /// 无论有没有期望，**存在性都是第一个判定**：缺失的文件必须先返回可定位的
+    /// [`RapidOcrError::FileNotFound`]，不能因为“摘要也算不出来”而退化成一个含混错误。
+    /// 这条不变量此前分散在各域构造器里，现在单点收口到凭证。
     pub fn verify(path: &Path, expected: Option<&str>) -> Result<Self> {
+        if !path.is_file() {
+            return Err(RapidOcrError::FileNotFound(path.to_path_buf()));
+        }
         let actual_sha256 = verify_sha256(path, expected)?;
         Ok(Self {
             path: path.to_path_buf(),
@@ -833,6 +839,23 @@ mod tests {
         assert_eq!(credential.expected_sha256(), None);
         assert_eq!(credential.actual_sha256(), None);
         assert_eq!(credential.path(), path);
+    }
+
+    /// 存在性优先：即使带期望摘要，缺失的文件也必须先返回 `FileNotFound`（而不是
+    /// “算不出摘要”的含混错误）——这是会话构造器不再各自检查 `is_file` 后、
+    /// 由凭证统一保住的不变量。
+    #[test]
+    fn a_missing_file_is_file_not_found_even_with_an_expectation() {
+        let dir = TempDir::new("credential-missing");
+        let path = dir.path().join("no_such_model.onnx");
+        for expected in [None, Some(HELLO_SHA256)] {
+            let error = VerifiedModel::verify(&path, expected)
+                .expect_err("a missing file must fail regardless of the expectation");
+            assert!(
+                matches!(error, RapidOcrError::FileNotFound(_)),
+                "expected FileNotFound, got {error}"
+            );
+        }
     }
 
     /// 文案单点：四个调用点中两个“启用但缺路径”的校验入口，必须与

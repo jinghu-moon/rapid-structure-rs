@@ -140,8 +140,27 @@ pub fn require_registered_model_hash(model_path: &Path) -> Result<String> {
     })
 }
 
-/// 加载期校验：把**有效期望哈希**（调用方给的优先，否则取登记）交给
-/// [`model_verify::verify_sha256`]，返回实际摘要。
+/// 解析**有效期望哈希**：调用方给的非空值优先，否则取模型同目录清单里的登记。
+///
+/// 这是 [`verify_registered_model`] 与 [`crate::table::structure`] 共用的“期望从哪来”
+/// 单点：分层（清单/登记属于部署事实）留在这里，校验动作本身交给
+/// [`crate::model_verify::VerifiedModel`]，避免“表格自己维护一条第二套校验”。
+pub fn resolve_registered_expected(
+    model_path: &Path,
+    expected_sha256: Option<&str>,
+) -> Result<Option<String>> {
+    match expected_sha256 {
+        Some(hash) if !hash.trim().is_empty() => Ok(Some(hash.trim().to_string())),
+        _ => registered_model_hash(model_path),
+    }
+}
+
+/// 加载期校验：把**有效期望哈希**（调用方给的优先，否则取登记）交给统一的
+/// [`model_verify::VerifiedModel`] 凭证，返回实际摘要。
+///
+/// 分层保留：清单/登记属于“期望从哪来”（I-5），而校验动作本身不再由表格自己实现，
+/// 与公式/文本走同一个凭证原语（P0-3 / I-3）：存在性优先、不匹配是可定位的
+/// `HashMismatch`，都发生在打开任何 ORT 会话之前。
 ///
 /// 返回值是**实际**算出的摘要（校验通过时等于期望值），调用方可以把它写进报告，
 /// 让"这个结果出自哪个模型"可追溯，而不只是"某个哈希校验过"。
@@ -149,11 +168,12 @@ pub fn verify_registered_model(
     model_path: &Path,
     expected_sha256: Option<&str>,
 ) -> Result<Option<String>> {
-    let expected = match expected_sha256 {
-        Some(hash) if !hash.trim().is_empty() => Some(hash.trim().to_string()),
-        _ => registered_model_hash(model_path)?,
-    };
-    model_verify::verify_sha256(model_path, expected.as_deref())
+    let expected = resolve_registered_expected(model_path, expected_sha256)?;
+    Ok(
+        model_verify::VerifiedModel::verify(model_path, expected.as_deref())?
+            .actual_sha256()
+            .map(str::to_string),
+    )
 }
 
 #[cfg(test)]

@@ -30,7 +30,7 @@ use std::time::Instant;
 
 use clap::{Parser, ValueEnum};
 use rapid_structure_rs::{
-    FormulaRecognizer, ProviderPreference, RapidOcrError, RuntimeConfig,
+    FormulaRecognizer, ProviderPreference, RapidOcrError, RuntimeConfig, VerifiedModel,
     evaluation::{
         formula::{
             fixture::{
@@ -861,8 +861,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let model = cli.model.clone().ok_or("--model is required")?;
     let runtime = runtime_config(&cli);
     let loaded_start = Instant::now();
-    let mut recognizer =
-        FormulaRecognizer::from_model_with_hash(&model, &runtime, cli.expected_sha256.as_deref())?;
+    let model_credential = VerifiedModel::verify(&model, cli.expected_sha256.as_deref())?;
+    let mut recognizer = FormulaRecognizer::from_model(&model_credential, &runtime)?;
     let load_ms = loaded_start.elapsed().as_secs_f64() * 1000.0;
     let resolution = recognizer.provider_resolution();
     // 会话**实际**拿到的线程数（`RuntimeConfig::effective_session_threads()` 的输出），

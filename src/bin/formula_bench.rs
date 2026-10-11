@@ -18,7 +18,7 @@ use std::time::Instant;
 use clap::{Parser, ValueEnum};
 use rapid_structure_rs::{
     FormulaPreprocessor, FormulaSession, FormulaTokenizer, FormulaTokenizerMetadata,
-    ProviderPreference, RuntimeConfig, sha256_file,
+    ProviderPreference, RuntimeConfig, VerifiedModel, sha256_file,
 };
 use serde::Serialize;
 
@@ -282,7 +282,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .max(*cli.batch_sizes.iter().max().unwrap_or(&1));
 
     let session_start = Instant::now();
-    let mut session = FormulaSession::new(&cli.model, &runtime)?;
+    // 会话只收凭证：`--expected-sha256` 现在真正生效（之前它被定义却从未参与加载）。
+    let model = VerifiedModel::verify(&cli.model, cli.expected_sha256.as_deref())?;
+    let mut session = FormulaSession::new(&model, &runtime)?;
     let session_create_ms = ms(session_start);
     // 会话**实际**拿到的线程数（`RuntimeConfig::effective_session_threads()` 的输出），
     // 而不是 CLI/YAML 里写了什么：默认配置会推导出 intra = 预算、inter = 1。

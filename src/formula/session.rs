@@ -3,7 +3,7 @@
 //! 共享 `runtime::session::OrtSession` 只暴露通用 ONNX 能力；公式 token 模型
 //! 的 rank-2 `INT64` 输出和固定 `[N,1,384,384]` FLOAT 输入在这里固化。
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ndarray::{Array2, ArrayView4};
 
@@ -11,6 +11,7 @@ use crate::{
     config::RuntimeConfig,
     error::{RapidOcrError, Result},
     formula::contract::validate_formula_contract,
+    model_verify::VerifiedModel,
     runtime::{
         provider::{ProviderResolution, require_requested_provider},
         session::OrtSession,
@@ -25,10 +26,8 @@ pub struct FormulaSession {
 }
 
 impl FormulaSession {
-    pub fn new(model_path: &Path, runtime_cfg: &RuntimeConfig) -> Result<Self> {
-        if !model_path.is_file() {
-            return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
-        }
+    pub fn new(model: &VerifiedModel, runtime_cfg: &RuntimeConfig) -> Result<Self> {
+        let model_path = model.path();
         let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
         // 公式域契约：请求了加速器却只拿到 CPU 回退时必须失败，不能静默降级。
         // 这里不依赖 `RuntimeConfig::fail_if_provider_unavailable`，因为那是进程级
@@ -97,13 +96,18 @@ mod tests {
             .join(name)
     }
 
+    /// 会话构造器现在只收凭证：测试用“无期望”凭证（存在性仍检查、不读盘算摘要）。
+    fn cred(name: &str) -> VerifiedModel {
+        VerifiedModel::verify(&fixture(name), None).expect("fixture credential")
+    }
+
     fn rt() -> RuntimeConfig {
         RuntimeConfig::default()
     }
 
     #[test]
     fn accepts_formula_contract_and_runs() {
-        let mut session = FormulaSession::new(&fixture("formula_ok.onnx"), &rt())
+        let mut session = FormulaSession::new(&cred("formula_ok.onnx"), &rt())
             .expect("formula fixture should load");
         assert_eq!(session.input_name(), "x");
         assert_eq!(session.output_name(), "fetch_name_0");
@@ -117,48 +121,48 @@ mod tests {
 
     #[test]
     fn rejects_input_rank() {
-        let error = FormulaSession::new(&fixture("formula_input_rank3.onnx"), &rt())
+        let error = FormulaSession::new(&cred("formula_input_rank3.onnx"), &rt())
             .expect_err("rank3 input must fail");
         assert!(error.to_string().contains("rank"), "error: {error}");
     }
 
     #[test]
     fn rejects_input_dtype() {
-        let error = FormulaSession::new(&fixture("formula_input_int64.onnx"), &rt())
+        let error = FormulaSession::new(&cred("formula_input_int64.onnx"), &rt())
             .expect_err("int64 input must fail");
         assert!(error.to_string().contains("FLOAT32"), "error: {error}");
     }
 
     #[test]
     fn rejects_input_spatial_dims() {
-        let error = FormulaSession::new(&fixture("formula_input_512.onnx"), &rt())
+        let error = FormulaSession::new(&cred("formula_input_512.onnx"), &rt())
             .expect_err("512 input must fail");
         assert!(error.to_string().contains("384"), "error: {error}");
     }
 
     #[test]
     fn rejects_output_rank() {
-        let error = FormulaSession::new(&fixture("formula_output_rank1.onnx"), &rt())
+        let error = FormulaSession::new(&cred("formula_output_rank1.onnx"), &rt())
             .expect_err("rank1 output must fail");
         assert!(error.to_string().contains("rank"), "error: {error}");
     }
 
     #[test]
     fn rejects_output_dtype() {
-        let error = FormulaSession::new(&fixture("formula_output_f32.onnx"), &rt())
+        let error = FormulaSession::new(&cred("formula_output_f32.onnx"), &rt())
             .expect_err("float output must fail");
         assert!(error.to_string().contains("INT64"), "error: {error}");
     }
 
     #[test]
     fn rejects_multi_input_and_output() {
-        let input_error = FormulaSession::new(&fixture("formula_multi_input.onnx"), &rt())
+        let input_error = FormulaSession::new(&cred("formula_multi_input.onnx"), &rt())
             .expect_err("multi input must fail");
         assert!(
             input_error.to_string().contains("exactly one input"),
             "error: {input_error}"
         );
-        let output_error = FormulaSession::new(&fixture("formula_multi_output.onnx"), &rt())
+        let output_error = FormulaSession::new(&cred("formula_multi_output.onnx"), &rt())
             .expect_err("multi output must fail");
         assert!(
             output_error.to_string().contains("exactly one output"),
@@ -168,7 +172,7 @@ mod tests {
 
     #[test]
     fn wrong_input_shape_is_rejected_before_run() {
-        let mut session = FormulaSession::new(&fixture("formula_ok.onnx"), &rt())
+        let mut session = FormulaSession::new(&cred("formula_ok.onnx"), &rt())
             .expect("formula fixture should load");
         let input = Array4::<f32>::zeros((1, 1, 512, 384));
         let error = session
@@ -190,7 +194,7 @@ mod tests {
             fail_if_provider_unavailable: false,
             ..RuntimeConfig::default()
         };
-        let error = FormulaSession::new(&fixture("formula_ok.onnx"), &runtime)
+        let error = FormulaSession::new(&cred("formula_ok.onnx"), &runtime)
             .expect_err("unavailable accelerator must not fall back to CPU");
         assert!(
             matches!(error, RapidOcrError::UnsupportedProvider(_)),
@@ -206,7 +210,7 @@ mod tests {
             fail_if_provider_unavailable: true,
             ..RuntimeConfig::default()
         };
-        let session = FormulaSession::new(&fixture("formula_ok.onnx"), &runtime)
+        let session = FormulaSession::new(&cred("formula_ok.onnx"), &runtime)
             .expect("explicit CPU must be accepted");
         assert_eq!(
             session.provider_resolution().selected_ep,
@@ -236,7 +240,7 @@ mod tests {
             "a default `RuntimeConfig` derives intra = budget and inter = 1"
         );
 
-        let session = FormulaSession::new(&fixture("formula_ok.onnx"), &runtime)
+        let session = FormulaSession::new(&cred("formula_ok.onnx"), &runtime)
             .expect("formula fixture should load");
         assert_eq!(
             session.session_threads(),
@@ -264,7 +268,7 @@ mod tests {
             ..RuntimeConfig::default()
         };
         assert_eq!(runtime.effective_session_threads(), (Some(3), None));
-        let session = FormulaSession::new(&fixture("formula_ok.onnx"), &runtime)
+        let session = FormulaSession::new(&cred("formula_ok.onnx"), &runtime)
             .expect("formula fixture should load");
         assert_eq!(session.session_threads(), (Some(3), None));
     }

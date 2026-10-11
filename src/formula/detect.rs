@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::RuntimeConfig,
     error::{RapidOcrError, Result},
+    model_verify::VerifiedModel,
     runtime::{
         contracts::{
             ModelIoProbe, TensorSpec, require_fixed_dim, require_single_input,
@@ -102,27 +103,16 @@ pub struct FormulaDetector {
 impl FormulaDetector {
     /// 打开模型、校验 IO 契约与 provider 契约，不执行推理。
     ///
+    /// 与 [`crate::formula::recognizer::FormulaRecognizer::from_model`] **对称**：只收
+    /// **已校验的模型凭证**（P0-3 / I-3）。存在性与期望摘要都在
+    /// [`crate::model_verify::VerifiedModel::verify`] 这一单点完成：不匹配时凭证不会被
+    /// 构造，因而绝不静默加载一个损坏的检测模型；本构造器不再接受裸路径，也没有
+    /// “不校验”的默认入口。
+    ///
     /// provider 语义与 `formula::session::FormulaSession` 一致：请求了加速器却只拿到
     /// CPU 回退时必须失败，不能静默降级。
-    pub fn from_model(model_path: &Path, runtime_cfg: &RuntimeConfig) -> Result<Self> {
-        Self::from_model_with_hash(model_path, runtime_cfg, None)
-    }
-
-    /// 与 [`crate::formula::recognizer::FormulaRecognizer::from_model_with_hash`] **对称**的
-    /// 入口：期望摘要在场时必须匹配，否则返回可定位的
-    /// [`RapidOcrError::HashMismatch`]（路径 + 期望 + 实际），绝不静默加载一个损坏的检测模型。
-    ///
-    /// 检测模型与识别模型走**同一条**完整性规则、**同一个**身份键控校验缓存
-    /// （`crate::model_verify`），因此"完整性只对识别模型成立"这种不对称不可能再出现。
-    pub fn from_model_with_hash(
-        model_path: &Path,
-        runtime_cfg: &RuntimeConfig,
-        expected_sha256: Option<&str>,
-    ) -> Result<Self> {
-        if !model_path.is_file() {
-            return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
-        }
-        crate::model_verify::verify_sha256(model_path, expected_sha256)?;
+    pub fn from_model(model: &VerifiedModel, runtime_cfg: &RuntimeConfig) -> Result<Self> {
+        let model_path = model.path();
         let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
         // 公式域契约：请求了加速器却只拿到 CPU 回退时必须失败，不能静默降级。
         require_requested_provider(inner.provider_resolution())?;
@@ -1218,22 +1208,18 @@ mod tests {
     #[test]
     fn missing_model_file_is_reported() {
         let path = fixture_dir().join("no_such_model.onnx");
-        let error = FormulaDetector::from_model(&path, &RuntimeConfig::default())
-            .expect_err("missing model must fail");
+        let error = VerifiedModel::verify(&path, None).expect_err("missing model must fail");
         assert!(matches!(error, RapidOcrError::FileNotFound(_)), "{error}");
         // 带期望摘要时，**存在性**仍然是第一个判定：缺失文件不能因为"哈希也算不出来"
-        // 而变成一个含混的错误。
-        let error = FormulaDetector::from_model_with_hash(
-            &path,
-            &RuntimeConfig::default(),
-            Some(&"0".repeat(64)),
-        )
-        .expect_err("missing model must fail");
+        // 而变成一个含混的错误。构造器只收凭证，所以这条不变量现在由凭证单点保证。
+        let error = VerifiedModel::verify(&path, Some(&"0".repeat(64)))
+            .expect_err("missing model must fail");
         assert!(matches!(error, RapidOcrError::FileNotFound(_)), "{error}");
     }
 
     /// 评审 P1-1：检测模型与识别模型走**同一条**完整性规则——声明了 SHA-256 就必须匹配，
-    /// 不匹配是**可定位**错误（路径 + 期望 + 实际），而且要发生在打开 ONNX 之前。
+    /// 不匹配是**可定位**错误（路径 + 期望 + 实际），而且要发生在打开 ONNX 之前（凭证
+    /// 不被构造 → `from_model` 根本不会被调用）。
     ///
     /// 这里不需要真实模型即可证明顺序：`golden.json` 是仓库里的普通文件，
     /// 摘要不匹配时**必须**返回 `HashMismatch`；摘要匹配时才轮到"这不是一个 ONNX 模型"。
@@ -1241,9 +1227,8 @@ mod tests {
     fn a_declared_detector_hash_is_verified_before_the_model_is_opened() {
         let path = fixture_dir().join("golden.json");
         let wrong = "0".repeat(64);
-        let error =
-            FormulaDetector::from_model_with_hash(&path, &RuntimeConfig::default(), Some(&wrong))
-                .expect_err("a mismatching digest must refuse to load");
+        let error = VerifiedModel::verify(&path, Some(&wrong))
+            .expect_err("a mismatching digest must refuse to yield a credential");
         match error {
             RapidOcrError::HashMismatch {
                 path: reported,
@@ -1257,11 +1242,12 @@ mod tests {
             other => panic!("expected HashMismatch, got {other:?}"),
         }
 
-        // 摘要正确 → 哈希校验通过，失败来自"这不是 ONNX"（因此与哈希无关）。
+        // 摘要正确 → 凭证构造成功；失败来自"这不是 ONNX"（因此与哈希无关）。
         let actual = crate::model_store::sha256_file(&path).expect("hash the fixture");
-        let error =
-            FormulaDetector::from_model_with_hash(&path, &RuntimeConfig::default(), Some(&actual))
-                .expect_err("a JSON file is not an ONNX model");
+        let credential = VerifiedModel::verify(&path, Some(&actual))
+            .expect("a matching digest must yield a credential");
+        let error = FormulaDetector::from_model(&credential, &RuntimeConfig::default())
+            .expect_err("a JSON file is not an ONNX model");
         assert!(
             !matches!(error, RapidOcrError::HashMismatch { .. }),
             "a matching digest must not produce a hash error: {error}"
@@ -1276,16 +1262,17 @@ mod tests {
             return;
         };
         let declared = crate::model_store::sha256_file(&path).expect("hash the real detector");
-        FormulaDetector::from_model_with_hash(&path, &RuntimeConfig::default(), Some(&declared))
+        let credential = VerifiedModel::verify(&path, Some(&declared))
+            .expect("a valid detector with its declared hash must yield a credential");
+        FormulaDetector::from_model(&credential, &RuntimeConfig::default())
             .expect("a valid detector with its declared hash must load");
 
-        // 同一个文件 + 一个不同的摘要 → 定位错误（绝不静默加载）。
+        // 同一个文件 + 一个不同的摘要 → 凭证构造失败（定位错误，绝不静默加载）。
         let mut wrong = declared.clone();
         let flip = if declared.starts_with('0') { '1' } else { '0' };
         wrong.replace_range(0..1, &flip.to_string());
-        let error =
-            FormulaDetector::from_model_with_hash(&path, &RuntimeConfig::default(), Some(&wrong))
-                .expect_err("a mismatching digest must refuse to load");
+        let error = VerifiedModel::verify(&path, Some(&wrong))
+            .expect_err("a mismatching digest must refuse to yield a credential");
         assert!(
             matches!(error, RapidOcrError::HashMismatch { .. }),
             "{error}"
@@ -1416,7 +1403,8 @@ mod tests {
             return;
         };
         let runtime = RuntimeConfig::default();
-        let mut detector = FormulaDetector::from_model(&model_path, &runtime)
+        let model = VerifiedModel::verify(&model_path, None).expect("detector credential");
+        let mut detector = FormulaDetector::from_model(&model, &runtime)
             .expect("pix2text-mfd-1.5 must satisfy the detect contract");
         let golden = load_golden("golden.json");
         assert_eq!(

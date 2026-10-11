@@ -20,7 +20,7 @@ use crate::{
         tokenizer_metadata::FormulaTokenizerMetadata,
     },
     input::image_loader::{LoadImage, OcrInput},
-    model_verify::verify_sha256,
+    model_verify::VerifiedModel,
     runtime::provider::ProviderResolution,
 };
 
@@ -83,24 +83,13 @@ pub struct FormulaRecognizer {
 }
 
 impl FormulaRecognizer {
-    pub fn from_model(model_path: &Path, runtime_cfg: &RuntimeConfig) -> Result<Self> {
-        Self::from_model_with_hash(model_path, runtime_cfg, None)
-    }
-
-    pub fn from_model_with_hash(
-        model_path: &Path,
-        runtime_cfg: &RuntimeConfig,
-        expected_sha256: Option<&str>,
-    ) -> Result<Self> {
-        if !model_path.is_file() {
-            return Err(RapidOcrError::FileNotFound(model_path.to_path_buf()));
-        }
-        // 校验走**共享的**身份键控缓存（`crate::model_verify`）：`/api/models` 的逐文件
-        // 状态、公式队列的准入判定与这里问的是同一个问题，因此必须是同一份证据。
-        // 不匹配是可定位错误，绝不静默加载。
-        verify_sha256(model_path, expected_sha256)?;
-
-        let session = FormulaSession::new(model_path, runtime_cfg)?;
+    /// 从**已校验的模型凭证**构造识别器（P0-3 / I-3）。
+    ///
+    /// 存在性与期望摘要都在 [`VerifiedModel::verify`] 这一单点完成：本构造器不再接受
+    /// 裸路径，也没有“不校验”的默认入口——强度由凭证决定，而不是由调用路径决定。
+    pub fn from_model(model: &VerifiedModel, runtime_cfg: &RuntimeConfig) -> Result<Self> {
+        let model_path = model.path();
+        let session = FormulaSession::new(model, runtime_cfg)?;
         let character_metadata = session.character_metadata()?.ok_or_else(|| {
             RapidOcrError::Tokenizer(format!(
                 "formula model is missing `character` metadata: {}",
@@ -364,6 +353,11 @@ mod tests {
         RuntimeConfig::default()
     }
 
+    /// 构造器现在只收凭证：测试用“无期望”凭证（存在性仍检查、不读盘算摘要）。
+    fn cred(name: &str) -> VerifiedModel {
+        VerifiedModel::verify(&fixture(name), None).expect("fixture credential")
+    }
+
     fn gray(value: u8) -> DynamicImage {
         DynamicImage::ImageRgb8(RgbImage::from_pixel(32, 32, Rgb([value, value, value])))
     }
@@ -371,7 +365,7 @@ mod tests {
     #[test]
     fn single_image_happy_path() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         let result = recognizer.recognize(&gray(255)).expect("recognize");
         assert_eq!(result.latex, "\\cdot");
@@ -384,7 +378,7 @@ mod tests {
     #[test]
     fn batch_preserves_order_and_independence() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         let images = vec![gray(0), gray(255), gray(128), gray(64)];
         let results = recognizer
@@ -402,7 +396,7 @@ mod tests {
     #[test]
     fn empty_batch_is_supported() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         assert!(
             recognizer
@@ -419,7 +413,7 @@ mod tests {
     #[test]
     fn batches_larger_than_max_batch_size_are_chunked() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         recognizer.set_max_batch_size(1).expect("set batch size");
         let images = vec![gray(0), gray(255), gray(128)];
@@ -451,7 +445,7 @@ mod tests {
     #[test]
     fn twenty_crops_are_chunked_and_match_explicit_chunks() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         assert_eq!(recognizer.max_batch_size(), DEFAULT_MAX_FORMULA_BATCH_SIZE);
         const _: () = assert!(
@@ -501,7 +495,7 @@ mod tests {
     #[test]
     fn single_image_chunking_covers_every_input() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         recognizer.set_max_batch_size(1).expect("set batch size");
         let images: Vec<DynamicImage> = (0..5).map(|i| gray((i * 40) as u8)).collect();
@@ -517,7 +511,8 @@ mod tests {
 
     #[test]
     fn missing_model_is_located() {
-        let error = FormulaRecognizer::from_model(&fixture("does_not_exist.onnx"), &rt())
+        // 构造器只收凭证，存在性检查现在单点收口到 `VerifiedModel::verify`。
+        let error = VerifiedModel::verify(&fixture("does_not_exist.onnx"), None)
             .expect_err("missing model must fail");
         assert!(matches!(error, RapidOcrError::FileNotFound(_)));
     }
@@ -525,18 +520,15 @@ mod tests {
     #[test]
     fn hash_mismatch_is_rejected() {
         let expected = "0000000000000000000000000000000000000000000000000000000000000000";
-        let error = FormulaRecognizer::from_model_with_hash(
-            &fixture("formula_recognizer_ok.onnx"),
-            &rt(),
-            Some(expected),
-        )
-        .expect_err("hash mismatch must fail");
+        // 不匹配时凭证**不会被构造**，因此识别器（及它内部的会话）也就不会被创建。
+        let error = VerifiedModel::verify(&fixture("formula_recognizer_ok.onnx"), Some(expected))
+            .expect_err("hash mismatch must fail");
         assert!(matches!(error, RapidOcrError::HashMismatch { .. }));
     }
 
     #[test]
     fn corrupted_tokenizer_metadata_is_rejected() {
-        let error = FormulaRecognizer::from_model(&fixture("formula_bad_metadata.onnx"), &rt())
+        let error = FormulaRecognizer::from_model(&cred("formula_bad_metadata.onnx"), &rt())
             .expect_err("bad metadata must fail");
         assert!(
             error.to_string().contains("metadata") || error.to_string().contains("tokenizer"),
@@ -547,7 +539,7 @@ mod tests {
     #[test]
     fn out_of_vocab_model_output_is_rejected() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_bad_token.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_bad_token.onnx"), &rt())
                 .expect("recognizer should load");
         let error = recognizer
             .recognize(&gray(255))
@@ -561,7 +553,7 @@ mod tests {
     #[test]
     fn empty_image_is_rejected_before_inference() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         let empty = DynamicImage::ImageRgb8(RgbImage::from_raw(0, 0, Vec::new()).unwrap());
         let error = recognizer
@@ -581,9 +573,8 @@ mod tests {
     #[test]
     fn default_sequence_limit_exceeds_model_loop_bound() {
         const _: () = assert!(DEFAULT_MAX_FORMULA_SEQUENCE_LENGTH > FORMULA_MODEL_LOOP_BOUND);
-        let recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
-                .expect("recognizer should load");
+        let recognizer = FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
+            .expect("recognizer should load");
         assert_eq!(
             recognizer.max_sequence_length(),
             DEFAULT_MAX_FORMULA_SEQUENCE_LENGTH
@@ -605,7 +596,7 @@ mod tests {
     #[test]
     fn pixel_and_sequence_limits_are_enforced() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         recognizer
             .set_max_input_pixels(100)
@@ -616,7 +607,7 @@ mod tests {
         assert!(error.to_string().contains("limit is 100"), "error: {error}");
 
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         recognizer
             .set_max_sequence_length(2)
@@ -633,7 +624,7 @@ mod tests {
     #[test]
     fn encoded_input_enforces_encoded_and_pixel_limits() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         let encoded = {
             let image = gray(255).to_rgb8();
@@ -666,7 +657,7 @@ mod tests {
     #[test]
     fn file_input_uses_shared_loader_limits() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
 
         let error = recognizer
@@ -724,7 +715,7 @@ mod tests {
             fail_if_provider_unavailable: false,
             ..RuntimeConfig::default()
         };
-        let error = FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &runtime)
+        let error = FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &runtime)
             .expect_err("unavailable accelerator must fail");
         assert!(
             matches!(error, RapidOcrError::UnsupportedProvider(_)),
@@ -736,7 +727,7 @@ mod tests {
     #[test]
     fn batch_results_share_call_wall_time() {
         let mut recognizer =
-            FormulaRecognizer::from_model(&fixture("formula_recognizer_ok.onnx"), &rt())
+            FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &rt())
                 .expect("recognizer should load");
         let images = vec![gray(0), gray(255), gray(128)];
         let results = recognizer

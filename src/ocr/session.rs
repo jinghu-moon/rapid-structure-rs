@@ -3,14 +3,13 @@
 //! 共享 `runtime::session::OrtSession` 只负责打开模型；本模块负责普通 OCR
 //! 的 FLOAT rank-4 输入和领域输出 rank/dtype/metadata 校验。
 
-use std::path::Path;
-
 use ndarray::{ArrayView2, ArrayView3, ArrayView4};
 use ort::value::TensorElementType;
 
 use crate::{
     config::RuntimeConfig,
     error::Result,
+    model_verify::VerifiedModel,
     runtime::{
         contracts::{require_single_input, require_single_output, require_tensor},
         provider::ProviderResolution,
@@ -43,10 +42,11 @@ pub struct OcrSession {
 
 impl OcrSession {
     pub fn new(
-        model_path: &Path,
+        model: &VerifiedModel,
         runtime_cfg: &RuntimeConfig,
         kind: OcrSessionKind,
     ) -> Result<Self> {
+        let model_path = model.path();
         let inner = OrtSession::open_unchecked(model_path, runtime_cfg, &[])?;
         let probe = inner.probe_io()?;
         let input = require_single_input(&probe, model_path, "OCR")?;
@@ -118,13 +118,19 @@ mod tests {
             .join(name)
     }
 
+    /// 会话构造器现在只收凭证：测试用“无期望”的凭证（存在性仍被检查，
+    /// 但不读盘算摘要）作为夹具，与库用户自备模型的语义一致。
+    fn cred(name: &str) -> VerifiedModel {
+        VerifiedModel::verify(&fixture(name), None).expect("fixture credential")
+    }
+
     fn rt() -> RuntimeConfig {
         RuntimeConfig::default()
     }
 
     #[test]
     fn rec_session_accepts_ctc_contract_and_runs() {
-        let mut session = OcrSession::new(&fixture("ocr_rec_ok.onnx"), &rt(), OcrSessionKind::Rec)
+        let mut session = OcrSession::new(&cred("ocr_rec_ok.onnx"), &rt(), OcrSessionKind::Rec)
             .expect("ctc fixture should load");
         let input = Array4::<f32>::zeros((1, 3, 48, 320));
         let shape = session
@@ -135,7 +141,7 @@ mod tests {
 
     #[test]
     fn cls_and_det_sessions_accept_matching_contracts() {
-        let mut cls = OcrSession::new(&fixture("ocr_cls_ok.onnx"), &rt(), OcrSessionKind::Cls)
+        let mut cls = OcrSession::new(&cred("ocr_cls_ok.onnx"), &rt(), OcrSessionKind::Cls)
             .expect("cls fixture should load");
         let cls_input = Array4::<f32>::zeros((1, 3, 48, 192));
         let cls_shape = cls
@@ -143,7 +149,7 @@ mod tests {
             .expect("cls fixture should run");
         assert_eq!(cls_shape, vec![1, 2]);
 
-        let mut det = OcrSession::new(&fixture("ocr_det_ok.onnx"), &rt(), OcrSessionKind::Det)
+        let mut det = OcrSession::new(&cred("ocr_det_ok.onnx"), &rt(), OcrSessionKind::Det)
             .expect("det fixture should load");
         let det_input = Array4::<f32>::zeros((1, 3, 32, 32));
         let det_shape = det
@@ -154,9 +160,10 @@ mod tests {
 
     #[test]
     fn rec_session_rejects_formula_model_output_contract() {
+        let formula = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/formula-onnx/formula_ok.onnx");
         let error = OcrSession::new(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/formula-onnx/formula_ok.onnx"),
+            &VerifiedModel::verify(&formula, None).expect("fixture credential"),
             &rt(),
             OcrSessionKind::Rec,
         )
@@ -167,7 +174,7 @@ mod tests {
     #[test]
     fn rec_session_rejects_bad_output_rank() {
         let error = OcrSession::new(
-            &fixture("ocr_rec_output_rank2.onnx"),
+            &cred("ocr_rec_output_rank2.onnx"),
             &rt(),
             OcrSessionKind::Rec,
         )
@@ -178,7 +185,7 @@ mod tests {
     #[test]
     fn rec_session_rejects_bad_output_dtype() {
         let error = OcrSession::new(
-            &fixture("ocr_rec_output_int64.onnx"),
+            &cred("ocr_rec_output_int64.onnx"),
             &rt(),
             OcrSessionKind::Rec,
         )
@@ -189,7 +196,7 @@ mod tests {
     #[test]
     fn rec_session_rejects_multi_input_and_multi_output() {
         let input_error = OcrSession::new(
-            &fixture("ocr_rec_multi_input.onnx"),
+            &cred("ocr_rec_multi_input.onnx"),
             &rt(),
             OcrSessionKind::Rec,
         )
@@ -200,7 +207,7 @@ mod tests {
         );
 
         let output_error = OcrSession::new(
-            &fixture("ocr_rec_multi_output.onnx"),
+            &cred("ocr_rec_multi_output.onnx"),
             &rt(),
             OcrSessionKind::Rec,
         )

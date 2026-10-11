@@ -14,6 +14,7 @@ use crate::{
         DownloadRequest, default_model_store_dir, download_verified, require_model_hash,
         verify_existing_file,
     },
+    model_verify::VerifiedModel,
     ocr::config::{RecognizeOptions, RecognizerConfig},
     ocr::rec::{
         bidi::reorder_bidi_for_display,
@@ -62,7 +63,10 @@ impl Recognizer {
         )?;
 
         let model_path = resolve_model_path(&config, &resolved, &model_store_dir)?;
-        let mut session = OcrSession::new(&model_path, runtime, OcrSessionKind::Rec)?;
+        // 文本模型的完整性在准入/下载层已强制哈希；会话层拿不到部署声明的期望摘要，
+        // 因此构造“无期望”凭证（仍检查存在性）。
+        let model = VerifiedModel::verify(&model_path, None)?;
+        let mut session = OcrSession::new(&model, runtime, OcrSessionKind::Rec)?;
 
         let character = session.take_character_list();
         let character_path = if character.is_none() {

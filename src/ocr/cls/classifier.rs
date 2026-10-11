@@ -12,6 +12,7 @@ use crate::{
         DownloadRequest, default_model_store_dir, download_verified, require_model_hash,
         verify_existing_file,
     },
+    model_verify::VerifiedModel,
     ocr::session::{OcrSession, OcrSessionKind},
     runtime::provider::ProviderResolution,
     vision::resize::LinearResizeScratch,
@@ -100,7 +101,10 @@ impl Classifier {
             ));
         };
 
-        let session = OcrSession::new(&model_path, runtime, OcrSessionKind::Cls)?;
+        // 文本模型的完整性在准入/下载层已强制哈希；会话层拿不到部署声明的期望摘要，
+        // 因此构造“无期望”凭证（仍检查存在性）。
+        let model = VerifiedModel::verify(&model_path, None)?;
+        let session = OcrSession::new(&model, runtime, OcrSessionKind::Cls)?;
         Ok(Self {
             config,
             session,

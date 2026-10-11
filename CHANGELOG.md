@@ -140,7 +140,31 @@
 - **本阶段不改任何会话/构造器签名**（`OcrSession::new` / `FormulaSession::new` /
   `TableStructureSession::open` / `FormulaRecognizer`、`FormulaDetector` 的 `from_model` 系列），
   因此无破坏性变更。把这些构造器改为收 `&VerifiedModel`、删除无摘要的公开 `from_model`，
-  属于 P0-3 第二阶段（传染面 ~14 生产点 + ~40 测试点 + 破坏性公开 API），待定。
+  属于 P0-3 第二阶段（见下）。
+
+## 会话/构造器统一收 `&VerifiedModel`（P0-3 第二阶段，破坏性变更，未发布）
+
+承接第一阶段，落地方案 P0-3 的**结构性不变量**：“强度由凭证决定，而不是由调用路径决定”，
+结构上不再存在“忘记校验”的旁路：
+
+- **`VerifiedModel::verify` 加存在性优先守卫**：无论有没有期望，缺失文件都先返回
+  `FileNotFound`（不再退化为“算不出摘要”的含混错误）。这条不变量此前分散在各域构造器，
+  现单点收口到凭证。
+- **会话构造器改收 `&VerifiedModel`**（破坏性）：`OcrSession::new`、`FormulaSession::new`
+  不再接受裸 `&Path`，也不再自己检查 `is_file`；文本三处生产构造（det/rec/cls）与
+  `formula_bench` 先建凭证再传（完整性在准入/下载层已保证，会话层以 `None` 如实记录）。
+- **公式构造器删掉无摘要入口**（破坏性）：`FormulaRecognizer` / `FormulaDetector` 删除
+  `from_model(path, …)` 与 `from_model_with_hash(path, …, expected)`，合并为
+  `from_model(&VerifiedModel, runtime)`——存在性与期望摘要都在凭证这一单点完成，
+  不匹配时凭证不被构造、会话因此不被创建。
+- **表格保留 registration 分层（I-5）并委派给凭证**：`TableStructureSession::open` /
+  `probe` 仍经 `verify_registered_model`（“期望从哪来”的清单/登记逻辑不变），但后者现在
+  把校验动作委派给 `VerifiedModel::verify`；返回值仍为实际摘要。`table::registration` 的
+  14 条测试**逐条不变**，证明分层被保留。
+- **`formula_bench` 的 `--expected-sha256` 现在真正生效**：此前该 CLI 字段被定义却从未
+  参与加载（正是 P0-3 要修的“强度由调用路径决定”）；现在它经凭证，声明即校验。
+- 三域各有一条“路径存在但摘要不符 → 拒绝且会话未创建”的用例；删掉无摘要构造器后
+  `-D warnings` 仍为 0（守卫）。真实模型与合成 fixture 的端到端加载在测试与 CLI 中继续通过。
 
 ## 已知限制
 
