@@ -685,9 +685,7 @@ impl FormulaPolicy {
             return Ok(());
         }
         if self.model_path.is_none() {
-            return Err(RapidOcrError::InvalidInput(
-                "formula policy requires `model_path` when enabled".into(),
-            ));
+            return Err(crate::model_verify::missing_model_path_error("formula"));
         }
         for (name, value) in [
             ("confidence_threshold", self.confidence_threshold),
@@ -796,9 +794,7 @@ impl TablePolicy {
             return Ok(());
         }
         if self.model_path.is_none() {
-            return Err(RapidOcrError::InvalidInput(
-                "table policy requires `model_path` when enabled".into(),
-            ));
+            return Err(crate::model_verify::missing_model_path_error("table"));
         }
         if self.input_side_len == 0 {
             return Err(RapidOcrError::InvalidInput(

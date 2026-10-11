@@ -1282,9 +1282,10 @@ impl RapidOcrEngine {
         &mut self,
         policy: &crate::api::FormulaPolicy,
     ) -> Result<&mut crate::formula::recognizer::FormulaRecognizer> {
-        let path = policy.model_path.clone().ok_or_else(|| {
-            crate::error::RapidOcrError::InvalidInput("formula policy requires `model_path`".into())
-        })?;
+        let path = policy
+            .model_path
+            .clone()
+            .ok_or_else(|| crate::model_verify::missing_model_path_error("formula"))?;
         let runtime = self.inner.runtime_profile().session_runtime();
         let identity = crate::model_verify::FileIdentity::of(&path)?;
         let rebuild = self
@@ -1317,9 +1318,10 @@ impl RapidOcrEngine {
         &mut self,
         policy: &crate::api::TablePolicy,
     ) -> Result<&mut crate::table::structure::TableStructureSession> {
-        let path = policy.model_path.clone().ok_or_else(|| {
-            crate::error::RapidOcrError::InvalidInput("table policy requires `model_path`".into())
-        })?;
+        let path = policy
+            .model_path
+            .clone()
+            .ok_or_else(|| crate::model_verify::missing_model_path_error("table"))?;
         let identity = crate::model_verify::FileIdentity::of(&path)?;
         let rebuild = self
             .table_session

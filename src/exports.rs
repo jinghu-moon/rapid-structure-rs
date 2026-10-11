@@ -73,8 +73,8 @@ pub use crate::model_source::{
 // （`--reverify-models` 与 `POST /api/models/reverify` 用它）。
 pub use crate::model_verify::{
     FileIdentity, PARTIAL_DIGEST_WINDOW_BYTES, PartialDigest, ReverifyCause, VerificationOutcome,
-    VerificationStats, clear_verification_cache, force_verify_file, sha256_file_cached,
-    verification_stats, verify_file, verify_sha256,
+    VerificationStats, VerifiedModel, clear_verification_cache, force_verify_file,
+    sha256_file_cached, verification_stats, verify_file, verify_sha256,
 };
 // 加固下载器（`docs/05` §6）：库侧的**唯一**下载入口与唯一的错误分类。
 // `ensure_downloaded`（可传 `None` 哈希的旧入口）已按 §6.4 删除，不保留兼容层。

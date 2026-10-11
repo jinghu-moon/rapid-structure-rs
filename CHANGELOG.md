@@ -127,6 +127,21 @@
   分位口径变化不体现在指纹里。`tests/baseline/windows-baseline/*.json` 等**已入库基线的
   数字来自旧口径**，按裁决**不重建**，因此不得把新跑出的分位数字与这些旧基线并列比较。
 
+## 模型完整性凭证 `VerifiedModel`（P0-3 第一阶段，未发布）
+
+对应 `docs/12-structure-refactor-plan.md` 的 P0-3（I-3 / I-4 / I-5），本阶段只做**非破坏的新增**（评审一.3、方案“先落凭证类型与 verify”）：
+
+- 新增公开类型 `model_verify::VerifiedModel`（同时从 crate 根导出）：把“路径 + 期望摘要 +
+  实际摘要”钉成一个可传递的凭证，唯一入口 `VerifiedModel::verify(path, expected)` 内部仍只调
+  `verify_sha256`。`expected = None` 允许构造，但如实记录为未校验（`is_verified() == false`）。
+- 新增单点文案 `missing_model_path_error(domain)`：`api.rs` 的 formula/table `validate` 与
+  `rapid_structure.rs` 的 formula/table 懒加载共四个调用点，此前同一条件写了两套文案（
+  “… when enabled” vs 无后缀）；现在四处经此单点函数，给出逐字节相同的错误。
+- **本阶段不改任何会话/构造器签名**（`OcrSession::new` / `FormulaSession::new` /
+  `TableStructureSession::open` / `FormulaRecognizer`、`FormulaDetector` 的 `from_model` 系列），
+  因此无破坏性变更。把这些构造器改为收 `&VerifiedModel`、删除无摘要的公开 `from_model`，
+  属于 P0-3 第二阶段（传染面 ~14 生产点 + ~40 测试点 + 破坏性公开 API），待定。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

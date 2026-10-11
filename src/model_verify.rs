@@ -417,6 +417,71 @@ pub fn verify_sha256(path: &Path, expected: Option<&str>) -> Result<Option<Strin
     Ok(Some(outcome.sha256))
 }
 
+/// 模型文件的完整性**凭证**（P0-3 / I-3）。
+///
+/// 校验强度由“调用方是否持有可信摘要”决定，而不是由调用路径决定：任何模型文件进入
+/// ONNX 会话之前都必须先经 [`VerifiedModel::verify`]，于是“忘记校验”在结构上不成立。
+/// 校验本身仍只有 [`verify_sha256`] 一个实现——本类型只是把它的输入（期望）与输出
+/// （实际）连同路径一起钉成一个可传递的凭证。
+#[derive(Debug, Clone)]
+pub struct VerifiedModel {
+    path: PathBuf,
+    /// 期望摘要：来自清单 / 模型集 / CLI 的部署声明；`None` = 没有可信期望。
+    expected_sha256: Option<String>,
+    /// 实际摘要：[`verify_sha256`] 的返回值；`None` = 未校验（无期望）。
+    actual_sha256: Option<String>,
+}
+
+impl VerifiedModel {
+    /// 唯一的构造入口：**任何模型文件进入 ONNX 会话之前都经过它**。
+    ///
+    /// - `expected = Some(_)`：读盘算摘要并与期望比对，不匹配返回可定位的
+    ///   [`RapidOcrError::HashMismatch`]（路径 + 期望 + 实际），凭证**不会**被构造出来，
+    ///   因此会话也不会被创建。
+    /// - `expected = None`：调用方没有可信摘要——**不报错**，但如实记录为“未校验”
+    ///   （[`Self::is_verified`] 返回 `false`），不产生任何读盘哈希。
+    pub fn verify(path: &Path, expected: Option<&str>) -> Result<Self> {
+        let actual_sha256 = verify_sha256(path, expected)?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            expected_sha256: expected.map(|value| value.to_string()),
+            actual_sha256,
+        })
+    }
+
+    /// 凭证指向的模型文件路径。
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// 部署声明的期望摘要；`None` = 调用方没有可信期望。
+    pub fn expected_sha256(&self) -> Option<&str> {
+        self.expected_sha256.as_deref()
+    }
+
+    /// 校验通过时算出的实际摘要；`None` = 未校验（无期望）。
+    pub fn actual_sha256(&self) -> Option<&str> {
+        self.actual_sha256.as_deref()
+    }
+
+    /// `true` = 实际摘要已算出并与期望对上（即 `expected` 在场且匹配）；
+    /// `false` = 无期望、按“未校验”如实记录。
+    pub fn is_verified(&self) -> bool {
+        self.actual_sha256.is_some()
+    }
+}
+
+/// “策略启用但缺 `model_path`”的**单点**文案（P0-3 / I-3）。
+///
+/// 四个调用点（`api.rs` 的 formula/table `validate`、`rapid_structure.rs` 的
+/// formula/table 懒加载）此前各写各的，同一条件出现两条不同文案。它们必须给出
+/// **逐字节相同**的错误，所以收口到这里；`domain` 取 `"formula"` / `"table"`。
+pub(crate) fn missing_model_path_error(domain: &str) -> RapidOcrError {
+    RapidOcrError::InvalidInput(format!(
+        "{domain} policy requires `model_path` when enabled"
+    ))
+}
+
 /// 当前成本账（累计）。
 pub fn verification_stats() -> VerificationStats {
     let entries = cache().lock().map(|guard| guard.len()).unwrap_or_default();
@@ -537,7 +602,7 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        FileIdentity, PARTIAL_DIGEST_WINDOW_BYTES, PartialDigest, ReverifyCause,
+        FileIdentity, PARTIAL_DIGEST_WINDOW_BYTES, PartialDigest, ReverifyCause, VerifiedModel,
         clear_verification_cache, force_verify_file, lookup_for_test, sha256_file_cached,
         verification_stats, verify_file, verify_sha256,
     };
@@ -700,7 +765,7 @@ mod tests {
         dir.write("model.onnx", b"hello");
         let path = dir.path().join("model.onnx");
 
-        verify_sha256(&path, None).expect("no expectation means no verification");
+        verify_sha256(&path, None).expect("no expectation is allowed and records as unverified");
         assert_eq!(
             verify_sha256(&path, Some(HELLO_SHA256)).expect("match"),
             Some(HELLO_SHA256.to_string())
@@ -718,6 +783,84 @@ mod tests {
             }
             other => panic!("expected HashMismatch, got {other:?}"),
         }
+    }
+
+    /// 凭证正例：摘要一致 → `is_verified()`，且同时记下期望与实际。
+    #[test]
+    fn a_credential_matches_and_records_the_actual_digest() {
+        let dir = TempDir::new("credential-match");
+        dir.write("model.onnx", b"hello");
+        let path = dir.path().join("model.onnx");
+        let credential = VerifiedModel::verify(&path, Some(HELLO_SHA256)).expect("match");
+        assert!(credential.is_verified());
+        assert_eq!(credential.expected_sha256(), Some(HELLO_SHA256));
+        assert_eq!(credential.actual_sha256(), Some(HELLO_SHA256));
+        assert_eq!(credential.path(), path);
+    }
+
+    /// 凭证负例：不一致 → 可定位的 `HashMismatch`，**不返回凭证**（因而会话不会创建）。
+    #[test]
+    fn a_credential_mismatch_is_locating_and_yields_no_credential() {
+        let dir = TempDir::new("credential-mismatch");
+        dir.write("model.onnx", b"hello");
+        let path = dir.path().join("model.onnx");
+        let error = VerifiedModel::verify(&path, Some("deadbeef")).expect_err("mismatch must fail");
+        match error {
+            RapidOcrError::HashMismatch {
+                path: reported,
+                expected,
+                actual,
+            } => {
+                assert_eq!(reported, path);
+                assert_eq!(expected, "deadbeef");
+                assert_eq!(actual, HELLO_SHA256);
+            }
+            other => panic!("expected HashMismatch, got {other:?}"),
+        }
+    }
+
+    /// 无期望凭证：**允许构造**，但如实记录为“未校验”（`is_verified() == false`）。
+    #[test]
+    fn a_credential_without_an_expectation_is_recorded_as_unverified() {
+        let dir = TempDir::new("credential-unverified");
+        dir.write("model.onnx", b"hello");
+        let path = dir.path().join("model.onnx");
+        let credential = VerifiedModel::verify(&path, None).expect("no expectation is allowed");
+        assert!(
+            !credential.is_verified(),
+            "no expectation => recorded as unverified"
+        );
+        assert_eq!(credential.expected_sha256(), None);
+        assert_eq!(credential.actual_sha256(), None);
+        assert_eq!(credential.path(), path);
+    }
+
+    /// 文案单点：四个调用点中两个“启用但缺路径”的校验入口，必须与
+    /// `missing_model_path_error` 给出逐字节相同的错误。
+    #[test]
+    fn the_missing_model_path_message_is_a_single_point() {
+        use super::missing_model_path_error;
+        use crate::api::{FormulaPolicy, TablePolicy};
+
+        let formula = FormulaPolicy {
+            enabled: true,
+            model_path: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            formula.validate().unwrap_err().to_string(),
+            missing_model_path_error("formula").to_string(),
+        );
+
+        let table = TablePolicy {
+            enabled: true,
+            model_path: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            table.validate().unwrap_err().to_string(),
+            missing_model_path_error("table").to_string(),
+        );
     }
 
     #[test]
