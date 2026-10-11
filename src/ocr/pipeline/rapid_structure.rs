@@ -614,19 +614,32 @@ impl crate::api::OcrEngine for RapidOcrEngine {
     }
 
     fn recognize(&mut self, request: crate::api::OcrRequest) -> Result<crate::api::OcrOutput> {
-        request.validate()?;
-        // 表格分支在公式**之前**：表格需要页级文本行（回填来源），而公式路由自己也会先跑
-        // 文本通道。把表格放在外层，`recognize_with_table` 才能同时决定"要不要先抹白公式"
-        // 并把两阶段的耗时如实累加，而不是让两条路由互相看不到对方。
-        if request.table.enabled {
-            let policy = request.table.clone();
-            return self.recognize_with_table(request, policy);
+        // 校验与路由一次完成，产物交给调度器；调度器不再看策略字段。
+        let planned = crate::api::ValidatedRequest::plan(request)?;
+        self.recognize_page(planned)
+    }
+}
+
+impl RapidOcrEngine {
+    /// **阶段顺序在整个 crate 里只出现这一次。**
+    ///
+    /// 表格在公式之外的理由：表格的定位器要吃"公式抹白之后"的页级文本行作为回填来源，
+    /// 而公式自己的文本通道也会先跑。把文本通道（含公式）先产出，再往它上面**追加**表格区域，
+    /// 两个阶段各自至多被调用一次（不再有递归，因此也不再有防递归改写）。
+    fn recognize_page(
+        &mut self,
+        planned: crate::api::ValidatedRequest,
+    ) -> Result<crate::api::OcrOutput> {
+        let request = planned.request();
+        let mut output = match planned.route().formula() {
+            Some(policy) => self.recognize_text_with_formula(request, policy)?,
+            None => self.recognize_text(request.clone())?,
+        };
+        if let Some(policy) = planned.route().table() {
+            self.attach_table_regions(&mut output, request, policy)?;
         }
-        if request.formula.enabled {
-            let policy = request.formula.clone();
-            return self.recognize_with_formula(request, policy);
-        }
-        self.recognize_text(request)
+        output.validate()?;
+        Ok(output)
     }
 }
 
@@ -1055,21 +1068,21 @@ impl RapidOcrEngine {
     ///    因此“跳过普通 CTC”是执行层面的跳过，而不是事后丢弃结果；
     /// 4. 从原图裁剪公式区域，批量送入 `FormulaRecognizer`；
     /// 5. 公式区域作为独立 `RegionKind::Formula` 追加到输出，携带 polygon 与模型标识。
-    fn recognize_with_formula(
+    fn recognize_text_with_formula(
         &mut self,
-        request: crate::api::OcrRequest,
-        policy: crate::api::FormulaPolicy,
+        request: &crate::api::OcrRequest,
+        policy: &crate::api::FormulaPolicy,
     ) -> Result<crate::api::OcrOutput> {
         use crate::api::{FormulaOutcome, ImageSize, OcrRegion, Polygon, RegionKind, RegionSource};
 
         let formula_start = Instant::now();
-        let original = self.decode_source_image(&request)?;
+        let original = self.decode_source_image(request)?;
         let size = ImageSize {
             width: original.width(),
             height: original.height(),
         };
 
-        let mut candidates = self.detect_formula_candidates(&original, &policy)?;
+        let mut candidates = self.detect_formula_candidates(&original, policy)?;
         for polygon in &policy.input_regions {
             polygon.validate(size)?;
             candidates.push(crate::formula::route::FormulaCandidate {
@@ -1088,7 +1101,6 @@ impl RapidOcrEngine {
         let formula_ms = formula_start.elapsed().as_secs_f32() * 1000.0;
 
         let mut text_request = request.clone();
-        text_request.formula = crate::api::FormulaPolicy::default();
         if !regions.is_empty() {
             // 抹白公式像素：普通文本管线看不到公式，也就不会对它们跑 CTC。
             text_request.input = crate::api::ImageInput::Image(
@@ -1115,7 +1127,7 @@ impl RapidOcrEngine {
             .map(|candidate| crop_polygon_bounds(&original, candidate.polygon))
             .collect();
         let recognize_start = Instant::now();
-        let recognitions = self.formula_recognizer(&policy)?.recognize_batch(&crops)?;
+        let recognitions = self.formula_recognizer(policy)?.recognize_batch(&crops)?;
         let recognize_ms = recognize_start.elapsed().as_secs_f32() * 1000.0;
         output.timings.formula_ms = recognize_ms + formula_ms;
         output.timings.total_ms += recognize_ms + formula_ms;
@@ -1349,45 +1361,34 @@ impl RapidOcrEngine {
             })
     }
 
-    /// 表格路由：页级文本识别 → 文本分布定位 → 结构推理 → 几何匹配回填 → 发射。
+    /// 表格路由：往**已完成的页级文本输出**上追加表格区域（文本分布定位 → 结构推理 → 几何
+    /// 匹配回填 → 发射）。
     ///
-    /// 与 [`Self::recognize_with_formula`] 的关键差别：
+    /// 与 [`Self::recognize_text_with_formula`] 的关键差别：
     ///
     /// - **表格像素不抹白**。单元格文本正是要保留的页级识别结果，抹白会把它删掉。
     /// - **不重新识别单元格**。文本通过几何匹配从页级结果里取（门禁 G2/G7 的结构不变量
     ///   `BackfillOutcome::recognizer_calls == 0`），因此多一张表不会多一次 rec 调用。
     /// - 定位零新增整页 CNN（门禁 G4）：输入是**已有文本框的分布**。
     ///
-    /// 公式与表格同时启用时：公式抹白发生在**文本通道内部**（[`Self::recognize_with_formula`]
-    /// 自己会先跑文本），而表格的结构推理裁剪自**原图**。于是定位与回填用的是同一组
-    /// 抹白后的文本行（落在公式区域内的单元格因此表现为 `Unmatched`），而结构模型看到的是
-    /// 真实像素而不是被挖空的图。
-    fn recognize_with_table(
+    /// 页级文本通道在此之前由调度器 [`Self::recognize_page`] 产出：若公式启用，`output` 里
+    /// 已经追加了公式区域、且其文本通道的公式像素已被抹白。于是定位与回填用的是同一组
+    /// 抹白后的文本行（落在公式区域内的单元格因此表现为 `Unmatched`），而结构模型裁剪自
+    /// **原图**、看到的是真实像素而不是被挖空的图。
+    fn attach_table_regions(
         &mut self,
-        request: crate::api::OcrRequest,
-        policy: crate::api::TablePolicy,
-    ) -> Result<crate::api::OcrOutput> {
+        output: &mut crate::api::OcrOutput,
+        request: &crate::api::OcrRequest,
+        policy: &crate::api::TablePolicy,
+    ) -> Result<()> {
         use crate::api::{
             OcrRegion, Polygon, RegionKind, RegionSource, StageReport, StageState, StageTiming,
             TableDegradation, TableOutcome, TableStructureConfidence,
         };
         use crate::table::detection::TableDetector;
 
-        let table_start = Instant::now();
-
-        // ① 页级文本通道（公式若启用则先抹白公式像素）。表格路由在文本通道里**必须关闭**，
-        //    否则子请求会再进一次这里。
-        let mut text_request = request.clone();
-        text_request.table = crate::api::TablePolicy::default();
-        let mut output = if text_request.formula.enabled {
-            let formula = text_request.formula.clone();
-            self.recognize_with_formula(text_request, formula)?
-        } else {
-            self.recognize_text(text_request)?
-        };
-
-        // ② 定位。输入是已有文本框的分布（零新增整页 CNN），像素来自**原图**。
-        let original = self.decode_source_image(&request)?;
+        // 定位。输入是已有文本框的分布（零新增整页 CNN），像素来自**原图**。
+        let original = self.decode_source_image(request)?;
         let source = table_source_lines(&output.regions);
         let image = rec_image_from_dynamic(&original)?;
 
@@ -1417,14 +1418,13 @@ impl RapidOcrEngine {
                     postprocess_ms: 0.0,
                 }),
             };
-            output.validate()?;
-            return Ok(output);
+            return Ok(());
         }
 
         // 会话在整个请求里只取一次：`table_session` 每次都要按文件身份（路径 + 体积 +
         // mtime）确认缓存是否仍然有效，那是每张表一次的 `stat`；更重要的是
         // "一张表一次结构推理"（门禁 G3）应当由**结构**保证，而不是靠调用点自觉。
-        let session = self.table_session(&policy)?;
+        let session = self.table_session(policy)?;
         let vocabulary = session.vocabulary().clone();
         let mut infer_ms = 0.0_f32;
         let mut backfill_ms = 0.0_f32;
@@ -1542,9 +1542,7 @@ impl RapidOcrEngine {
                 postprocess_ms: backfill_ms,
             }),
         };
-        let _ = table_start.elapsed();
-        output.validate()?;
-        Ok(output)
+        Ok(())
     }
 }
 
@@ -3337,7 +3335,8 @@ rec:
             "the page pipeline must build exactly one reuse backfill source"
         );
         // G3：结构模型每张表恰好调用一次 `run_with`，不随单元格数增长。
-        let run_probe = ["table_session", "(&policy)?"].concat();
+        // `attach_table_regions` 已收 `&TablePolicy`，取会话时直接把该引用传入（无 `&`）。
+        let run_probe = ["table_session", "(policy)?"].concat();
         assert_eq!(
             production.matches(&run_probe).count(),
             1,

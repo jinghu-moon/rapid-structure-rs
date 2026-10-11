@@ -11,12 +11,12 @@ pub use crate::api::{
     ClassifierPlan, ClassifierPolicy, CoordinateSpace, DetectionOutcome, DetectionPolicy,
     EngineInfo, EnhancementPolicy, FormulaOutcome, FormulaPolicy, ImageInfo, ImageInput, ImageSize,
     InputTimings, OcrEngine, OcrOutput, OcrRegion, OcrRequest, OcrTimings, OcrWord, OutputPolicy,
-    OwnedPixelBuffer, PixelFormat, Polygon, PreprocessPolicy, ProviderInfo,
+    OwnedPixelBuffer, PageRoute, PixelFormat, Polygon, PreprocessPolicy, ProviderInfo,
     ProviderPreference as GenericProviderPreference, ProviderResolutionInfo, RecognitionOutcome,
     RecognitionPolicy, RectU32, RegionKind, RegionSource, ResolvedProvider, StagePlan, StageReport,
     StageReports, StageState, StageTiming, TableCellMatch, TableCellOutcome, TableDegradation,
     TableOutcome, TablePolicy, TableStructureConfidence, TableTextPolicy, TextOrder,
-    TextOrientation, TilePolicy, WordKind, WordOutputMode,
+    TextOrientation, TilePolicy, ValidatedRequest, WordKind, WordOutputMode,
 };
 pub use crate::config::{
     ColorOrder, LangCls, LangDet, LangRec, ModelType, OcrVersion, ProviderPreference, RecImage,

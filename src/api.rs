@@ -317,38 +317,22 @@ impl OcrRequest {
         self.formula.validate()?;
         self.table.validate()?;
         if self.formula.enabled {
-            if self.roi.is_some() {
-                return Err(RapidOcrError::InvalidInput(
-                    "formula routing does not support `roi`: formula regions are expressed in \
-                     original image coordinates"
-                        .into(),
-                ));
-            }
-            if self.preprocess.tile.is_some() {
-                return Err(RapidOcrError::InvalidInput(
-                    "formula routing does not support tiled preprocessing".into(),
-                ));
-            }
+            self.reject_off_page_premise(
+                "formula",
+                "formula regions are expressed in original image coordinates",
+            )?;
         }
-        // 表格路由与公式路由共享同一条坐标前提，因此共享同一条约束。表格的定位器吃的是
-        // **整页文本框分布**（行高一致性、x 坐标成列），结构模型吃的是整页坐标下的裁剪；
-        // `roi` 把输入裁成子矩形、`tile` 把输入切成多块分别识别，两者都会让"定位器看到的
-        // 那一页"与"调用方要的那一页"不是同一页。坐标**恰好**仍能对上（页级文本区域的
-        // polygon 会被 `+ offset` 映射回原图），所以这不是一次会崩的错，而是一次会静默
-        // 返回调用方没问过的结果的错 —— 正是结构化拒绝存在的理由。
+        // 表格路由与公式路由共享同一条坐标前提，因此共享同一条约束（判据只有一份，
+        // 见 `reject_off_page_premise`）。表格的定位器吃的是**整页文本框分布**（行高一致性、
+        // x 坐标成列），结构模型吃的是整页坐标下的裁剪；`roi` 把输入裁成子矩形、`tile` 把
+        // 输入切成多块分别识别，两者都会让"定位器看到的那一页"与"调用方要的那一页"不是同一页。
+        // 坐标**恰好**仍能对上（页级文本区域的 polygon 会被 `+ offset` 映射回原图），所以这不是
+        // 一次会崩的错，而是一次会静默返回调用方没问过的结果的错 —— 正是结构化拒绝存在的理由。
         if self.table.enabled {
-            if self.roi.is_some() {
-                return Err(RapidOcrError::InvalidInput(
-                    "table routing does not support `roi`: the table locator reads the whole \
-                     page's text layout"
-                        .into(),
-                ));
-            }
-            if self.preprocess.tile.is_some() {
-                return Err(RapidOcrError::InvalidInput(
-                    "table routing does not support tiled preprocessing".into(),
-                ));
-            }
+            self.reject_off_page_premise(
+                "table",
+                "the table locator reads the whole page's text layout",
+            )?;
         }
         if self.preprocess.max_decode_pixels == 0 {
             return Err(RapidOcrError::InvalidInput(
@@ -411,8 +395,74 @@ impl OcrRequest {
         }
         Ok(())
     }
+
+    /// 页面级阶段（公式/表格）共享的坐标前提判据。
+    ///
+    /// 两条阶段路由都需要**未裁、未分块的整页**（公式区域以原图坐标表达、表格定位器读
+    /// 整页文本分布），因此共享同一条 `roi`/`tile` 禁令。模板统一、理由由调用方传入，
+    /// 判据在整个 crate 里只出现这一次。
+    fn reject_off_page_premise(&self, stage: &str, roi_reason: &str) -> Result<()> {
+        if self.roi.is_some() {
+            return Err(RapidOcrError::InvalidInput(format!(
+                "{stage} routing does not support `roi`: {roi_reason}"
+            )));
+        }
+        if self.preprocess.tile.is_some() {
+            return Err(RapidOcrError::InvalidInput(format!(
+                "{stage} routing does not support tiled preprocessing"
+            )));
+        }
+        Ok(())
+    }
 }
 
+/// 本次请求实际要跑的页面级阶段。**顺序不在这里**（顺序由调度器按依赖决定）。
+/// 由 [`ValidatedRequest::plan`] 从已校验的 `OcrRequest` 推导，调度器只看本类型、不再看策略字段。
+#[derive(Debug, Clone, Default)]
+pub struct PageRoute {
+    formula: Option<FormulaPolicy>,
+    table: Option<TablePolicy>,
+}
+
+impl PageRoute {
+    pub fn runs_formula(&self) -> bool {
+        self.formula.is_some()
+    }
+    pub fn runs_table(&self) -> bool {
+        self.table.is_some()
+    }
+    pub fn formula(&self) -> Option<&FormulaPolicy> {
+        self.formula.as_ref()
+    }
+    pub fn table(&self) -> Option<&TablePolicy> {
+        self.table.as_ref()
+    }
+}
+
+/// 校验与路由的**唯一产物**：不可变的计划交给调度器。
+#[derive(Debug, Clone)]
+pub struct ValidatedRequest {
+    request: OcrRequest,
+    route: PageRoute,
+}
+
+impl ValidatedRequest {
+    /// 一次完成：校验所有策略与坐标前提（`OcrRequest::validate`）→ 按启用位推导页面路由。
+    pub fn plan(request: OcrRequest) -> Result<Self> {
+        request.validate()?;
+        let route = PageRoute {
+            formula: request.formula.enabled.then(|| request.formula.clone()),
+            table: request.table.enabled.then(|| request.table.clone()),
+        };
+        Ok(Self { request, route })
+    }
+    pub fn request(&self) -> &OcrRequest {
+        &self.request
+    }
+    pub fn route(&self) -> &PageRoute {
+        &self.route
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ImageSize {
     pub width: u32,
@@ -1568,6 +1618,115 @@ mod tests {
             table: TablePolicy::default(),
         };
         assert!(request.validate().is_err());
+    }
+
+    /// 构造一个只改页面级阶段开关的合法请求（启用时补上必需模型路径）。
+    fn page_request(formula_enabled: bool, table_enabled: bool) -> OcrRequest {
+        let mut request = OcrRequest {
+            input: ImageInput::Encoded(Arc::from([] as [u8; 0])),
+            roi: None,
+            scale_hint: None,
+            stages: StagePlan::default(),
+            preprocess: PreprocessPolicy::default(),
+            detection: DetectionPolicy::default(),
+            recognition: RecognitionPolicy::default(),
+            output: OutputPolicy::default(),
+            formula: FormulaPolicy::default(),
+            table: TablePolicy::default(),
+        };
+        if formula_enabled {
+            request.formula = FormulaPolicy {
+                enabled: true,
+                model_path: Some(PathBuf::from("model.onnx")),
+                ..FormulaPolicy::default()
+            };
+        }
+        if table_enabled {
+            request.table = TablePolicy {
+                enabled: true,
+                model_path: Some(PathBuf::from("model.onnx")),
+                ..TablePolicy::default()
+            };
+        }
+        request
+    }
+
+    /// `PageRoute` 的四种组合：路由按启用位推导，关闭的阶段不进入计划。
+    #[test]
+    fn plan_derives_route_from_enabled_stages() {
+        for (formula_enabled, table_enabled) in
+            [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let planned = ValidatedRequest::plan(page_request(formula_enabled, table_enabled))
+                .expect("a well-formed page request must plan");
+            let route = planned.route();
+            assert_eq!(route.runs_formula(), formula_enabled);
+            assert_eq!(route.runs_table(), table_enabled);
+            assert_eq!(route.formula().is_some(), formula_enabled);
+            assert_eq!(route.table().is_some(), table_enabled);
+        }
+    }
+
+    /// 未启用页面级阶段时，`roi`/`tile` 属于普通文本路径的合法能力，plan 必须放行。
+    #[test]
+    fn plan_allows_roi_and_tile_without_page_stages() {
+        let mut request = page_request(false, false);
+        request.roi = Some(RectU32 {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        });
+        ValidatedRequest::plan(request).expect("plain text may use roi");
+
+        let mut request = page_request(false, false);
+        request.preprocess.tile = Some(TilePolicy {
+            max_width: 100,
+            max_height: 100,
+            overlap: 10,
+        });
+        ValidatedRequest::plan(request).expect("plain text may use tiled preprocessing");
+    }
+
+    /// 任一页面级阶段启用时，`roi`/`tile` 都被结构化拒绝；理由与阶段同处一地。
+    /// 公式先于表格被校验，因此"两者都启用"命中公式的理由。
+    #[test]
+    fn plan_rejects_off_page_premise_for_each_enabled_stage() {
+        // (formula, table, 期望命中的阶段名)
+        for (formula, table, stage) in [
+            (true, false, "formula"),
+            (false, true, "table"),
+            (true, true, "formula"),
+        ] {
+            let mut with_roi = page_request(formula, table);
+            with_roi.roi = Some(RectU32 {
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 10,
+            });
+            let message = ValidatedRequest::plan(with_roi)
+                .expect_err("page stages forbid roi")
+                .to_string();
+            assert!(
+                message.contains(stage) && message.contains("roi"),
+                "stage={stage} premise=roi message={message}"
+            );
+
+            let mut with_tile = page_request(formula, table);
+            with_tile.preprocess.tile = Some(TilePolicy {
+                max_width: 100,
+                max_height: 100,
+                overlap: 10,
+            });
+            let message = ValidatedRequest::plan(with_tile)
+                .expect_err("page stages forbid tiled")
+                .to_string();
+            assert!(
+                message.contains(stage) && message.contains("tiled"),
+                "stage={stage} premise=tiled message={message}"
+            );
+        }
     }
 
     #[test]
