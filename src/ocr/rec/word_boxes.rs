@@ -354,19 +354,8 @@ fn order_points(ori_box: Quad) -> Quad {
 }
 
 fn quad_to_rect_bbox(quad: &Quad) -> (f32, f32, f32, f32) {
-    let mut x_min = f32::INFINITY;
-    let mut y_min = f32::INFINITY;
-    let mut x_max = f32::NEG_INFINITY;
-    let mut y_max = f32::NEG_INFINITY;
-
-    for point in quad {
-        x_min = x_min.min(point[0]);
-        y_min = y_min.min(point[1]);
-        x_max = x_max.max(point[0]);
-        y_max = y_max.max(point[1]);
-    }
-
-    (x_min, y_min, x_max, y_max)
+    let b = crate::vision::geometry::aabb_from_quad(quad);
+    (b[0], b[1], b[2], b[3])
 }
 
 fn quad_vec_to_rect_bbox(quads: &[Quad]) -> (f32, f32, f32, f32) {

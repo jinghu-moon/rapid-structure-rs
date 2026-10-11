@@ -1776,17 +1776,7 @@ fn polygon_area(poly: &[[f32; 2]]) -> f32 {
 }
 
 fn polygon_area_f64(poly: &[[f32; 2]]) -> f64 {
-    if poly.len() < 3 {
-        return 0.0;
-    }
-
-    let mut sum = 0.0_f64;
-    for i in 0..poly.len() {
-        let p0 = poly[i];
-        let p1 = poly[(i + 1) % poly.len()];
-        sum += f64::from(p0[0]) * f64::from(p1[1]) - f64::from(p1[0]) * f64::from(p0[1]);
-    }
-    0.5 * sum
+    crate::vision::geometry::polygon_area(poly)
 }
 
 #[cfg(test)]

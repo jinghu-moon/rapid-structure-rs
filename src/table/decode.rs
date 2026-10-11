@@ -420,29 +420,7 @@ pub fn is_blank_polygon(polygon: &[f32; 8]) -> bool {
 /// 与参考实现 `TableMatch.match_result` 里的 `np.min(pred_box[0::2])` 等一致 ——
 /// 后续的 IoU 与距离**全部**建立在轴对齐框上，因此这里就把它降维，不再保留多边形。
 pub fn polygon_to_bbox(polygon: &[f32; 8]) -> [f32; 4] {
-    let xs = [polygon[0], polygon[2], polygon[4], polygon[6]];
-    let ys = [polygon[1], polygon[3], polygon[5], polygon[7]];
-    let mut x_min = xs[0];
-    let mut x_max = xs[0];
-    let mut y_min = ys[0];
-    let mut y_max = ys[0];
-    for &x in &xs {
-        if x < x_min {
-            x_min = x;
-        }
-        if x > x_max {
-            x_max = x;
-        }
-    }
-    for &y in &ys {
-        if y < y_min {
-            y_min = y;
-        }
-        if y > y_max {
-            y_max = y;
-        }
-    }
-    [x_min, y_min, x_max, y_max]
+    crate::vision::geometry::aabb_from_flat8(polygon)
 }
 
 /// 预处理形状表，对应参考实现 `TablePreprocess` 的 `shape_list`。

@@ -221,26 +221,7 @@ pub enum BackfillSource<'a> {
 ///
 /// [`CellSlot::bbox`]: crate::table::decode::CellSlot::bbox
 pub fn axis_aligned_bbox(polygon: &[f32; 8]) -> [f32; 4] {
-    let mut x_min = polygon[0];
-    let mut x_max = polygon[0];
-    let mut y_min = polygon[1];
-    let mut y_max = polygon[1];
-    for pair in polygon.as_chunks::<2>().0 {
-        let (x, y) = (pair[0], pair[1]);
-        if x < x_min {
-            x_min = x;
-        }
-        if x > x_max {
-            x_max = x;
-        }
-        if y < y_min {
-            y_min = y;
-        }
-        if y > y_max {
-            y_max = y;
-        }
-    }
-    [x_min, y_min, x_max, y_max]
+    crate::vision::geometry::aabb_from_flat8(polygon)
 }
 
 /// 轴对齐 bbox → 裁剪用的四点四边形（左上、右上、右下、左下）。
@@ -291,24 +272,9 @@ pub fn rectangle_distance(a: [f32; 4], b: [f32; 4]) -> f64 {
 /// （`intersect <= min(S1, S2)`，要 `S1 + S2 - intersect == 0` 必须两个面积都为 0，而零面积框
 /// 必然触发早退）。这里仍然显式挡住，因为 `NaN` 会污染后面的排序比较且**不会报错**。
 pub fn rectangle_iou(a: [f32; 4], b: [f32; 4]) -> f64 {
-    let (ax0, ay0, ax1, ay1) = (a[0] as f64, a[1] as f64, a[2] as f64, a[3] as f64);
-    let (bx0, by0, bx1, by1) = (b[0] as f64, b[1] as f64, b[2] as f64, b[3] as f64);
-
-    let area_a = (ax1 - ax0) * (ay1 - ay0);
-    let area_b = (bx1 - bx0) * (by1 - by0);
-
-    let x_overlap = ax1.min(bx1) - ax0.max(bx0);
-    let y_overlap = ay1.min(by1) - ay0.max(by0);
-    if x_overlap <= 0.0 || y_overlap <= 0.0 {
-        return 0.0;
-    }
-
-    let intersect = x_overlap * y_overlap;
-    let denominator = area_a + area_b - intersect;
-    if denominator <= 0.0 {
-        return 0.0;
-    }
-    intersect / denominator
+    // 实现收敛到 `vision::geometry::aabb_iou`（P1-1）：逐位口径不变，本函数的既有
+    // 用例（`the_swapped_parameter_names_do_not_change_the_iou` 等）即其数值对拍。
+    crate::vision::geometry::aabb_iou(a, b)
 }
 
 /// 把多个匹配到同一单元格的行拼成一个字符串。
