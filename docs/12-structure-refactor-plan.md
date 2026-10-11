@@ -885,7 +885,7 @@ node tools\check-page-result-contract.mjs
 
 ---
 
-#### P1-7 表格 JSON 视图（M-2） · 状态：**重写**（评审二.8）
+#### P1-7 表格 JSON 视图（M-2） · 状态：**取消（测量后）**（评审二.8；量测结果见 §9）
 
 **现状**（`[实测]`）`src/output/json.rs:174-227`：
 `regions`（完整事实源，含 `table`）、顶层 `items`（`:178-186`，统一消费视图）、顶层 `tables`（`:203-227`，表格专用视图，10 字段）。
@@ -907,9 +907,9 @@ node tools\check-page-result-contract.mjs
 
 **测试清单**
 
-- [ ] 测量脚本/命令与结果（体积、耗时、改前后对比）写进 §9
-- [ ] 三通道快照对拍（与 P0-1 共用）
-- [ ] 若做投影重构：`items`/`tables` 与 `regions` 的一致性断言
+- [x] 测量脚本/命令与结果（体积、耗时、改前后对比）写进 §9（临时 `#[ignore]` 探针，量测后已 `git checkout` 还原；零产品改动）
+- [x] 三通道快照对拍（与 P0-1 共用）：`json.rs` 未被触碰，快照护栏与 `assert_result_satisfies_page_contract` 保持绿
+- [x] 若做投影重构：`items`/`tables` 与 `regions` 的一致性断言 —— **未做**：量测命中取消判据（视图构造增量 <0.5ms debug 最坏值、相对完整序列化路径 <5%，投影保持输出字节不变），三视图按协议用途原样保留
 
 ---
 
@@ -1238,7 +1238,11 @@ node tools\check-page-result-contract.mjs
 
 | 批次 | 提交 | 命令 | 关键结果 | 基线对比 | 门禁判定 | 未覆盖风险 |
 | --- | --- | --- | --- | --- | --- | --- |
-| _(空)_ | | | | | | |
+| 7 · P1-1 | `61cffe8` | `vision/geometry` 几何基础函数单点化 + 逐处对拍委托 | aabb/quad 几何函数收敛单点；各调用点逐位对拍 | 三通道快照 + `--all-targets` | §8.1 全绿 | det AVX2 归一化路径未动 |
+| 7 · P1-3 | `421e400` | `vision/normalize` signed-unit LUT 单点化 | 0..=255 全域 LUT 含符号位对拍、端点/无 -0.0/单例稳定 | lib 722 绿 | §8.1/§8.2 全绿 | table ImageNet 归一化按裁决暂缓 |
+| 7 · P1-4 | `819f6d0` | `PageTextLine` 规范视图 + 装配点单点转换（第一批） | bbox 唯一生成点 = `aabb_from_flat8`，与旧逐位一致；旧结构原样保留 | lib 724、serve 串行 289 | §8.1/§8.2 全绿 | 删旧结构属第二批，本批未做 |
+| 7 · P1-6 | `bc4dbb6` | 权威 `assets/table_html_whitelist.json` + 生成器 + fingerprint 三份对拍 | **产品可见收紧（§4.2 行 864 要求登记）**：标签统一 28（页面 11→28）、移除 align/valign、引擎 span 1000→64、页面 colspan 下界 >1→>=1；escape 全链单点 | lib 728、serve 串行 289、serve_startup、node 契约 | §8.1/§8.2 + `generate-table-whitelist.mjs --check` 全绿 | 捕获的 42 区域页面 fixture 不含表格，大表格双重净化路径未由真实捕获体覆盖（由构造用例覆盖） |
+| 7 · P1-7 | 无代码改动（取消） | 临时 `#[ignore]` 探针 `cargo test --lib --features serve p17_measure_json_view_payload_and_time -- --ignored --nocapture`，量测后 `git checkout` 还原 | debug min-of-300：`to_value`=232µs、`to_output_json`=728µs、视图构造增量 **496µs（0.496ms）**；`result-real-42-regions.json` 派生视图占 full 30366B 的 **39.4%**（items 10340B + text 1582B 复制 regions；此页无表格、formulas 空） | 新量测（无改前/改后对比：投影重构保持输出字节不变） | **结论：取消投影重构** —— 收益 <0.5ms（debug 最坏值，release 更低）且相对完整序列化路径 <5%，命中本文"收益不明显则取消"判据；三视图按协议用途原样保留 | payload 39.4% 冗余真实存在，但删 items/text 属**破坏性输出协议变更**（评审二.8 排除出 P1，需独立版本标记与对外说明），另议 |
 
 ---
 
