@@ -73,8 +73,11 @@ struct Scripted {
     ep: String,
     /// 每次识别是谁服务的（按顺序），用来断言"队列里的任务用了新引擎"。
     served: Arc<Mutex<Vec<String>>>,
-    /// 每次识别收到的 `FormulaPolicy`（M4：公式队列真的把公式管线接上了）。
-    formulas: Arc<Mutex<Vec<FormulaPolicy>>>,
+    /// 每次识别收到的（请求体, `FormulaPolicy`）（M4：公式队列真的把公式管线接上了）。
+    ///
+    /// 与 `tables` 同一手法（复审 P2-3）：请求体与策略成对记录，断言用请求体把策略关联
+    /// 回具体请求 —— 多 worker 下 `recognize` 的进入顺序不等于提交顺序，按下标取偶发错位。
+    formulas: Arc<Mutex<Vec<(String, FormulaPolicy)>>>,
     /// 每次识别收到的（请求体, `TablePolicy`）（E16.2：`?table=1` 真的把表格阶段接上了）。
     ///
     /// 两者在**同一次加锁**内成对记录：多 worker 下 `recognize` 的进入顺序不等于提交顺序，
@@ -135,11 +138,21 @@ impl Scripted {
         self
     }
 
-    /// 最近的 `n` 次识别收到的公式策略（时间顺序）。
-    fn formulas(&self) -> Vec<FormulaPolicy> {
+    /// 每次识别收到的（请求体, 公式策略），按后端进入顺序；M4。
+    fn formulas(&self) -> Vec<(String, FormulaPolicy)> {
         self.formulas
             .lock()
             .expect("the scripted recorder is not poisoned")
+            .clone()
+    }
+
+    /// 指定请求体收到的公式策略；一次都没记录时直接 panic（漏跑也是回归）。
+    fn formula_policy(&self, body: &str) -> FormulaPolicy {
+        self.formulas()
+            .iter()
+            .find(|(recorded, _)| recorded == body)
+            .unwrap_or_else(|| panic!("no formula policy recorded for request body {body:?}"))
+            .1
             .clone()
     }
 
@@ -190,7 +203,7 @@ impl OcrBackend for ScriptedBackend {
             .formulas
             .lock()
             .expect("the scripted recorder is not poisoned")
-            .push(request.formula.clone());
+            .push((body.clone(), request.formula.clone()));
         self.state
             .tables
             .lock()
@@ -2410,15 +2423,19 @@ fn the_formula_queue_runs_the_formula_pipeline_from_the_model_set() {
 
     let policies = scripted.formulas();
     assert_eq!(policies.len(), 2, "one request per job");
-    // 顺序：文本任务先入队（两个队列都非空时调度器先取文本）。
+    // 策略按**请求体**关联，不按下标（复审 P2-3）：两条队列并行，`recognize` 的进入顺序
+    // 不等于提交顺序，"文本任务先入队"不是测试可以依赖的事实。
+    let text_policy = scripted.formula_policy("text image");
     assert!(
-        !policies[0].enabled,
-        "the text queue must not enable the formula pipeline: {:?}",
-        policies[0]
+        !text_policy.enabled,
+        "the text queue must not enable the formula pipeline: every recorded policy: {policies:?}"
     );
-    assert_eq!(policies[0].model_path, None);
-    let formula = &policies[1];
-    assert!(formula.enabled, "the formula queue must enable it");
+    assert_eq!(text_policy.model_path, None);
+    let formula = scripted.formula_policy("formula image");
+    assert!(
+        formula.enabled,
+        "the formula queue must enable it: every recorded policy: {policies:?}"
+    );
     assert_eq!(
         formula.model_path.as_deref(),
         Some(dir.join("fx.onnx").as_path())

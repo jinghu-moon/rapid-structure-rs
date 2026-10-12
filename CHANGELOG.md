@@ -471,6 +471,30 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
   `open_unchecked`”），本批更正，并在§10 开头说明：未被就地标注的行不代表对当前代码仍成立。
 - 测试计数：lib 仍 746 passed + 2 ignored；新增一个集成测试目标（4 条）。
 
+## 公式队列的断言改为按请求体关联策略（复审 P2-3，未发布）
+
+对应复审结论第三条（P2）：`src/bin/serve/tests.rs` 的 M4 用例仍用 `policies[0]` / `policies[1]`
+推断“文本任务在前、公式任务在后”。记录顺序是**后端进入顺序**，多 worker 下不等于提交顺序，
+所以下标断言既可能因 worker 完成顺序变化而偶发失败，也可能把策略关联到错误的请求
+（后者更隐蔽：断言依旧全绿，但钉的是另一件事）。上一批修表格时登记过“公式侧是同类风险”，
+本批按同一手法闭合，不再另造机制。
+
+- `Scripted.formulas` 由 `Vec<FormulaPolicy>` 改为 `Vec<(String, FormulaPolicy)>`：`recognize` 在
+  **同一次加锁**内把（请求体, 策略）成对记录，与既有的 `tables` 完全同构。
+- 新增 `formula_policy(body)`：按请求体取回该请求实际收到的策略，一次都没记录时直接 panic——
+  “漏跑”也算回归，而不是静默少一条断言。
+- M4 用例改为 `formula_policy("text image")` / `formula_policy("formula image")`，保留 `len() == 2`
+  的计数断言；失败信息带上完整 `policies` 快照，便于诊断。
+- 判别力（三组变异均实跑后精确还原）：① 把记录改成 `insert(0, …)`（进入顺序倒转）→ 新断言仍
+  通过（说明它不再依赖顺序）；② 同一倒转下改用下标断言 → 在 `!text_policy.enabled` 处 FAILED
+  （证明旧断言确实依赖顺序，不是纸面风险）；③ 把记录的请求体换成错误值 → panic
+  `no formula policy recorded for request body "text image"`（证明关联是活的）。另：M4 用例隔离
+  复跑 10/10 通过。
+- 全文件已无 `policies[<数字>]` 形式的断言；其余顺序敏感点（`served`）只用于说明，不按 `served[n]` 断言。
+- **本批只动测试**，生产逻辑未改：没有证据表明公式队列本身错位，被修的是回归测试作为证据的可靠性。
+  测试计数不变（lib 仍 746 passed + 2 ignored、serve 并行/串行仍 289）。改动经脚本化最小替换
+  （4 处各断言命中次数 == 1）+ `git diff` 逐字节核验：该文件工作树是 CRLF，禁止用编辑工具批量改。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、
