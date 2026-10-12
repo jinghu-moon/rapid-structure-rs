@@ -363,6 +363,9 @@ formulas 空），其 0.496ms 不能代表标题所指的表格场景。本批�
 - **重判定：取消结论维持**，但理由改口径：在“投影重构保持输出字节不变”的约束下，可消掉的
   只有视图遍历本体（16–133µs/视图，合计 <0.4ms），而增量的大头是派生负载自身再序列化一遍，
   字节不变就无法避免。删 `items`/`tables` 重复字段属独立的破坏性协议变更，按裁决与本项分开验收。
+  （**复审 P2-4 回正**：上面“增量的大头”只对合成大表页成立（剩余 492µs vs 本体 403µs），
+  真实页相反（本体 335µs vs 剩余 103µs）；且旧文里“视图本体只占 2.2–5.9%”是人工推算、
+  分母口径不一致。现已入库结构化记述并按声明分母重算，见下面“P1-7 判据入库为结构化记述”一节。）
 - 本项零生产代码改动（`to_output_json`/`to_output_items` 未动），入库只涉及探针与夹具。
 - 门禁可信性修复（审核清单外，用户批准）：`serve` 测试的记录器改为把 `TablePolicy` 与请求体在
   **同一次加锁**内成对记录，`the_table_stage_runs_from_the_model_set_when_requested` 按请求体
@@ -494,6 +497,41 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
 - **本批只动测试**，生产逻辑未改：没有证据表明公式队列本身错位，被修的是回归测试作为证据的可靠性。
   测试计数不变（lib 仍 746 passed + 2 ignored、serve 并行/串行仍 289）。改动经脚本化最小替换
   （4 处各断言命中次数 == 1）+ `git diff` 逐字节核验：该文件工作树是 CRLF，禁止用编辑工具批量改。
+
+## P1-7 判据入库为结构化记述（复审 P2-4，未发布）
+
+对应复审结论第四条（P2）：P1-7 的测量探针只 `println!` 数据，“取消投影重构”是**人工解释**出来的
+结论，不是机器判据。本批把测量结果入库为结构化记述，并加一条**非 `#[ignore]`** 的守卫用例。
+
+- 入库产物：`tests/fixtures/json-output/p17-cost-record.json` —— `method`（profile / runs / rounds /
+  统计量，并显式声明 `timings_are_machine_dependent: true`）+ `judgement`（分母口径、两条前提、结论、理由）
+  + `samples`（每份样本的结构计数、逐视图字节、六项时间、以及可重算的 `derived` 字段）。
+- 探针 `p17_measure_json_table_views_payload_and_time`（仍 `#[ignore]`）不再只打印：它分列量测后直接
+  **生成同一份记述**（需设 `RAPID_STRUCTURE_P17_WRITE_RECORD=1` 才写盘），写盘前先校时间分项相容，
+  避免一轮噪声写出一份守卫拦住不了的记述。
+- 守卫用例 `the_saved_p17_cost_record_is_recomputable_and_self_consistent` **不重新计时**，它钉：
+  ① 样本存在且仍可加载、区域/文本/公式/表格计数与记述一致；② 字节分项在当前代码上逐项重算相等
+  （输出协议漂移即红），且 `full − source = views_total + key_overhead`；③ 算术自洽（增量 =
+  `to_output_json − to_value`、本体 = 四视图之和、**本体 ≤ 增量**（每条记录的算术要求，因此无条件断言）、
+  占比 = 本体/声明分母）；④ 结论前提（字节冗余非破坏性不可消、未声明机器无关绝对阈值）与
+  `judgement` 字段集本身。
+- 判别力 9 组变异（均实跑后还原，还原后记录文件与改前逐字节一致）：改 `views_total`±1（→ `json.rs:1134`）/
+  改 `increment_ns`（→ 1157）/ 改单个视图时间（→ 1162）/ 把四个视图时间一起抬过整体增量、同时保持
+  “本体 = 四视图之和”自洽（→ 1167，即无条件的 `本体 ≤ 增量`）/ 夹具名指向不存在的文件（→ 879）/
+  改走占比分母（→ 1077）/ 删一个判据字段（→ 1052）/ 把“非破坏性可消冗余”改成 true（→ 1190）/
+  改结构计数（→ 1103）→ 守卫全部失败；还原后通过。
+- **本轮量测推翻了一个旧说法**（已就地更正 docs/12 §9 与上面“审核点 3”一节）：按声明分母
+  `to_output_json`计算，视图本体占全路径 **46.55%**（真实页）/ **12.96%**（大表页），
+  绝对值 0.336ms / 0.403ms（debug、本机）—— 不是旧文里的 2.2–5.9% / <5%。取消结论仍然成立，
+  但它现在明写建立在两条前提上：字节冗余只能靠破坏性输出协议变更消除；时间收益只覆盖
+  JSON 构造这一个步骤。**未覆盖范围**：本批没有重测 JSON 构造在整页请求里的占比（仓库内无可
+  引用的端到端 bench），若日后证明该步骤在端到端里可观，该结论应重新评估。
+- 本项零生产代码改动（`to_output_json` / `to_output_items` 未动）；测试计数 lib 746 → 747（新增 1 条
+  非 `#[ignore]` 守卫），`#[ignore]` 仍 2 条，serve 并行/串行仍 289。
+- 本批提交前实跑全套七项均为 0：`cargo fmt --all -- --check`、`cargo clippy --all-targets --features serve
+  -- -D warnings`、`cargo test --all-targets --features serve`（lib 747 passed / 2 ignored）、
+  `cargo test --bin rapidstruct --features serve -- --test-threads=1`（serve 289）、
+  `cargo test --test serve_startup … -- --test-threads=1`、两个 node 检（页面结果契约 / 白名单 `--check`）。
 
 ## 已知限制
 

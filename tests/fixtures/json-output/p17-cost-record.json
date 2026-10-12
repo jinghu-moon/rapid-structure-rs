@@ -1,0 +1,91 @@
+{
+  "judgement": {
+    "absolute_time_threshold_declared": false,
+    "byte_redundancy_reachable_without_breaking_the_output_protocol": false,
+    "decision": "cancel-projection-refactor",
+    "eliminable_time_denominator": "to_output_json",
+    "question": "把 items/text/tables/formulas 四个派生视图改成投影（不再重复走一遍源数据）能消掉多少成本？",
+    "rationale": "两条前提，一条口径：字节冗余恰好就是 `full − source = views_total + key_overhead` 这一项，输出字节不变约束下只能靠破坏性协议变更消除（按裁决排除在本重构外）；时间收益的上界就是 `views_body_ns`，它只作用于 JSON 构造路径（分母已在 `eliminable_time_denominator` 里写明）。占比的绝对值随机器与 CPU 负载浮动，所以本记述不声明任何机器无关的绝对阈值。"
+  },
+  "method": {
+    "profile": "debug",
+    "rounds": 3,
+    "runs_per_round": 300,
+    "statistic": "min-of-runs，取 rounds 轮的最小值",
+    "timings_are_machine_dependent": true
+  },
+  "note": "P1-7（投影重构）的成本分项记述。守卫用例 the_saved_p17_cost_record_is_recomputable_and_self_consistent 会重算样本存在性、字节分项与算术关系；绝对耗时是机器相关的，不当作阈值。",
+  "samples": [
+    {
+      "derived": {
+        "eliminable_share_percent": 46.55,
+        "increment_ns": 438200,
+        "redundancy_share_percent": 29.61,
+        "views_body_ns": 335500
+      },
+      "description": "真实捕获页：多区域正文 + 1 张 10 格表格",
+      "fixture": "p17-table-real.json",
+      "formula_regions": 0,
+      "id": "real",
+      "payload_bytes": {
+        "full": 36560,
+        "key_overhead": 39,
+        "source": 25733,
+        "views": {
+          "formulas": 2,
+          "items": 9185,
+          "tables": 1079,
+          "text": 522
+        },
+        "views_total": 10788
+      },
+      "regions": 74,
+      "table_regions": 1,
+      "text_regions": 73,
+      "time_ns": {
+        "formulas_view": 106200,
+        "items_view": 10400,
+        "tables_view": 106400,
+        "text_view": 112500,
+        "to_output_json": 720800,
+        "to_value": 282600
+      }
+    },
+    {
+      "derived": {
+        "eliminable_share_percent": 12.96,
+        "increment_ns": 895000,
+        "redundancy_share_percent": 53.67,
+        "views_body_ns": 403400
+      },
+      "description": "合成放大页：8 张 100 格表格，每张 HTML 与 table_html 均 ≈31 KB",
+      "fixture": "p17-table-synthetic.json",
+      "formula_regions": 0,
+      "id": "synthetic",
+      "payload_bytes": {
+        "full": 1439661,
+        "key_overhead": 39,
+        "source": 667021,
+        "views": {
+          "formulas": 2,
+          "items": 264260,
+          "tables": 507817,
+          "text": 522
+        },
+        "views_total": 772601
+      },
+      "regions": 81,
+      "table_regions": 8,
+      "text_regions": 73,
+      "time_ns": {
+        "formulas_view": 126900,
+        "items_view": 16500,
+        "tables_view": 127100,
+        "text_view": 132900,
+        "to_output_json": 3113000,
+        "to_value": 2218000
+      }
+    }
+  ],
+  "schema_version": 1
+}

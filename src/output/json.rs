@@ -866,70 +866,432 @@ mod tests {
         }
     }
 
+    /// P1-7 成本分项记录的入库路径（相对仓库根）。
+    const P17_COST_RECORD: &str = "tests/fixtures/json-output/p17-cost-record.json";
+
+    /// `to_output_json` 插入的四个派生视图键（与函数体内的插入集合一一对应）。
+    const P17_VIEW_KEYS: [&str; 4] = ["text", "items", "formulas", "tables"];
+
+    /// 读一份 P1-7 样本（入库夹具，任何环境都必须可用）。
+    fn p17_read_sample(fixture: &str) -> OcrOutput {
+        let path = crate::test_support::fixture_dir("json-output").join(fixture);
+        let raw = std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("{fixture} must be committed: {error}"));
+        serde_json::from_slice(&raw).expect("fixture must load as OcrOutput")
+    }
+
+    /// 样本的**字节与计数**事实：这两个量在任何机器上都一致，因此守卫用例可以直接重算比对。
+    fn p17_payload_facts(output: &OcrOutput) -> serde_json::Value {
+        let source = serde_json::to_string(&serde_json::to_value(output).expect("source value"))
+            .expect("compact source")
+            .len();
+        let doc = to_output_json(output).expect("doc");
+        let full = serde_json::to_string(&doc).expect("compact doc").len();
+        let mut views = serde_json::Map::new();
+        let mut views_total = 0usize;
+        for key in P17_VIEW_KEYS {
+            let bytes = serde_json::to_string(&doc[key])
+                .expect("view slice bytes")
+                .len();
+            views_total += bytes;
+            views.insert(key.to_string(), serde_json::json!(bytes));
+        }
+        // 每个被插入的键额外占 `,"key":`，即 `key.len() + 4` 字节；因此派生体积必须逐项复原总体积。
+        let key_overhead: usize = P17_VIEW_KEYS.iter().map(|key| key.len() + 4).sum();
+        serde_json::json!({
+            "regions": output.regions.len(),
+            "text_regions": output
+                .regions
+                .iter()
+                .filter(|region| region.recognition.is_some())
+                .count(),
+            "formula_regions": output
+                .regions
+                .iter()
+                .filter(|region| region.formula.is_some())
+                .count(),
+            "table_regions": output
+                .regions
+                .iter()
+                .filter(|region| region.table.is_some())
+                .count(),
+            "payload_bytes": {
+                "source": source,
+                "full": full,
+                "views": views,
+                "views_total": views_total,
+                "key_overhead": key_overhead,
+            }
+        })
+    }
+
+    /// 把 `f` 跑 `runs` 次取**最快**（min-of-N）；最后一份结果留在手里防止整段被优化掉。
+    fn p17_time_min_ns<T>(runs: u32, mut f: impl FnMut() -> T) -> u64 {
+        let mut best = u64::MAX;
+        let mut last = None;
+        for _ in 0..runs {
+            let started = std::time::Instant::now();
+            let value = f();
+            best = best.min(started.elapsed().as_nanos() as u64);
+            last = Some(value);
+        }
+        std::hint::black_box(&last);
+        best
+    }
+
+    /// 百分比（两位小数）：记录里只存这个精度，守卫用例按同一精度重算。
+    fn p17_percent(part: u64, whole: u64) -> f64 {
+        (part as f64 * 100.0 / whole as f64 * 100.0).round() / 100.0
+    }
+
+    /// 一份样本的时间分项（min-of-`runs`×`rounds`）。绝对值是**机器相关**的，
+    /// 因此它们只作为“分项比例”的分子分母参与判据，不当作阈值本身。
+    fn p17_time_facts(output: &OcrOutput, runs: u32, rounds: u32) -> serde_json::Value {
+        let mut best = [u64::MAX; 6];
+        for round in 0..rounds {
+            let measured = [
+                p17_time_min_ns(runs, || serde_json::to_value(output).expect("to_value")),
+                p17_time_min_ns(runs, || to_output_json(output).expect("doc")),
+                p17_time_min_ns(runs, || to_output_items(output)),
+                p17_time_min_ns(runs, || output.plain_text(crate::TextOrder::Reading)),
+                p17_time_min_ns(runs, || {
+                    output
+                        .tables(crate::TextOrder::Reading)
+                        .into_iter()
+                        .map(|(region_id, _)| region_id)
+                        .collect::<Vec<_>>()
+                }),
+                p17_time_min_ns(runs, || {
+                    output
+                        .formula_latex(crate::TextOrder::Reading)
+                        .into_iter()
+                        .map(|(region_id, _)| region_id)
+                        .collect::<Vec<_>>()
+                }),
+            ];
+            for (slot, value) in best.iter_mut().zip(measured) {
+                *slot = (*slot).min(value);
+            }
+            println!(
+                "P17 round={round} to_value_ns={} to_output_json_ns={}",
+                measured[0], measured[1]
+            );
+        }
+        let [
+            source_value_ns,
+            full_path_ns,
+            items_view_ns,
+            text_view_ns,
+            tables_view_ns,
+            formulas_view_ns,
+        ] = best;
+        let views_body_ns = items_view_ns + text_view_ns + tables_view_ns + formulas_view_ns;
+        let increment_ns = full_path_ns - source_value_ns;
+        let payload_full = serde_json::to_string(&to_output_json(output).expect("doc"))
+            .expect("compact doc")
+            .len() as u64;
+        let payload_source =
+            serde_json::to_string(&serde_json::to_value(output).expect("source value"))
+                .expect("compact source")
+                .len() as u64;
+        // 写盘前自检：时间分项必须彼此相容（否则重生成的记述会把守卫用例带坑）。
+        assert!(
+            full_path_ns > source_value_ns,
+            "派生视图的构造必须真的花时间：to_output_json={full_path_ns} to_value={source_value_ns}"
+        );
+        assert!(
+            increment_ns >= views_body_ns,
+            "视图本体之和 ({views_body_ns}) 不能大于整体增量 ({increment_ns})：本轮测量噪声过大，请重跑"
+        );
+        serde_json::json!({
+            "time_ns": {
+                "to_value": source_value_ns,
+                "to_output_json": full_path_ns,
+                "items_view": items_view_ns,
+                "text_view": text_view_ns,
+                "tables_view": tables_view_ns,
+                "formulas_view": formulas_view_ns,
+            },
+            "derived": {
+                "increment_ns": increment_ns,
+                "views_body_ns": views_body_ns,
+                "eliminable_share_percent": p17_percent(views_body_ns, full_path_ns),
+                "redundancy_share_percent": p17_percent(payload_full - payload_source, payload_full),
+            }
+        })
+    }
+
+    /// P1-7 的**取消投影重构**结论不能再靠人工解释一段打印输出（复审 P2-4）。
+    ///
+    /// 本用例不重新计时（绝对耗时是机器相关的，不应该在 CI 里钉阈值），它做四件事：
+    /// ① 记述里声明的样本必须**存在**且仍能加载，结构计数（区域数 / 文本与公式与表格区域数）
+    ///    与记述一致；② 负载分项（字节）在当前代码上重算，必须逐项相等 —— 协议一飘就红；
+    /// ③ 成本分项的**算式**必须自洽（增量 = 全路径 − 基础路径、本体 = 四个视图之和、
+    ///    本体 ≤ 增量、占比 = 本体/声明的分母、分项能拼回总体积）；④ “取消”结论的前提必须在数据里成立
+    ///    （字节冗余非破坏性不可消、未声明机器无关的绝对阈值）。
+    ///
+    /// 故意**不**断言任何绝对耗时阈值：那只能在一个机器上成立，写死了就是伪判据。
+    #[test]
+    fn the_saved_p17_cost_record_is_recomputable_and_self_consistent() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let raw = std::fs::read_to_string(root.join(P17_COST_RECORD))
+            .expect("成本分项记录必须入库（由 --ignored 探针重生成）");
+        let record: serde_json::Value = serde_json::from_str(&raw).expect("记录是合法 JSON");
+        assert_eq!(record["schema_version"].as_u64(), Some(1));
+        assert!(
+            record["method"]["timings_are_machine_dependent"]
+                .as_bool()
+                .unwrap_or(false),
+            "记录必须自己声明“绝对耗时是机器相关的”，否则下面的占比会被当成全局阈值"
+        );
+        let judgement = record["judgement"]
+            .as_object()
+            .expect("judgement 必须是一个对象");
+        let mut judgement_keys = judgement.keys().map(String::as_str).collect::<Vec<_>>();
+        judgement_keys.sort_unstable();
+        assert_eq!(
+            judgement_keys,
+            [
+                "absolute_time_threshold_declared",
+                "byte_redundancy_reachable_without_breaking_the_output_protocol",
+                "decision",
+                "eliminable_time_denominator",
+                "question",
+                "rationale",
+            ],
+            "判据块字段集变了：守卫与记述必须一起改"
+        );
+        let judgement_of = |key: &str| judgement.get(key).expect("已断言存活的字段");
+        let decision = judgement_of("decision").as_str().expect("decision");
+        assert!(
+            matches!(
+                decision,
+                "cancel-projection-refactor" | "proceed-projection-refactor"
+            ),
+            "未知的结论写法: {decision:?}"
+        );
+        assert!(
+            !judgement_of("rationale").as_str().unwrap_or("").is_empty(),
+            "结论必须自述理由"
+        );
+        assert_eq!(
+            judgement_of("eliminable_time_denominator").as_str(),
+            Some("to_output_json"),
+            "占比必须写明分母，否则不同机器、不同口径的数字会被当成同一个判据（旧 §9 的 2.2–5.9% 就死在这上面）"
+        );
+        let byte_redundancy_reachable =
+            judgement_of("byte_redundancy_reachable_without_breaking_the_output_protocol")
+                .as_bool()
+                .expect("byte_redundancy_reachable_without_breaking_the_output_protocol");
+        let absolute_threshold_declared = judgement_of("absolute_time_threshold_declared")
+            .as_bool()
+            .expect("绝对阈值声明");
+
+        let samples = record["samples"].as_array().expect("samples array");
+        assert!(samples.len() >= 2, "至少一份真实 + 一份放大样本");
+        for sample in samples {
+            let id = sample["id"].as_str().expect("sample id");
+            let fixture = sample["fixture"].as_str().expect("sample fixture");
+            let output = p17_read_sample(fixture);
+            let facts = p17_payload_facts(&output);
+            for key in [
+                "regions",
+                "text_regions",
+                "formula_regions",
+                "table_regions",
+            ] {
+                assert_eq!(
+                    sample[key].as_u64().unwrap_or(u64::MAX),
+                    facts[key].as_u64().unwrap_or(u64::MAX),
+                    "样本 {id} 的 `{key}` 与当前夹具重算不一致（样本已不在、或记述陈旧）"
+                );
+            }
+            let recorded_bytes = &sample["payload_bytes"];
+            let live_bytes = &facts["payload_bytes"];
+            assert_eq!(
+                recorded_bytes["source"], live_bytes["source"],
+                "样本 {id} 的源体积变了（输出协议漂移）"
+            );
+            assert_eq!(
+                recorded_bytes["full"], live_bytes["full"],
+                "样本 {id} 的完整体积变了（输出协议漂移）"
+            );
+            for key in P17_VIEW_KEYS {
+                assert_eq!(
+                    recorded_bytes["views"][key], live_bytes["views"][key],
+                    "样本 {id} 的派生视图 `{key}` 体积变了"
+                );
+            }
+            // 分项必须能拼回总体积：派生视图字节 + 四个键名开销 == 完整 − 源。
+            let sum_of_parts = live_bytes["views_total"].as_u64().expect("views_total")
+                + live_bytes["key_overhead"].as_u64().expect("key_overhead");
+            assert_eq!(
+                sum_of_parts,
+                live_bytes["full"].as_u64().expect("full")
+                    - live_bytes["source"].as_u64().expect("source"),
+                "样本 {id} 的成本分项拼不回总体积"
+            );
+            assert_eq!(
+                recorded_bytes["views_total"], live_bytes["views_total"],
+                "样本 {id} 的派生视图总体积变了"
+            );
+
+            let time = &sample["time_ns"];
+            let got = |name: &str| {
+                time[name]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("样本 {id} 缺 time_ns.{name}"))
+            };
+            let derived = &sample["derived"];
+            let claims = |name: &str| {
+                derived[name]
+                    .as_f64()
+                    .unwrap_or_else(|| panic!("样本 {id} 缺 derived.{name}"))
+            };
+            let increment = derived["increment_ns"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("样本 {id} 缺 derived.increment_ns"));
+            let views_body = derived["views_body_ns"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("样本 {id} 缺 derived.views_body_ns"));
+            assert_eq!(
+                increment,
+                got("to_output_json") - got("to_value"),
+                "样本 {id} 的增量不是 `to_output_json − to_value`"
+            );
+            assert_eq!(
+                views_body,
+                got("items_view") + got("text_view") + got("tables_view") + got("formulas_view"),
+                "样本 {id} 的视图本体不是四个视图耗时之和"
+            );
+            assert!(
+                increment >= views_body,
+                "样本 {id} 里可消除部分 ({views_body}) 大于整体增量 ({increment})：记述不自洽"
+            );
+            let full_path = got("to_output_json");
+            let eliminable = claims("eliminable_share_percent");
+            assert!(
+                (eliminable - p17_percent(views_body, full_path)).abs() < 0.05,
+                "样本 {id} 的可消除占比不等于本体/全路径的重算值"
+            );
+            let redundancy = claims("redundancy_share_percent");
+            let live_full = live_bytes["full"].as_u64().expect("full");
+            let live_source = live_bytes["source"].as_u64().expect("source");
+            assert!(
+                (redundancy - p17_percent(live_full - live_source, live_full)).abs() < 0.05,
+                "样本 {id} 的冗余占比不等于当前字节体积的重算值"
+            );
+            assert!(
+                live_bytes["views_total"].as_u64().expect("views_total") > 0,
+                "样本 {id} 没任何派生负载，不能用来支撑“冗余只能靠破坏协议变更消除”这句前提"
+            );
+        }
+        if decision == "cancel-projection-refactor" {
+            assert!(
+                !byte_redundancy_reachable,
+                "取消结论拿“字节不变约束下消不掉冗余”当前提，但记述说冗余能在不破坏协议的前提下消掉"
+            );
+            assert!(
+                !absolute_threshold_declared,
+                "取消结论不得依赖一个机器无关的绝对耗时阈值（记述已声明耗时是机器相关的）"
+            );
+        }
+        assert!(
+            samples
+                .iter()
+                .any(|sample| sample["payload_bytes"]["full"].as_u64().unwrap_or(0) > 500_000),
+            "记述必须含一份大负载样本，不能默默退回小页面"
+        );
+    }
+
     /// P1-7 表格场景测量探针（审核点 3：旧测量样本无表格，不能支撑取消结论）。
     ///
     /// 输入是入库的可复现夹具（`tests/fixtures/json-output/`）：真实捕获页（含 1 张
     /// 10 格表）与合成放大变体（8 张 100 格表、每表 31 KB 级 HTML）。只量三件事：
     /// 派生视图构造时间、序列化时间、负载体积；不依赖模型，`--ignored` 手动跑。
+    ///
+    /// 重生成入库记述（上一条守卫用例比对的产物）：
+    /// 先设环境变量 `RAPID_STRUCTURE_P17_WRITE_RECORD` 为 `1`，再跑
+    /// `cargo test --lib --features serve p17_measure_json_table_views_payload_and_time -- --ignored --nocapture`。
+    /// 写入的绝对耗时来自**当前机器**，记述里已声明这一事实；守卫用例只校算术与体积。
     #[test]
-    #[ignore = "P1-7 量测探针，手动 --ignored 运行"]
+    #[ignore = "P1-7 量测探针（会跑上千次序列化），手动 --ignored 运行"]
     fn p17_measure_json_table_views_payload_and_time() {
-        fn time_it<T>(label: &str, runs: u32, mut f: impl FnMut() -> T) {
-            let mut best = u128::MAX;
-            let mut last = None;
-            for _ in 0..runs {
-                let t = std::time::Instant::now();
-                let value = f();
-                best = best.min(t.elapsed().as_nanos());
-                // 只留最后一份防止整个构造被优化掉；前一份在下一轮赋值时释放。
-                last = Some(value);
-            }
-            std::hint::black_box(&last);
-            println!("P17 {label}_min_ns={best}");
+        use serde_json::json;
+
+        const RUNS: u32 = 300;
+        const ROUNDS: u32 = 3;
+        let write_record = std::env::var("RAPID_STRUCTURE_P17_WRITE_RECORD")
+            .map(|value| value.trim() == "1")
+            .unwrap_or(false);
+        let samples = [
+            (
+                "real",
+                "p17-table-real.json",
+                "真实捕获页：多区域正文 + 1 张 10 格表格",
+            ),
+            (
+                "synthetic",
+                "p17-table-synthetic.json",
+                "合成放大页：8 张 100 格表格，每张 HTML 与 table_html 均 ≈31 KB",
+            ),
+        ];
+
+        let mut records = Vec::new();
+        for (id, fixture, description) in samples {
+            let output = p17_read_sample(fixture);
+            println!("P17 sample={id} fixture={fixture} runs={RUNS} rounds={ROUNDS}");
+            let mut record = p17_payload_facts(&output);
+            record["id"] = json!(id);
+            record["fixture"] = json!(fixture);
+            record["description"] = json!(description);
+            let times = p17_time_facts(&output, RUNS, ROUNDS);
+            record["time_ns"] = times["time_ns"].clone();
+            record["derived"] = times["derived"].clone();
+            println!(
+                "P17 {id}: {}",
+                serde_json::to_string(&record).expect("record json")
+            );
+            records.push(record);
         }
 
-        for name in ["p17-table-real.json", "p17-table-synthetic.json"] {
-            let raw = std::fs::read(crate::test_support::fixture_dir("json-output").join(name))
-                .expect("fixture");
-            let output: OcrOutput = serde_json::from_slice(&raw).expect("fixture must load");
-            let runs = 300;
-            println!("P17 sample={name} regions={}", output.regions.len());
-            time_it("to_value", runs, || {
-                serde_json::to_value(&output).expect("to_value")
-            });
-            time_it("to_output_json", runs, || {
-                to_output_json(&output).expect("doc")
-            });
-            time_it("items_view_only", runs, || to_output_items(&output));
-            time_it("text_view_only", runs, || {
-                output.plain_text(crate::TextOrder::Reading)
-            });
-            time_it("tables_view_only", runs, || {
-                output
-                    .tables(crate::TextOrder::Reading)
-                    .into_iter()
-                    .map(|(i, _)| i)
-                    .collect::<Vec<_>>()
-            });
-            time_it("formulas_view_only", runs, || {
-                output
-                    .formula_latex(crate::TextOrder::Reading)
-                    .into_iter()
-                    .map(|(i, _)| i)
-                    .collect::<Vec<_>>()
-            });
-            let doc = to_output_json(&output).expect("doc");
-            let full_bytes = serde_json::to_string(&doc).expect("compact").len();
-            let source_bytes = serde_json::to_string(&serde_json::to_value(&output).expect("v"))
-                .expect("compact")
-                .len();
-            for key in ["items", "tables", "formulas", "text"] {
-                println!(
-                    "P17 payload_{key}_bytes={}",
-                    serde_json::to_string(&doc[key]).expect("slice bytes").len()
-                );
-            }
-            println!("P17 payload_full_bytes={full_bytes} payload_source_bytes={source_bytes}");
+        if !write_record {
+            println!("P17 打印模式：设 RAPID_STRUCTURE_P17_WRITE_RECORD=1 才会写入入库记述");
+            return;
         }
+        let doc = json!({
+            "schema_version": 1,
+            "note": "P1-7（投影重构）的成本分项记述。守卫用例 the_saved_p17_cost_record_is_recomputable_and_self_consistent \
+                     会重算样本存在性、字节分项与算术关系；绝对耗时是机器相关的，不当作阈值。",
+            "method": {
+                "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
+                "statistic": "min-of-runs，取 rounds 轮的最小值",
+                "runs_per_round": RUNS,
+                "rounds": ROUNDS,
+                "timings_are_machine_dependent": true,
+            },
+            "judgement": {
+                "question": "把 items/text/tables/formulas 四个派生视图改成投影（不再重复走一遍源数据）能消掉多少成本？",
+                "eliminable_time_denominator": "to_output_json",
+                "byte_redundancy_reachable_without_breaking_the_output_protocol": false,
+                "absolute_time_threshold_declared": false,
+                "decision": "cancel-projection-refactor",
+                "rationale": "两条前提，一条口径：字节冗余恰好就是 `full − source = views_total + key_overhead` \
+                              这一项，输出字节不变约束下只能靠破坏性协议变更消除（按裁决排除在本重构外）；时间收益的上界就是 \
+                              `views_body_ns`，它只作用于 JSON 构造路径（分母已在 `eliminable_time_denominator` 里写明）。\
+                              占比的绝对值随机器与 CPU 负载浮动，所以本记述不声明任何机器无关的绝对阈值。",
+            },
+            "samples": records,
+        });
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(P17_COST_RECORD);
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&doc).expect("pretty record json")
+            ),
+        )
+        .expect("write the P1-7 cost record");
+        println!("wrote {} samples to {}", records.len(), path.display());
     }
 }
