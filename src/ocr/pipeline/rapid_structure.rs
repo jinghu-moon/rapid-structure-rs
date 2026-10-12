@@ -545,7 +545,7 @@ pub struct RapidOcrEngine {
     )>,
 }
 
-/// 会话缓存的**键**：文件身份 + 调用方这次声明的期望摘要（规范化后）+ 请求带来的会话构造参数。
+/// 会话缓存的**键**：文件身份 + 这次的**有效期望摘要**（规范化后）+ 请求带来的会话构造参数。
 ///
 /// # 为什么摘要必须是键的一部分
 ///
@@ -559,6 +559,10 @@ pub struct RapidOcrEngine {
 /// 期望摘要原先只在**重建分支**里被读取，所以这个洞不是“再检查一次路径”能补的：
 /// 声明值进入键以后，声明一变就必然重建，而重建路径上的凭证构造（[`crate::model_verify::VerifiedModel::verify`]）
 /// 会按**这次的声明**重新校验并按需返回 [`crate::error::RapidOcrError::HashMismatch`]。
+///
+/// 同一条论证也适用于**登记回落**（复审 P1-b）：表格域里 `None` 不等于“这一次没有期望摘要”，
+/// 它还可能来自模型同目录的清单。所以进键的是**解析后**的有效摘要，而不是策略字段的原始写法 ——
+/// 否则“清单里的登记值被改掉”这一整个类别都落在键外，新登记值一次也不会被重校。
 ///
 /// # 规范化与判定同形
 ///
@@ -585,8 +589,13 @@ pub struct RapidOcrEngine {
 struct SessionCacheKey {
     /// 文件身份：路径 + 体积 + mtime + 首尾各 64 KiB 的局部摘要。
     identity: crate::model_verify::FileIdentity,
-    /// 规范化后的声明摘要；`None` = 这一次请求没有声明摘要（表格路径的登记摘要回落在
-    /// registration 层，不改变“声明缺席”这个事实，因此仍是一种独立的键）。
+    /// 规范化后的**有效期望摘要**：调用方声明的非空值优先，否则是模型同目录清单里登记的
+    /// 摘要（表格路径的回落，见
+    /// [`crate::table::registration::resolve_registered_expected`]）。
+    ///
+    /// 键里放的是**解析后**的那一个，不是调用方原始声明的 `Option`（复审 P1-b）：只存
+    /// 原始声明会让“登记摘要变了”落在键外 —— 声明仍是 `None`、身份仍相同，于是旧会话
+    /// 继续回答，新登记值一次也没被重新校验。这与“给出声明即校验”是同一个漏洞的另一半。
     declared: Option<String>,
     /// 由请求决定的会话构造参数（见类型文档里“为什么会话构造参数也是键的一部分”）。
     config: SessionConfigKey,
@@ -1431,7 +1440,7 @@ impl RapidOcrEngine {
             })
     }
 
-    /// 懒加载表格结构会话；**会话缓存键**（文件身份 + 声明摘要 + 会话构造参数）变化时重建。
+    /// 懒加载表格结构会话；**会话缓存键**（文件身份 + 有效期望摘要 + 会话构造参数）变化时重建。
     ///
     /// 会话的设置全部来自策略与引擎的运行时档案：表格结构不是一条可以自己决定线程数、
     /// 画布边长与形状固定策略的旁路。期望摘要同样由策略传入、由库在加载时校验。
@@ -1439,6 +1448,10 @@ impl RapidOcrEngine {
     /// 构造参数**必须进键**（复审 P1）：它们决定的是已创建的那个会话本身（线程选项与
     /// free-dimension override 都在 `open` 时一次性施加），而同一张请求里的预处理与解码几何
     /// 却按**这次的** `input_side_len` 走 —— 复用旧会话等于让两边各自用两个不同的边长。
+    ///
+    /// 摘要也必须先解析再进键（复审 P1-b）：策略里写 `None` 不等于“这一次没有期望摘要”，
+    /// 表格域还有一条登记回落。因此本函数在取身份之前就把**有效值**算出来，同一个值
+    /// 既进键又交给凭证构造 —— 清单里的登记值换了人就必然重建并重校。
     fn table_session(
         &mut self,
         policy: &crate::api::TablePolicy,
@@ -1447,6 +1460,12 @@ impl RapidOcrEngine {
             .model_path
             .clone()
             .ok_or_else(|| crate::model_verify::missing_model_path_error("table"))?;
+        // “期望从哪来”只有这一个解析点（显式非空优先，否则取同目录清单的登记）。
+        // 拿到以后向下只有一份：键、凭证都用它，所以“被重校的”与“被复用的”不会分叉。
+        let expected = crate::table::registration::resolve_registered_expected(
+            &path,
+            policy.expected_model_sha256.as_deref(),
+        )?;
         // 先组装构造参数，再让它**同时**成为键的一部分与 `open` 的入参：
         // “键里比较的”与“会话实际用到的”因此是同一个值，不可能分叉。
         let config = crate::table::structure::TableStructureConfig {
@@ -1456,17 +1475,16 @@ impl RapidOcrEngine {
         };
         let key = SessionCacheKey::table(
             crate::model_verify::FileIdentity::of(&path)?,
-            policy.expected_model_sha256.as_deref(),
+            expected.as_deref(),
             &config,
         );
         if needs_rebuild(self.table_session.as_ref().map(|(cached, _)| cached), &key) {
             let runtime = self.inner.runtime_profile().session_runtime();
             // 凭证在打开会话之前构造：期望摘要的“从哪来”（显式优先、否则取登记）留在
             // registration 分层，会话本身只收凭证（审核点 2：与文本/公式同一契约）。
-            let credential = crate::table::registration::verified_registered_model(
-                &path,
-                policy.expected_model_sha256.as_deref(),
-            )?;
+            // 这里传的是**已解析**的值，所以 registration 层内部的回落分支不会重读清单。
+            let credential =
+                crate::table::registration::verified_registered_model(&path, expected.as_deref())?;
             let session = crate::table::structure::TableStructureSession::open(
                 &credential,
                 &runtime,
@@ -1543,7 +1561,7 @@ impl RapidOcrEngine {
         }
 
         // 会话在整个请求里只取一次：`table_session` 每次都要按会话缓存键（文件身份 +
-        // 声明摘要 + 会话构造参数）确认缓存是否仍然有效，那是每张表一次的 `stat`；更重要的是
+        // 有效期望摘要 + 会话构造参数）确认缓存是否仍然有效，那是每张表一次的 `stat`；更重要的是
         // “一张表一次结构推理”（门禁 G3）应当由**结构**保证，而不是靠调用点自觉。
         let session = self.table_session(policy)?;
         let vocabulary = session.vocabulary().clone();
@@ -3741,6 +3759,94 @@ rec:
         );
     }
 
+    /// 复审 P1-b（表格站点）：热会话 + 模型文件一个字节没变 + **只改清单里登记的摘要**。
+    ///
+    /// 策略里写 `None` 不等于“这一次没有期望摘要”：表格域还有一条登记回落。上一条用例钉的是
+    /// 显式声明那一半，本条钉回落那一半 —— 旧实现把原始声明（`None`）直接进键，于是登记值
+    /// 换了人也不会重校。三段：登记正确 -> 通过；登记被改掉 -> 必红；登记改回来 -> 必绿
+    /// （键的变化是双向的，一次失败不会把会话钉死）。
+    #[test]
+    fn a_changed_table_registration_is_not_answered_by_a_hot_session() {
+        let Some(model_root) = crate::test_support::ocr_model_root() else {
+            return;
+        };
+        let Some(table_model) = crate::test_support::table_structure_model_path() else {
+            return;
+        };
+        let Some(page) = crate::test_support::page_fixture("04表格与键值对.png") else {
+            return;
+        };
+        let dir = crate::test_support::TempDir::new("pipeline-table-registration");
+        let copy = dir.path().join("slanet-plus.onnx");
+        std::fs::copy(&table_model, &copy).expect("copy the real table model");
+        let registered = crate::model_store::sha256_file(&copy).expect("hash the copy");
+        let size = std::fs::metadata(&copy).expect("stat the copy").len();
+        let bytes = std::fs::read(&page).expect("the page must be readable");
+
+        // 摘要只写在清单里，策略留 `None`：走的就是那条回落路径，也就是必须进键的那一份。
+        let policy = TablePolicy {
+            enabled: true,
+            model_path: Some(copy.clone()),
+            expected_model_sha256: None,
+            text_policy: TableTextPolicy::Escape,
+            ..TablePolicy::default()
+        };
+        let write_manifest = |sha256: &str| {
+            dir.write(
+                "manifest.json",
+                format!(
+                    r#"{{"schema_version":1,"id":"scratch","family":"SLANet","version":"v2.0.0","files":[
+                        {{"name":"slanet-plus.onnx","role":"table_structure","sha256":"{sha256}","size_bytes":{size}}}
+                    ]}}"#
+                )
+                    .as_bytes(),
+            );
+        };
+        write_manifest(&registered);
+
+        let mut engine =
+            RapidOcrEngine::new(engine_config(&model_root)).expect("engine should load");
+        let output = engine
+            .recognize(request(bytes.clone(), policy.clone()))
+            .expect("the first request must pass on the registered digest");
+        assert!(
+            !table_regions(&output).is_empty(),
+            "the session must actually have been used by a table region"
+        );
+
+        // 模型没动，只把清单里的登记摘要改掉：旧会话不许继续回答。
+        let bogus = format!("{:064x}", 0xabcd_u32);
+        write_manifest(&bogus);
+        let error = engine
+            .recognize(request(bytes.clone(), policy.clone()))
+            .expect_err("a changed registration must not be answered by the hot session");
+        match error {
+            crate::error::RapidOcrError::HashMismatch {
+                path: reported,
+                expected,
+                actual,
+            } => {
+                assert_eq!(reported, copy, "the error must name the model file");
+                assert_eq!(
+                    expected, bogus,
+                    "期望必须来自清单里的登记值，而不是策略里那个 `None`"
+                );
+                assert_eq!(
+                    actual, registered,
+                    "the file never changed - only the registration did"
+                );
+            }
+            other => panic!("expected a hash mismatch from the registration, got {other:?}"),
+        }
+
+        // 改回来必须又能跑：键的变化是双向的。
+        write_manifest(&registered);
+        let output = engine
+            .recognize(request(bytes, policy))
+            .expect("restoring the registration must pass again");
+        assert!(!table_regions(&output).is_empty());
+    }
+
     /// 表格路由与 `roi`/`tile` 互斥，必须在进入管线前结构化拒绝（与公式路由同形）。
     ///
     /// 坐标**恰好**仍能对上（页级文本区域的 polygon 会被 `+ offset` 映射回原图），所以
@@ -3782,6 +3888,10 @@ mod session_cache_rule_tests {
     //! 所以“声明变了必须重建”“会话构造参数变了必须重建”这两条规则自己必须各有一条无模型
     //! 的守卫，否则它们在干净 clone 上什么也没被证明。三个站点的端到端行为各有一条
     //! 真实模型用例钉着。
+    //!
+    //! 分工也要记清楚：本模块钉的是**键类型**，钉不了**调用点**。把表格站点的键退回
+    //! “不含 config”或“不含登记摘要”时，这里的用例仍然全绿（它拿的是自己构造的键），
+    //! 失败只会出现在两条真实模型用例上 —— 所以两边都不可省。
 
     use super::{SessionCacheKey, needs_rebuild};
     use crate::model_verify::FileIdentity;
@@ -3826,6 +3936,13 @@ mod session_cache_rule_tests {
             ),
             "dropping the declaration is a different statement about the file"
         );
+        // 反向（复审 P1-b 的键侧形状）：第一次什么期望都没有（无声明也无登记），后来清单
+        // 登记了一个值 -> 也必须重建，否则“受清单管辖”这件事永远追不上已经活着的会话。
+        let undeclared = SessionCacheKey::engine_only(file.clone(), None);
+        assert!(needs_rebuild(
+            Some(&undeclared),
+            &SessionCacheKey::engine_only(file, Some(BOGUS_SHA256))
+        ));
         assert!(needs_rebuild(None, &first), "an empty cache always builds");
     }
 
