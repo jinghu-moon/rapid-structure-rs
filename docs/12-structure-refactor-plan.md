@@ -921,12 +921,16 @@ node tools\check-page-result-contract.mjs
 
 **现状**（`[审计]`）`digest_hex` 三份：`src/evaluation/formula/sampling.rs:46`、`src/evaluation/table/fixture.rs:539`
 （`:240` 注释自认"口径与 formula 侧一致"）、`src/evaluation/table/run.rs:1520`（内联）。
+**补充（审核点 4）**：迁移后实测发现第四处同形内联 —— `src/bin/formula_eval.rs` 的
+`compare_with_reference`（报告字段 `reference_sha256`）。P1-8 批按"改动不超计划规模"的裁决
+未动并如实登记为后续候选；审核点 4 判定它属计划范围内的生产摘要实现，已并入单点。
 
-**目标设计**：`src/evaluation/digest.rs` 提供 `pub fn digest_hex(bytes: &[u8]) -> String`，三处改调。
+**目标设计**：`src/evaluation/digest.rs` 提供 `pub fn digest_hex(bytes: &[u8]) -> String`，四处改调。
 
 **行为预期**：等价（同一算法、同一输出）。
 
-**测试清单**：一条"三处调用同一函数"的旁证（对同一输入输出相同）+ 既有 fixture 测试不变。
+**测试清单**：一条"多处调用同一函数"的旁证（对同一输入输出相同）+ 既有 fixture 测试不变；
+审核点 4 追加 `formula_eval` 的报告摘要回归用例（预定答案向量 + 同一记录换字节写法必然换摘要）。
 
 ---
 
@@ -1249,7 +1253,8 @@ node tools\check-page-result-contract.mjs
 | 7 · P1-7 | 无代码改动（取消） | 临时 `#[ignore]` 探针 `cargo test --lib --features serve p17_measure_json_view_payload_and_time -- --ignored --nocapture`，量测后 `git checkout` 还原 | debug min-of-300：`to_value`=232µs、`to_output_json`=728µs、视图构造增量 **496µs（0.496ms）**；`result-real-42-regions.json` 派生视图占 full 30366B 的 **39.4%**（items 10340B + text 1582B 复制 regions；此页无表格、formulas 空） | 新量测（无改前/改后对比：投影重构保持输出字节不变） | **结论：取消投影重构** —— 收益 <0.5ms（debug 最坏值，release 更低）且相对完整序列化路径 <5%，命中本文"收益不明显则取消"判据；三视图按协议用途原样保留 | payload 39.4% 冗余真实存在，但删 items/text 属**破坏性输出协议变更**（评审二.8 排除出 P1，需独立版本标记与对外说明），另议 |
 | 7 · P1-7（审核点 3 重测） | 审核修复批 | 保留探针（`#[ignore]`，不再还原）+ 入库夹具 `tests/fixtures/json-output/p17-table-{real,synthetic}.json`：`cargo test --lib --features serve p17_measure_json_table_views_payload_and_time -- --ignored --nocapture`；合成夹具由 `Temp/p17_build_fixtures.py` 构造（真实表 region 为模板，未入库） | debug min-of-300×3 轮一致：**真实捕获表页**（74 regions、1 张 10 格表，full 36560B/源 25733B，派生视图 29.6%）`to_value`=253–279µs、`to_output_json`=707–713µs、构造增量 **427–460µs**；**合成大表页**（8 张 100 格表、每表 HTML+table_html ≈63KB，full 1.44MB/源 667KB，派生视图 54%）`to_value`=2.134–2.140ms、`to_output_json`=2.753–2.792ms、构造增量仅 **613–652µs（占完整路径 22–24%，可被重构消掉的视图遍历本体只占 2.2–5.9%）**，items/text/tables 视图本体构造 16/133/126µs | 旧测量（无表格页 496µs）不能代表表格场景；新测量分列成本结构后：可被投影重构消掉的只有视图遍历本体（大表页 16–133µs/视图，最坏合计仍 <0.4ms debug），而派生负载自身的序列化（把 items 264KB + tables 508KB 再走一遍 `to_value`）占增量大头，且字节不变约束下无法消 | §8.1 全套通过（fmt/clippy/`--all-targets` lib 734+serve 289/串行/serve_startup/两个 node 检）；本批另修一处 serve 顺序敏感断言（见下一行），修前串行首跑在该用例失败 | **重判定：取消结论维持**，判据改为成本结构而非前后字节对比；合成夹具是模板放大的压力样本非真实页面，其绝对耗时随机器与 CPU 负载浮动；协议变更（删 items/tables 重复字段）仍按裁决排除在重构外，另议；临时构造脚本在 `Temp/` 未入库，入库资产为两份夹具 + 探针本身 |
 | 门禁可信性（审核清单外，用户批准） | 审核修复批 | `src/bin/serve/tests.rs`：`Scripted.tables` 由 `Vec<TablePolicy>` 改 `Vec<(String, TablePolicy)>`，请求体与策略在 `recognize` 的**同一次加锁**内成对记录；`the_table_stage_runs_from_the_model_set_when_requested` 的 `policies[0]/[1]/[2]/[3]` 下标断言改为按请求体（`plain`/`text+table`/`formula+table`/`explicit off`）取策略，并保留“恰好两次 enabled”的计数断言 | 根因：记录顺序是**后端进入顺序**，多 worker 下不等于提交顺序；`?table=1` 落在哪一格随机，故下标断言偶发失败（既可在并行复现，**也可在 `--test-threads=1` 复现** —— 推翻此前“串行恒绿”的登记）。改后断言强度不降反升：`table=0` 被当开、或公式队列漏接 `table=1` 都会被具体请求体钉住 | 单测隔离复跑 10/10 通过（改前 12 次隔离复跑 0 失败，证明是顺序竞态而非逻辑回归）；随后 §8.1 全套通过 | `formulas()` 上存在同类下标断言（同文件 `the_formula_queue_runs_…`，两队列各一单，尚未复现失败），本批按最小改动原则**未动**，登记为后续候选；修复手段是脚本化最小替换 + `git diff` 逐字节核验（该文件禁止用编辑工具批量改） |
-| 随时 · P1-8 | （本批） | `evaluation/digest.rs` 单点 `digest_hex`，三处改调（含 run 侧第二处同形内联 engine_fingerprint） | 行为等价；已知答案向量 + digest_file 一致性旁证；sampling/fixture 既有 manifest 测试不变 | lib 730（新增 2 条旁证）、serve 串行 289、全套件无回归 | §8.1/§8.2 全绿（本次提交） | `bin/formula_eval:1134` 是审计未列入的**第四处生产拷贝**（bin 链接公开 `evaluation::digest` 可达），本批按"不超规模"裁决未动，后续候选；测试内的 sha256_hex 参照实现（model_store/json/formula-preprocess golden）有意不合并 |
+| 随时 · P1-8 | （本批） | `evaluation/digest.rs` 单点 `digest_hex`，三处改调（含 run 侧第二处同形内联 engine_fingerprint） | 行为等价；已知答案向量 + digest_file 一致性旁证；sampling/fixture 既有 manifest 测试不变 | lib 730（新增 2 条旁证）、serve 串行 289、全套件无回归 | §8.1/§8.2 全绿（本次提交） | `bin/formula_eval:1134` 是审计未列入的**第四处生产拷贝**（bin 链接公开 `evaluation::digest` 可达），本批按"不超规模"裁决未动，后续候选（**审核点 4 已并入，见下一行**）；测试内的 sha256_hex 参照实现（model_store/json/formula-preprocess golden）有意不合并 |
+| 随时 · P1-8（审核点 4 补齐） | 审核修复批 | `src/bin/formula_eval.rs`：`compare_with_reference` 的内联 `Sha256` 块改调 `evaluation::digest::digest_hex`（并删去局部 `use sha2::{Digest, Sha256}`）；新增用例 `the_reference_digest_goes_through_the_single_digest_helper` | 语义比对逐字同形（同算法、`format!("{:x}")` 小写 64 字符、同一 `raw.as_bytes()` 输入），报告字节不变；用例同侧钉住：① 两个预定答案向量（与任意 SHA-256 实现可重算）；② 同一记录换键顺序/空白写法 → 摘要必变而记录条数不变（证明钉的是内容不是路径）；③ 与单点 `digest_hex` 逐字相等 | 迁移前该字段由本地内联产生（已用 `git show` 比对旧实现确认算法/编码一致）；新用例直接跑 `compare_with_reference`，不依赖模型资产 | §8.1 全套（本批提交） | 分片合并的 `same_source()` 判据本身已有用例（`reference_comparison_aggregates_across_shards`），本批不重复；测试内的 `TempGuard` 是 bin 局部最小临时目录工具（库内 `test_support` 是 `#[cfg(test)]` 私有，bin 不可用）；M-5（`formula_eval.rs` 骨架下沉）仍按 §5 暂缓 |
 
 ---
 

@@ -32,6 +32,7 @@ use clap::{Parser, ValueEnum};
 use rapid_structure_rs::{
     FormulaRecognizer, ProviderPreference, RapidOcrError, RuntimeConfig, VerifiedModel,
     evaluation::{
+        digest::digest_hex,
         formula::{
             fixture::{
                 FormulaFixture, FormulaSample, FormulaSplit, UniMerSubset, load_im2latex,
@@ -1131,12 +1132,9 @@ fn compare_with_reference(
 ) -> Result<ReferenceComparison, Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     // 参考文件的**内容**摘要（不是路径）：分片合并必须靠它判断是否为同一份数据。
-    let reference_sha256 = {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(raw.as_bytes());
-        format!("{:x}", hasher.finalize())
-    };
+    // 摘要口径走库内单点 `evaluation::digest::digest_hex`（审核点 4）：本行之前是
+    // P1-8 审计漏登记的第四处同形内联实现，现并入单点，报告字段算法/编码不再本地定义。
+    let reference_sha256 = digest_hex(raw.as_bytes());
     let reference: PythonReference = serde_json::from_str(&raw)?;
     let by_image: HashMap<String, PythonRecord> = reference
         .records
@@ -1717,5 +1715,82 @@ mod tests {
             seen.iter().all(|hits| *hits == 1),
             "every manifest position must belong to exactly one shard: {seen:?}"
         );
+    }
+
+    /// 测试用临时目录：`Drop` 时删除，断言失败也不留垃圾。
+    struct TempGuard {
+        path: PathBuf,
+    }
+
+    impl TempGuard {
+        fn new(label: &str) -> Self {
+            let suffix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "rapid-structure-{label}-{}-{suffix}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir must be creatable");
+            Self { path }
+        }
+
+        fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
+            let path = self.path.join(name);
+            std::fs::write(&path, bytes).expect("reference file must be writable");
+            path
+        }
+    }
+
+    impl Drop for TempGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// 审核点 4：报告里的 `reference_sha256` 必须是参考文件的**内容**摘要，
+    /// 并且与库内单点 `evaluation::digest::digest_hex` 同口径。
+    ///
+    /// 这里同时钉三件事：① 算法/编码不变（预定答案向量，64 个小写十六进制字符）；
+    /// ② 同一份记录换写法（键顺序/空白差异）摘要必须变，而记录条数不变 —— 证明钉的
+    /// 不是路径也不是解析结果；③ 分片合并赖以判同源的字段仍来自同一个实现。
+    #[test]
+    fn the_reference_digest_goes_through_the_single_digest_helper() {
+        // 两组字节直接写在这里（不依赖源文件行尾风格）；预期摘要是它们的 SHA-256，
+        // 任何人用任意 SHA-256 实现重算一遍即可复核。
+        let first_bytes: &[u8] =
+            br#"{"records":[{"relative_path":"a.png","latex":"x^2","token_ids":[1,2],"eos_index":1}]}"#;
+        let second_bytes: &[u8] =
+            b"{\n\"records\":[\n{\n\"latex\":\"x^2\",\n\"relative_path\":\"a.png\"\n}\n]\n}\n";
+
+        let dir = TempGuard::new("formula-eval-reference-digest");
+        let first = dir.write("reference-a.json", first_bytes);
+        let second = dir.write("reference-b.json", second_bytes);
+
+        let one = super::compare_with_reference(&first, &mut []).expect("reference a must parse");
+        let two = super::compare_with_reference(&second, &mut []).expect("reference b must parse");
+
+        // ① 预定答案：单点实现换算法/换编码时这两条先红。
+        assert_eq!(
+            one.reference_sha256,
+            "2938057e65ac23f285db326ec02b524e1c7e12886b1d343b567710f6178a7d0d"
+        );
+        assert_eq!(
+            two.reference_sha256,
+            "da462f61dc737d26f6aa6694235fb71f85b30c0bdf88d530137f57c5c09ac786"
+        );
+        // ② 内容摘要而非路径摘要：字节不同则摘要不同，而记录条数（解析结果）一致。
+        assert_ne!(
+            one.reference_sha256, two.reference_sha256,
+            "the digest must follow the file content"
+        );
+        assert_eq!(one.reference_total, two.reference_total);
+        assert_eq!(one.reference_total, 1);
+        // 路径只作为报告里的定位字段保留，不参与摘要计算。
+        assert_eq!(one.reference_path, first.display().to_string());
+        // ③ 与库内单点逐字相等（本批把第四处同形内联并入这里）。
+        assert_eq!(one.reference_sha256, super::digest_hex(first_bytes));
+        assert_eq!(two.reference_sha256, super::digest_hex(second_bytes));
     }
 }
