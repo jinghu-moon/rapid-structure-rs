@@ -407,6 +407,35 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
   `node tools\check-page-result-contract.mjs` 验收，本组前后对比不覆盖它。
 - lib 测试 734 → 738（新增 4 条非 ignored 用例），另加 1 条 `#[ignore]` 重生成探针；serve 并行 / 串行仍 289。
 
+## 会话缓存键纳入声明摘要（复审 P1-1，未发布）
+
+对应复审结论第一条（P1）：`ocr::pipeline::rapid_structure` 的三个懒加载会话（公式识别器、
+公式检测器、表格结构会话）**只按 `FileIdentity` 判定是否重建**，而 `expected_model_sha256` /
+`expected_detector_sha256` 只在重建分支里被读取。因此：第一次请求用正确摘要加载→ 第二次请求
+同一路径、同一文件身份但换一个错误摘要→ 旧会话直接回答，那条摘要从未参与比对——这与
+`FormulaPolicy` / `TablePolicy` 文档里“给出摘要即校验”的契约直接相背。
+
+- 新增私有 `SessionCacheKey { identity, declared }`：声明摘要（经 `model_verify::normalize_expected_sha256`
+  只折叠大小写）成为键的一部分；重建判定单点收口到 `needs_rebuild`。声明一变必重建，
+  而重建分支会按**这次的声明**校验并按需返回 `HashMismatch`。
+- 规范化与判定**同形**：`verify` 用 `eq_ignore_ascii_case`，所以大小写是唯一可折叠的差异；
+  本处**不** trim、不去前缀 —— 那些写法在校验里本来就会失败，折叠它们等于让第二个错误声明
+  因命中缓存而不参与比对（即本批要关闭的洞）。
+- 表格站点的登记回落（`None` → 同目录 `manifest.json`）仍在 registration 层：键里记的是
+  **调用方的声明**（缺席也是一种独立状态），而不是解析后的值，因此“声明从无到有”同样会重建。
+- 回归用例：无模型的判据守卫 `session_cache_rule_tests`（4 条：声明变/带空白/文件与路径变/
+  未改动文件的两次观察），以及三个站点各一条**热会话 + 改声明**的端到端用例
+  （`a_changed_{detector,recognizer,table}_declaration_is_not_answered_by_a_hot_session`）。
+  把判据改回“只看身份”后，5 条新用例**全部失败**（已实跑验证），因此它们钉的是本次修复本身。
+- 仍是启发式（不是安全边界）：文件被替换时能否发现取决于身份里的体积/mtime + 首尾各 64 KiB
+  局部摘要，**中段修改**（体积与 mtime 都写回原值）仍是已登记的盲点；本批不改变这一点，
+  也不把会话缓存描述成内容完整性证明。凭证自身仍把“被校验的”与“被加载的”钉同一份字节。
+- lib 测试 738 → 746：新增 8 条 = `model_verify` 的规范化同形 1 条 + 无模型判据 4 条 + 需真实模型的
+  端到端 3 条。端到端用例在缺资产时提前返回（与其它模型用例同类的静默跳过），所以判据本身
+  靠那 4 条无模型守卫钉住。另有 2 条 `#[ignore]` 探针；serve 串行仍 289。
+- `api.rs` 两处策略文档同步写明“跨请求也成立”。本提交实跑了全套七项门禁（fmt / clippy /
+  `--all-targets` / serve 串行 / serve_startup / 两个 node 检）均通过。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

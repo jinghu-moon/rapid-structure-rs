@@ -522,32 +522,74 @@ pub struct RapidOcrEngine {
     model_id: String,
     base_min_side_len: usize,
     base_max_side_len: usize,
-    /// 懒加载的公式识别器（**文件身份** -> 实例），避免每次请求重建 594 MB session。
+    /// 懒加载的公式识别器（**会话缓存键** -> 实例），避免每次请求重建 594 MB session。
     ///
-    /// 键是 `(路径, 体积, mtime)` 而不是路径：模型文件在第一次加载之后被替换/改写时，
-    /// 身份会变，缓存因此**重建**而不是继续用内存里那份旧会话。仅按路径比较会让
-    /// "同一个路径、不同的内容"被静默当成同一个模型。
+    /// 键见 [`SessionCacheKey`]：文件身份之外还必须带上调用方这一次**声明的期望摘要**。
     formula_recognizer: Option<(
-        crate::model_verify::FileIdentity,
+        SessionCacheKey,
         crate::formula::recognizer::FormulaRecognizer,
     )>,
     /// 懒加载的页面公式检测器（键同上）。
-    formula_detector: Option<(
-        crate::model_verify::FileIdentity,
-        crate::formula::detect::FormulaDetector,
-    )>,
+    formula_detector: Option<(SessionCacheKey, crate::formula::detect::FormulaDetector)>,
     /// 懒加载的表格结构会话（键同上）。
     ///
     /// 会话创建含图优化，量级远大于一次推理，所以**每张图开一次**是不可接受的
-    /// （`docs/11-table-page-pipeline-execution.md` §2.1 E14.5）。用文件身份做键而不是
+    /// （`docs/11-table-page-pipeline-execution.md` §2.1 E14.5）。用会话缓存键而不是
     /// 路径，理由与公式识别器相同：同一路径被换成另一份内容时必须重建。
     ///
     /// 词表跟着会话走（[`crate::table::structure::TableStructureSession::vocabulary`]），
     /// 因此"用这个会话解码"不需要第二个信息来源，也不需要第二次探针。
     table_session: Option<(
-        crate::model_verify::FileIdentity,
+        SessionCacheKey,
         crate::table::structure::TableStructureSession,
     )>,
+}
+
+/// 会话缓存的**键**：文件身份 + 调用方这次声明的期望摘要（规范化后）。
+///
+/// # 为什么摘要必须是键的一部分
+///
+/// 只按文件身份做键会留下一条与“给出摘要即校验”（[`crate::api::FormulaPolicy::expected_model_sha256`]、
+/// [`crate::api::TablePolicy::expected_model_sha256`]）直接冲突的路径：
+///
+/// 1. 第一次请求用**正确**的摘要加载模型，会话进入缓存；
+/// 2. 第二次请求走同一路径、文件一个字节没变（身份因此完全相同），但声明换一个**错误**的摘要；
+/// 3. 身份没变 -> 复用旧会话 -> 那条声明从未被比对，错误摘要静默通过。
+///
+/// 期望摘要原先只在**重建分支**里被读取，所以这个洞不是“再检查一次路径”能补的：
+/// 声明值进入键以后，声明一变就必然重建，而重建路径上的凭证构造（[`crate::model_verify::VerifiedModel::verify`]）
+/// 会按**这次的声明**重新校验并按需返回 [`crate::error::RapidOcrError::HashMismatch`]。
+///
+/// # 规范化与判定同形
+///
+/// 声明按 [`crate::model_verify::normalize_expected_sha256`] 折叠大小写（校验本来就是
+/// 忽略大小写的），此外不做任何加工。键不能比判定更宽松：把带空白、带前缀的写法折叠成
+/// 同一个键，等于让第二个错误声明因为命中缓存而根本不参与比对。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionCacheKey {
+    /// 文件身份：路径 + 体积 + mtime + 首尾各 64 KiB 的局部摘要。
+    identity: crate::model_verify::FileIdentity,
+    /// 规范化后的声明摘要；`None` = 这一次请求没有声明摘要（表格路径的登记摘要回落在
+    /// registration 层，不改变“声明缺席”这个事实，因此仍是一种独立的键）。
+    declared: Option<String>,
+}
+
+impl SessionCacheKey {
+    fn new(identity: crate::model_verify::FileIdentity, declared: Option<&str>) -> Self {
+        Self {
+            identity,
+            declared: declared.map(crate::model_verify::normalize_expected_sha256),
+        }
+    }
+}
+
+/// 要不要重建会话 —— 三个缓存点共用的**唯一**判据。
+///
+/// 抽成函数有两个理由：判定只有一处（新增第四个会话时不会忘记带上声明摘要）；
+/// 以及这条规则本身可以在**不加载任何模型**的情况下被单测覆盖（真实模型用例在缺少
+/// 资产的环境里会静默 skip，规则本身不能只靠那种用例作证）。
+fn needs_rebuild(cached: Option<&SessionCacheKey>, current: &SessionCacheKey) -> bool {
+    cached != Some(current)
 }
 
 impl RapidOcrEngine {
@@ -1264,19 +1306,22 @@ impl RapidOcrEngine {
         };
         // 公式检测器与三个阶段共享同一份运行时档案，而不是再读一遍 rec 阶段配置。
         let runtime = self.inner.runtime_profile().session_runtime();
-        // 文件**身份**（路径 + 体积 + mtime）决定要不要重建：文件被替换后不会继续用旧会话。
-        let identity = crate::model_verify::FileIdentity::of(&path)?;
-        if self
-            .formula_detector
-            .as_ref()
-            .is_none_or(|(current, _)| *current != identity)
-        {
+        // 缓存键（文件身份 + 这次声明的期望摘要）决定要不要重建：文件被替换后不会继续用
+        // 旧会话；文件一个字节没变但**声明换了**，也不会让新声明落空。
+        let key = SessionCacheKey::new(
+            crate::model_verify::FileIdentity::of(&path)?,
+            policy.expected_detector_sha256.as_deref(),
+        );
+        if needs_rebuild(
+            self.formula_detector.as_ref().map(|(cached, _)| cached),
+            &key,
+        ) {
             let detector_model = crate::model_verify::VerifiedModel::verify(
                 &path,
                 policy.expected_detector_sha256.as_deref(),
             )?;
             self.formula_detector = Some((
-                identity,
+                key,
                 crate::formula::detect::FormulaDetector::from_model(&detector_model, &runtime)?,
             ));
         }
@@ -1300,7 +1345,7 @@ impl RapidOcrEngine {
             .collect())
     }
 
-    /// 懒加载公式识别器；模型**文件身份**（路径 + 体积 + mtime）变化时重建。
+    /// 懒加载公式识别器；**会话缓存键**（文件身份 + 声明摘要）变化时重建。
     ///
     /// 会话设置与批大小都来自引擎唯一的运行时档案：公式识别不是一条可以自己决定
     /// 线程数与批大小的旁路。期望摘要由策略传入，由库在加载时校验——**磁盘上的那份**
@@ -1314,12 +1359,14 @@ impl RapidOcrEngine {
             .clone()
             .ok_or_else(|| crate::model_verify::missing_model_path_error("formula"))?;
         let runtime = self.inner.runtime_profile().session_runtime();
-        let identity = crate::model_verify::FileIdentity::of(&path)?;
-        let rebuild = self
-            .formula_recognizer
-            .as_ref()
-            .is_none_or(|(current, _)| *current != identity);
-        if rebuild {
+        let key = SessionCacheKey::new(
+            crate::model_verify::FileIdentity::of(&path)?,
+            policy.expected_model_sha256.as_deref(),
+        );
+        if needs_rebuild(
+            self.formula_recognizer.as_ref().map(|(cached, _)| cached),
+            &key,
+        ) {
             let recognizer_model = crate::model_verify::VerifiedModel::verify(
                 &path,
                 policy.expected_model_sha256.as_deref(),
@@ -1329,7 +1376,7 @@ impl RapidOcrEngine {
                 &runtime,
             )?;
             recognizer.set_max_batch_size(runtime.formula_batch)?;
-            self.formula_recognizer = Some((identity, recognizer));
+            self.formula_recognizer = Some((key, recognizer));
         }
         self.formula_recognizer
             .as_mut()
@@ -1339,7 +1386,7 @@ impl RapidOcrEngine {
             })
     }
 
-    /// 懒加载表格结构会话；模型**文件身份**（路径 + 体积 + mtime）变化时重建。
+    /// 懒加载表格结构会话；**会话缓存键**（文件身份 + 声明摘要）变化时重建。
     ///
     /// 会话的设置全部来自策略与引擎的运行时档案：表格结构不是一条可以自己决定线程数、
     /// 画布边长与形状固定策略的旁路。期望摘要同样由策略传入、由库在加载时校验。
@@ -1351,12 +1398,11 @@ impl RapidOcrEngine {
             .model_path
             .clone()
             .ok_or_else(|| crate::model_verify::missing_model_path_error("table"))?;
-        let identity = crate::model_verify::FileIdentity::of(&path)?;
-        let rebuild = self
-            .table_session
-            .as_ref()
-            .is_none_or(|(current, _)| *current != identity);
-        if rebuild {
+        let key = SessionCacheKey::new(
+            crate::model_verify::FileIdentity::of(&path)?,
+            policy.expected_model_sha256.as_deref(),
+        );
+        if needs_rebuild(self.table_session.as_ref().map(|(cached, _)| cached), &key) {
             let runtime = self.inner.runtime_profile().session_runtime();
             // 凭证在打开会话之前构造：期望摘要的“从哪来”（显式优先、否则取登记）留在
             // registration 分层，会话本身只收凭证（审核点 2：与文本/公式同一契约）。
@@ -1374,7 +1420,7 @@ impl RapidOcrEngine {
                 &runtime,
                 &config,
             )?;
-            self.table_session = Some((identity, session));
+            self.table_session = Some((key, session));
         }
         self.table_session
             .as_mut()
@@ -1444,8 +1490,8 @@ impl RapidOcrEngine {
             return Ok(());
         }
 
-        // 会话在整个请求里只取一次：`table_session` 每次都要按文件身份（路径 + 体积 +
-        // mtime）确认缓存是否仍然有效，那是每张表一次的 `stat`；更重要的是
+        // 会话在整个请求里只取一次：`table_session` 每次都要按会话缓存键（文件身份 +
+        // 声明摘要）确认缓存是否仍然有效，那是每张表一次的 `stat`；更重要的是
         // "一张表一次结构推理"（门禁 G3）应当由**结构**保证，而不是靠调用点自觉。
         let session = self.table_session(policy)?;
         let vocabulary = session.vocabulary().clone();
@@ -2320,6 +2366,141 @@ rec:
                 assert_ne!(actual, declared);
             }
             other => panic!("expected a hash mismatch from the re-verification, got {other:?}"),
+        }
+    }
+
+    /// 复审 P1-1（检测器站点）：**热会话 + 同一路径 + 换一个错误的声明摘要**。
+    ///
+    /// 与上面那条的分工：上面那条改的是**文件**（身份变 → 重建），这一条文件一个字节
+    /// 没改、只改**声明**。旧实现里声明只在重建分支被读，于是第二次请求的错误声明会
+    /// 因为"身份没变"而被旧会话直接回答 —— 声明从未被比对，API 上"给出摘要即校验"
+    /// 落空。声明进入缓存键后必须重建，重建分支按这次的声明校验并拒绝。
+    #[test]
+    fn a_changed_detector_declaration_is_not_answered_by_a_hot_session() {
+        let Some(model_root) = crate::test_support::ocr_model_root() else {
+            return;
+        };
+        let Some(detector) = crate::test_support::formula_detector_path() else {
+            return;
+        };
+        let Some(formula_model) = crate::test_support::formula_model_path() else {
+            return;
+        };
+        let Some(page) = crate::test_support::page_fixture("09竖排文本.png") else {
+            return;
+        };
+        let dir = crate::test_support::TempDir::new("pipeline-detector-declaration");
+        let copy = dir.path().join("pix2text-mfd-1.5.onnx");
+        std::fs::copy(&detector, &copy).expect("copy the real detector");
+        let declared = crate::model_store::sha256_file(&copy).expect("hash the copy");
+
+        let mut engine =
+            RapidOcrEngine::new(engine_config(&model_root)).expect("engine should load");
+        let policy = |expected: Option<String>| FormulaPolicy {
+            enabled: true,
+            model_path: Some(formula_model.clone()),
+            expected_model_sha256: None,
+            detector_path: Some(copy.clone()),
+            expected_detector_sha256: expected,
+            ..FormulaPolicy::default()
+        };
+        let bytes = std::fs::read(&page).expect("page readable");
+        engine
+            .recognize(request(bytes.clone(), policy(Some(declared.clone()))))
+            .expect("the first request with the correct digest must pass");
+
+        let bogus = format!("{:064x}", 0xdead_beef_u32);
+        let error = engine
+            .recognize(request(bytes.clone(), policy(Some(bogus.clone()))))
+            .expect_err("a changed declaration must not be answered by the hot session");
+        match error {
+            crate::error::RapidOcrError::HashMismatch {
+                path: reported,
+                expected,
+                actual,
+            } => {
+                assert_eq!(reported, copy, "the error must name the declared file");
+                assert_eq!(expected, bogus);
+                assert_eq!(
+                    actual, declared,
+                    "the file never changed - only the declaration did"
+                );
+            }
+            other => panic!("expected a hash mismatch from the declaration, got {other:?}"),
+        }
+
+        // 同一条声明换个写法（大小写）仍是**同一个声明**：键的规范化与判定同形，
+        // 不会因为折叠不一致而白白重建会话。
+        engine
+            .recognize(request(bytes, policy(Some(declared.to_uppercase()))))
+            .expect("an equivalently spelled declaration must still be accepted");
+    }
+
+    /// 复审 P1-1（识别器站点）：与检测器同形的一条，把声明摘要钉进缓存键。
+    ///
+    /// 用**显式声明的公式区域**触发识别器（`detector_path = None`），因此这条用例
+    /// 只加载识别模型一份会话；文件从第一次请求之后不再改动。566 MB 会话只构造一次。
+    #[test]
+    fn a_changed_recognizer_declaration_is_not_answered_by_a_hot_session() {
+        let Some(model_root) = crate::test_support::ocr_model_root() else {
+            return;
+        };
+        let Some(formula_model) = crate::test_support::formula_model_path() else {
+            return;
+        };
+        let Some(page) = crate::test_support::page_fixture("08数字公式与符号.png") else {
+            return;
+        };
+        let dir = crate::test_support::TempDir::new("pipeline-recognizer-declaration");
+        let copy = dir.path().join("pp_formulanet_plus_m.onnx");
+        std::fs::copy(&formula_model, &copy).expect("copy the real recognizer");
+        let declared = crate::model_store::sha256_file(&copy).expect("hash the copy");
+
+        let mut engine =
+            RapidOcrEngine::new(engine_config(&model_root)).expect("engine should load");
+        let policy = |expected: Option<String>| FormulaPolicy {
+            enabled: true,
+            model_path: Some(copy.clone()),
+            expected_model_sha256: expected,
+            detector_path: None,
+            input_regions: vec![crate::api::Polygon {
+                points: [
+                    [120.0, 420.0],
+                    [900.0, 420.0],
+                    [900.0, 560.0],
+                    [120.0, 560.0],
+                ],
+            }],
+            ..FormulaPolicy::default()
+        };
+        let bytes = std::fs::read(&page).expect("page readable");
+        let output = engine
+            .recognize(request(bytes.clone(), policy(Some(declared.clone()))))
+            .expect("the first request with the correct digest must pass");
+        assert_eq!(
+            output.formula_count(),
+            1,
+            "the explicit region must reach the recognizer (otherwise this test proves nothing)"
+        );
+
+        let bogus = format!("{:064x}", 7u32);
+        let error = engine
+            .recognize(request(bytes, policy(Some(bogus.clone()))))
+            .expect_err("a changed declaration must not be answered by the hot session");
+        match error {
+            crate::error::RapidOcrError::HashMismatch {
+                path: reported,
+                expected,
+                actual,
+            } => {
+                assert_eq!(reported, copy, "the error must name the declared file");
+                assert_eq!(expected, bogus);
+                assert_eq!(
+                    actual, declared,
+                    "the file never changed - only the declaration did"
+                );
+            }
+            other => panic!("expected a hash mismatch from the declaration, got {other:?}"),
         }
     }
 
@@ -3345,6 +3526,66 @@ rec:
         assert_eq!(output.timings.table_backfill_ms, 0.0);
     }
 
+    /// 复审 P1-1（表格站点）：热会话 + 同一路径 + 换一个错误的声明摘要。
+    ///
+    /// 表格是审核点 2 之后才收凭证的域，它的缓存键因此单独钉一条：第一次用正确摘要
+    /// （会话进入缓存），第二次只换声明。第一次还必须有**真表格** —— 定位器没找到
+    /// 区域时 `table_session` 根本不会被取用，那种用例只能证明它没有报错。
+    #[test]
+    fn a_changed_table_declaration_is_not_answered_by_a_hot_session() {
+        let Some(model_root) = crate::test_support::ocr_model_root() else {
+            return;
+        };
+        let Some(table_model) = crate::test_support::table_structure_model_path() else {
+            return;
+        };
+        let Some(page) = crate::test_support::page_fixture("04表格与键值对.png") else {
+            return;
+        };
+        let dir = crate::test_support::TempDir::new("pipeline-table-declaration");
+        let copy = dir.path().join("slanet-plus.onnx");
+        std::fs::copy(&table_model, &copy).expect("copy the real table model");
+        let declared = crate::model_store::sha256_file(&copy).expect("hash the copy");
+
+        let mut engine =
+            RapidOcrEngine::new(engine_config(&model_root)).expect("engine should load");
+        let policy = |expected: Option<String>| TablePolicy {
+            enabled: true,
+            model_path: Some(copy.clone()),
+            expected_model_sha256: expected,
+            text_policy: TableTextPolicy::Escape,
+            ..TablePolicy::default()
+        };
+        let bytes = std::fs::read(&page).expect("the page must be readable");
+        let output = engine
+            .recognize(request(bytes.clone(), policy(Some(declared.clone()))))
+            .expect("the first request with the correct digest must pass");
+        assert!(
+            !table_regions(&output).is_empty(),
+            "the session must actually have been built, or this test proves nothing"
+        );
+
+        let bogus = format!("{:064x}", 0xabcd_u32);
+        let error = engine
+            .recognize(request(bytes, policy(Some(bogus.clone()))))
+            .expect_err("a changed declaration must not be answered by the hot session");
+        match error {
+            crate::error::RapidOcrError::HashMismatch {
+                path: reported,
+                expected,
+                actual,
+            } => {
+                assert_eq!(reported, copy, "the error must name the declared file");
+                assert_eq!(expected, bogus);
+                assert_eq!(
+                    actual, declared,
+                    "the file never changed - only the declaration did"
+                );
+            }
+            other => panic!("expected a hash mismatch from the declaration, got {other:?}"),
+        }
+    }
+
     /// 表格路由与 `roi`/`tile` 互斥，必须在进入管线前结构化拒绝（与公式路由同形）。
     ///
     /// 坐标**恰好**仍能对上（页级文本区域的 polygon 会被 `+ offset` 映射回原图），所以
@@ -3375,5 +3616,111 @@ rec:
         });
         let error = with_tile.validate().expect_err("tile must be rejected");
         assert!(error.to_string().contains("tiled"), "error: {error}");
+    }
+}
+
+#[cfg(test)]
+mod session_cache_rule_tests {
+    //! 会话缓存判据本身的覆盖（复审 P1-1）：**不加载任何模型**。
+    //!
+    //! 三个会话点共用 [`needs_rebuild`]，而真实模型用例在缺少资产的环境里会**静默 skip**；
+    //! 所以"声明变了必须重建"这条规则自己必须有一条无模型的守卫，否则它在干净 clone
+    //! 上什么也没被证明。三个站点的端到端行为各有一条真实模型用例钉着。
+
+    use super::{SessionCacheKey, needs_rebuild};
+    use crate::model_verify::FileIdentity;
+    use crate::test_support::TempDir;
+
+    const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    const BOGUS_SHA256: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    /// 核心回归：文件身份完全相同，**只有声明换了** → 必须重建。
+    ///
+    /// 不重建就等于把新声明吞掉：旧会话直接回答，那条摘要从未参与比对。
+    #[test]
+    fn a_changed_declaration_with_an_unchanged_identity_rebuilds() {
+        let dir = TempDir::new("cache-rule-declaration");
+        dir.write("model.onnx", b"hello");
+        let file = FileIdentity::of(&dir.path().join("model.onnx")).expect("identity");
+        let first = SessionCacheKey::new(file.clone(), Some(HELLO_SHA256));
+
+        assert!(
+            !needs_rebuild(Some(&first), &first),
+            "the same declaration against the same identity is a hit"
+        );
+        assert!(
+            needs_rebuild(
+                Some(&first),
+                &SessionCacheKey::new(file.clone(), Some(BOGUS_SHA256))
+            ),
+            "a different declaration on an unchanged file must not be answered by the hot session"
+        );
+        assert!(
+            !needs_rebuild(
+                Some(&first),
+                &SessionCacheKey::new(file.clone(), Some(&HELLO_SHA256.to_uppercase()))
+            ),
+            "case is the only difference verification ignores, so it must not force a rebuild"
+        );
+        assert!(
+            needs_rebuild(Some(&first), &SessionCacheKey::new(file.clone(), None)),
+            "dropping the declaration is a different statement about the file"
+        );
+        assert!(needs_rebuild(None, &first), "an empty cache always builds");
+    }
+
+    /// 键不能比校验更宽松：带空白的写法在 `verify` 里是另一个（会失败的）判定，
+    /// 折叠它就会让第二个错误声明因为命中缓存而根本不参与比对。
+    #[test]
+    fn a_padded_declaration_is_a_different_declaration() {
+        let dir = TempDir::new("cache-rule-padded");
+        dir.write("model.onnx", b"hello");
+        let file = FileIdentity::of(&dir.path().join("model.onnx")).expect("identity");
+        let first = SessionCacheKey::new(file.clone(), Some(HELLO_SHA256));
+        assert!(needs_rebuild(
+            Some(&first),
+            &SessionCacheKey::new(file, Some(&format!(" {HELLO_SHA256}")))
+        ));
+    }
+
+    /// 文件侧：内容变（体积变）与路径变（内容相同）都必须重建。
+    #[test]
+    fn a_changed_file_or_a_changed_path_rebuilds() {
+        let dir = TempDir::new("cache-rule-file");
+        dir.write("model.onnx", b"hello");
+        let before = FileIdentity::of(&dir.path().join("model.onnx")).expect("identity");
+        dir.write("model.onnx", b"hello!");
+        let rewritten = FileIdentity::of(&dir.path().join("model.onnx")).expect("identity");
+        assert!(needs_rebuild(
+            Some(&SessionCacheKey::new(before.clone(), Some(HELLO_SHA256))),
+            &SessionCacheKey::new(rewritten, Some(HELLO_SHA256))
+        ));
+
+        dir.write("other.onnx", b"hello");
+        let other_path = FileIdentity::of(&dir.path().join("other.onnx")).expect("identity");
+        assert!(
+            needs_rebuild(
+                Some(&SessionCacheKey::new(before.clone(), Some(HELLO_SHA256))),
+                &SessionCacheKey::new(other_path, Some(HELLO_SHA256))
+            ),
+            "the same bytes under a different path are a different file"
+        );
+    }
+
+    /// 同一路径、同一份内容：两次独立观察必须给出同一个键，否则每条请求都在重建会话。
+    #[test]
+    fn two_observations_of_an_untouched_file_are_the_same_key() {
+        let dir = TempDir::new("cache-rule-stable");
+        dir.write("model.onnx", b"hello");
+        let path = dir.path().join("model.onnx");
+        let first = SessionCacheKey::new(
+            FileIdentity::of(&path).expect("identity"),
+            Some(HELLO_SHA256),
+        );
+        let second = SessionCacheKey::new(
+            FileIdentity::of(&path).expect("identity"),
+            Some(HELLO_SHA256),
+        );
+        assert!(!needs_rebuild(Some(&first), &second));
     }
 }

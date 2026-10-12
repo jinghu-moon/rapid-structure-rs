@@ -686,6 +686,10 @@ pub struct FormulaPolicy {
     /// 公式识别模型（`pp_formulanet_plus_m.onnx`）；`enabled` 时必填。
     pub model_path: Option<PathBuf>,
     /// 可选模型 SHA-256 校验。
+    ///
+    /// **跨请求也成立**：引擎会把公式/表格会话缓存下来（避免每页重建几百 MB 会话），
+    /// 而声明摘要就是缓存键的一部分 —— 文件一个字节没变、只换一个声明时，会话会重建并按
+    /// 这次的声明重新校验，而不是被旧会话直接回答（复审 P1-1）。
     pub expected_model_sha256: Option<String>,
     /// 页面公式检测模型（`pix2text-mfd-1.5.onnx`）；为 `None` 时只处理 `input_regions`。
     pub detector_path: Option<PathBuf>,

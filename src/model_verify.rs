@@ -416,6 +416,20 @@ pub fn verify_sha256(path: &Path, expected: Option<&str>) -> Result<Option<Strin
     Ok(Some(outcome.sha256))
 }
 
+/// 期望摘要的**键规范化**：只做 [`VerifiedModel::verify`] 实际接受的等价变换。
+///
+/// 存在的理由是"摘要进了缓存键就必须与判定同形"。会话缓存（`ocr::pipeline`）把调用方
+/// 声明的期望摘要纳入键，于是"两个写法是否算同一个声明"必须与校验判定给出**同样**的答案：
+///
+/// - [`VerifiedModel::verify`] 用 `eq_ignore_ascii_case` 比较，所以**大小写**是唯一不影响
+///   判定的差异，这里折叠它；
+/// - 这里**不** trim、**不**去 `sha256-` 前缀、**不**做长度校验。那些写法在 verify 里
+///   本来就会失败（失败也是"给出摘要即校验"的一部分）；若把它们折叠成同一个键，
+///   第二个错误声明会因为命中缓存而**根本不参与比对** —— 那正是需要关闭的漏洞。
+pub fn normalize_expected_sha256(expected: &str) -> String {
+    expected.to_ascii_lowercase()
+}
+
 /// 模型文件的完整性**凭证**（P0-3 / I-3；审核点 1：内容绑定）。
 ///
 /// 校验强度由“调用方是否持有可信摘要”决定，而不是由调用路径决定：任何模型文件进入
@@ -661,8 +675,8 @@ mod tests {
 
     use super::{
         FileIdentity, PARTIAL_DIGEST_WINDOW_BYTES, PartialDigest, ReverifyCause, VerifiedModel,
-        clear_verification_cache, force_verify_file, lookup_for_test, sha256_file_cached,
-        verification_stats, verify_file, verify_sha256,
+        clear_verification_cache, force_verify_file, lookup_for_test, normalize_expected_sha256,
+        sha256_file_cached, verification_stats, verify_file, verify_sha256,
     };
     use crate::error::RapidOcrError;
     use crate::model_store::sha256_file;
@@ -893,6 +907,39 @@ mod tests {
         assert_eq!(credential.path(), path);
         // 无期望也不豁免内容绑定：会话仍从这份快照打开，“加载的就是读到的”。
         assert_eq!(credential.content(), b"hello");
+    }
+
+    /// 键规范化与校验判定**同形**（复审 P1-1 的支撑单点）：只折叠 verify 本来接受的差异。
+    ///
+    /// 会话缓存把声明摘要并入键，于是“两个写法算不算同一个声明”必须与校验给出同样的答案：
+    /// 大小写折叠后的写法仍能被 `verify` 接受（不折叠也不会误拒），而带空白的写法在 `verify`
+    /// 里是**另一个判定**（失败），因此必须留在键里当成另一个声明，而不是被 trim 掉。
+    #[test]
+    fn the_key_normalization_only_folds_what_verification_accepts() {
+        assert_eq!(normalize_expected_sha256(HELLO_SHA256), HELLO_SHA256);
+        let upper = HELLO_SHA256.to_uppercase();
+        assert_ne!(upper, HELLO_SHA256, "the two spellings differ in case");
+        assert_eq!(normalize_expected_sha256(&upper), HELLO_SHA256);
+
+        let dir = TempDir::new("normalize-credential");
+        dir.write("model.onnx", b"hello");
+        let path = dir.path().join("model.onnx");
+        let normalized = normalize_expected_sha256(&upper);
+        VerifiedModel::verify(&path, Some(&normalized))
+            .expect("the normalized spelling must still verify");
+
+        let padded = format!(" {HELLO_SHA256}");
+        assert_ne!(
+            normalize_expected_sha256(HELLO_SHA256),
+            normalize_expected_sha256(&padded),
+            "a padded declaration must not fold onto the clean one"
+        );
+        let error = VerifiedModel::verify(&path, Some(&padded))
+            .expect_err("a padded declaration is a different, failing expectation");
+        assert!(
+            matches!(error, RapidOcrError::HashMismatch { .. }),
+            "{error}"
+        );
     }
 
     /// 凭证绑定的是**校验那一刻的内容**（审核点 1 的回归守卫）：构造之后文件被替换，
