@@ -795,6 +795,13 @@ pub enum TableTextPolicy {
 /// 公式与表格同时启用时，公式抹白只作用于文本通道，而表格定位与结构推理都在原始图上进行。
 /// 因此**落在公式区域内的表格单元格会匹配不到文本**（那些像素已被抹白）——这是已知的
 /// 交互边界，会在 [`TableOutcome::cells`] 的 `match_kind` 上表现为 `Unmatched`。
+///
+/// **配置跨请求也生效**（复审 P1）：[`Self::input_side_len`]、[`Self::fix_input_shape`] 与
+/// [`Self::intra_threads`] 决定的是已创建的**结构会话本身**（线程选项与 free-dimension
+/// override 都在 `open` 时一次性施加，没有第二次机会），因此它们跟声明摘要一样是会话缓存
+/// 键的一部分：引擎实例复用、模型文件一个字节没变、只改这三只旋钮的前后两次请求，第二次
+/// 一定拿到按新配置重建的会话（见 [`crate::ocr::pipeline::rapid_structure`] 的
+/// `a_changed_table_config_is_not_answered_by_a_hot_session`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TablePolicy {
     pub enabled: bool,

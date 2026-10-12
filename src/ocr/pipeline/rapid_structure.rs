@@ -545,7 +545,7 @@ pub struct RapidOcrEngine {
     )>,
 }
 
-/// 会话缓存的**键**：文件身份 + 调用方这次声明的期望摘要（规范化后）。
+/// 会话缓存的**键**：文件身份 + 调用方这次声明的期望摘要（规范化后）+ 请求带来的会话构造参数。
 ///
 /// # 为什么摘要必须是键的一部分
 ///
@@ -566,6 +566,14 @@ pub struct RapidOcrEngine {
 /// 忽略大小写的），此外不做任何加工。键不能比判定更宽松：把带空白、带前缀的写法折叠成
 /// 同一个键，等于让第二个错误声明因为命中缓存而根本不参与比对。
 ///
+/// # 为什么会话构造参数也是键的一部分
+///
+/// 表格画布边长、形状固定策略与 intra 线程数都来自 [`crate::api::TablePolicy`]，而它们改变的是
+/// **已创建的那个会话本身**：ORT 的线程选项与 free-dimension override 都在 `open` 时一次性施加，
+/// 之后没有第二次机会。于是“文件与摘要都没变、只改配置”的请求若命中旧会话，第二次请求的配置
+/// 根本没生效（复审 P1）。更糟的是同一张请求里预处理仍按**新**边长生成张量，喂进按**旧**边长
+/// 固定形状的会话 —— 那不是一个“稍慢一点”的会话，而是一次形状不匹配或几何错位的推理。
+///
 /// # 键里的文件身份是启发式，不是安全边界
 ///
 /// `identity` 只能说“**没有观察到变化**”：体积与 mtime 写回原值、首尾 64 KiB 保持不变的
@@ -580,13 +588,42 @@ struct SessionCacheKey {
     /// 规范化后的声明摘要；`None` = 这一次请求没有声明摘要（表格路径的登记摘要回落在
     /// registration 层，不改变“声明缺席”这个事实，因此仍是一种独立的键）。
     declared: Option<String>,
+    /// 由请求决定的会话构造参数（见类型文档里“为什么会话构造参数也是键的一部分”）。
+    config: SessionConfigKey,
+}
+
+/// [`SessionCacheKey`] 的构造参数分量。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SessionConfigKey {
+    /// 该域的会话参数全部来自引擎唯一的运行时档案（同一引擎实例内恒定），请求里没有
+    /// 可变的设置：公式识别器与公式检测器。
+    EngineOnly,
+    /// 表格结构会话：存**整个** [`crate::table::structure::TableStructureConfig`]，而不是手挑
+    /// 三个字段 —— 将来新增一只会影响会话的旋钮会自动进键，不需要记得改这里。
+    Table(crate::table::structure::TableStructureConfig),
 }
 
 impl SessionCacheKey {
-    fn new(identity: crate::model_verify::FileIdentity, declared: Option<&str>) -> Self {
+    /// 公式两站点：构造参数不来自请求。
+    fn engine_only(identity: crate::model_verify::FileIdentity, declared: Option<&str>) -> Self {
         Self {
             identity,
             declared: declared.map(crate::model_verify::normalize_expected_sha256),
+            config: SessionConfigKey::EngineOnly,
+        }
+    }
+
+    /// 表格站点：`config` 必须是**即将交给 `TableStructureSession::open` 的那一份**，
+    /// 这样“键里比较的”与“会话实际用到的”不可能分叉。
+    fn table(
+        identity: crate::model_verify::FileIdentity,
+        declared: Option<&str>,
+        config: &crate::table::structure::TableStructureConfig,
+    ) -> Self {
+        Self {
+            identity,
+            declared: declared.map(crate::model_verify::normalize_expected_sha256),
+            config: SessionConfigKey::Table(config.clone()),
         }
     }
 }
@@ -1316,7 +1353,7 @@ impl RapidOcrEngine {
         let runtime = self.inner.runtime_profile().session_runtime();
         // 缓存键（文件身份 + 这次声明的期望摘要）决定要不要重建：文件被替换后不会继续用
         // 旧会话；文件一个字节没变但**声明换了**，也不会让新声明落空。
-        let key = SessionCacheKey::new(
+        let key = SessionCacheKey::engine_only(
             crate::model_verify::FileIdentity::of(&path)?,
             policy.expected_detector_sha256.as_deref(),
         );
@@ -1367,7 +1404,7 @@ impl RapidOcrEngine {
             .clone()
             .ok_or_else(|| crate::model_verify::missing_model_path_error("formula"))?;
         let runtime = self.inner.runtime_profile().session_runtime();
-        let key = SessionCacheKey::new(
+        let key = SessionCacheKey::engine_only(
             crate::model_verify::FileIdentity::of(&path)?,
             policy.expected_model_sha256.as_deref(),
         );
@@ -1394,10 +1431,14 @@ impl RapidOcrEngine {
             })
     }
 
-    /// 懒加载表格结构会话；**会话缓存键**（文件身份 + 声明摘要）变化时重建。
+    /// 懒加载表格结构会话；**会话缓存键**（文件身份 + 声明摘要 + 会话构造参数）变化时重建。
     ///
     /// 会话的设置全部来自策略与引擎的运行时档案：表格结构不是一条可以自己决定线程数、
     /// 画布边长与形状固定策略的旁路。期望摘要同样由策略传入、由库在加载时校验。
+    ///
+    /// 构造参数**必须进键**（复审 P1）：它们决定的是已创建的那个会话本身（线程选项与
+    /// free-dimension override 都在 `open` 时一次性施加），而同一张请求里的预处理与解码几何
+    /// 却按**这次的** `input_side_len` 走 —— 复用旧会话等于让两边各自用两个不同的边长。
     fn table_session(
         &mut self,
         policy: &crate::api::TablePolicy,
@@ -1406,9 +1447,17 @@ impl RapidOcrEngine {
             .model_path
             .clone()
             .ok_or_else(|| crate::model_verify::missing_model_path_error("table"))?;
-        let key = SessionCacheKey::new(
+        // 先组装构造参数，再让它**同时**成为键的一部分与 `open` 的入参：
+        // “键里比较的”与“会话实际用到的”因此是同一个值，不可能分叉。
+        let config = crate::table::structure::TableStructureConfig {
+            input_side_len: policy.input_side_len,
+            fix_input_shape: policy.fix_input_shape,
+            intra_threads: policy.intra_threads,
+        };
+        let key = SessionCacheKey::table(
             crate::model_verify::FileIdentity::of(&path)?,
             policy.expected_model_sha256.as_deref(),
+            &config,
         );
         if needs_rebuild(self.table_session.as_ref().map(|(cached, _)| cached), &key) {
             let runtime = self.inner.runtime_profile().session_runtime();
@@ -1418,11 +1467,6 @@ impl RapidOcrEngine {
                 &path,
                 policy.expected_model_sha256.as_deref(),
             )?;
-            let config = crate::table::structure::TableStructureConfig {
-                input_side_len: policy.input_side_len,
-                fix_input_shape: policy.fix_input_shape,
-                intra_threads: policy.intra_threads,
-            };
             let session = crate::table::structure::TableStructureSession::open(
                 &credential,
                 &runtime,
@@ -1499,8 +1543,8 @@ impl RapidOcrEngine {
         }
 
         // 会话在整个请求里只取一次：`table_session` 每次都要按会话缓存键（文件身份 +
-        // 声明摘要）确认缓存是否仍然有效，那是每张表一次的 `stat`；更重要的是
-        // "一张表一次结构推理"（门禁 G3）应当由**结构**保证，而不是靠调用点自觉。
+        // 声明摘要 + 会话构造参数）确认缓存是否仍然有效，那是每张表一次的 `stat`；更重要的是
+        // “一张表一次结构推理”（门禁 G3）应当由**结构**保证，而不是靠调用点自觉。
         let session = self.table_session(policy)?;
         let vocabulary = session.vocabulary().clone();
         let mut infer_ms = 0.0_f32;
@@ -3594,6 +3638,109 @@ rec:
         }
     }
 
+    /// 复审 P1（表格站点）：热会话 + 同一路径同一摘要 + **只改会话配置**。
+    ///
+    /// 与上一条同构，钉的是键的另一半：`input_side_len` / `fix_input_shape` /
+    /// `intra_threads` 都在 `open` 时一次性施加，命中旧会话时这次的配置根本不生效；
+    /// 而同一张请求里的预处理与解码几何已经按**新**边长走（见 [`Self::table_session`] 的文档），
+    /// 所以被吞掉不只是“配置没生效”，而是会话与预处理各用一种边长。
+    ///
+    /// 后半句不是修辞。把键退回“不含 config”后本用例的实测失败：
+    /// `Got invalid dimensions for input: x … index: 2 Got: 600 Expected: 488` ——
+    /// 预处理交出的张量与新边长一致，而被复用的会话仍钉在旧边长上。
+    #[test]
+    fn a_changed_table_config_is_not_answered_by_a_hot_session() {
+        let Some(model_root) = crate::test_support::ocr_model_root() else {
+            return;
+        };
+        let Some(table_model) = crate::test_support::table_structure_model_path() else {
+            return;
+        };
+        let Some(page) = crate::test_support::page_fixture("04表格与键值对.png") else {
+            return;
+        };
+        let dir = crate::test_support::TempDir::new("pipeline-table-config");
+        let copy = dir.path().join("slanet-plus.onnx");
+        std::fs::copy(&table_model, &copy).expect("copy the real table model");
+        let declared = crate::model_store::sha256_file(&copy).expect("hash the copy");
+        let bytes = std::fs::read(&page).expect("the page must be readable");
+
+        let mut engine =
+            RapidOcrEngine::new(engine_config(&model_root)).expect("engine should load");
+        let default_side = TablePolicy::default().input_side_len;
+        let policy =
+            |input_side_len: usize, fix_input_shape: bool, intra_threads: Option<usize>| {
+                TablePolicy {
+                    enabled: true,
+                    model_path: Some(copy.clone()),
+                    expected_model_sha256: Some(declared.clone()),
+                    input_side_len,
+                    fix_input_shape,
+                    intra_threads,
+                    ..TablePolicy::default()
+                }
+            };
+
+        // 第一次请求走默认配置，会话进入缓存。必须真的有表格区域，否则 `table_session`
+        // 根本不会被取用，这条用例在表格页上就什么也没证明。
+        let output = engine
+            .recognize(request(bytes.clone(), policy(default_side, true, None)))
+            .expect("the first request must pass");
+        assert!(
+            !table_regions(&output).is_empty(),
+            "the session must actually have been used by a table region"
+        );
+        let session = engine
+            .table_session(&policy(default_side, true, None))
+            .expect("session with the default canvas");
+        assert_eq!(session.config().input_side_len, default_side);
+        assert!(session.config().fix_input_shape);
+        let default_dims = session.input_dims().to_vec();
+
+        // 第二次请求只换画布边长：会话必须反映新配置。若被热会话吞掉，这里仍是旧值。
+        let wider = default_side + 112;
+        engine
+            .recognize(request(bytes.clone(), policy(wider, true, None)))
+            .expect("a larger canvas must still infer");
+        let session = engine
+            .table_session(&policy(wider, true, None))
+            .expect("session with the wider canvas");
+        assert_eq!(
+            session.config().input_side_len,
+            wider,
+            "配置变化被旧会话吞掉了：键里没有带 input_side_len"
+        );
+        assert_ne!(
+            session.input_dims(),
+            default_dims.as_slice(),
+            "会话配置里写着新边长、实测维度却还是旧的：override 没有重新施加"
+        );
+        assert_eq!(
+            session.input_dims(),
+            [-1, 3, wider as i64, wider as i64],
+            "固定形状必须等于这次的 `input_side_len`"
+        );
+
+        // 第三次请求只关形状固定：后置条件是可观察的配置本身。
+        let session = engine
+            .table_session(&policy(wider, false, None))
+            .expect("session with a dynamic input shape");
+        assert!(
+            !session.config().fix_input_shape,
+            "配置变化被旧会话吞掉了：键里没有带 fix_input_shape"
+        );
+
+        // 第四次请求只改 intra 线程：直接读实际下发给 ONNX Runtime 的后置条件。
+        let session = engine
+            .table_session(&policy(wider, false, Some(1)))
+            .expect("session with a pinned intra budget");
+        assert_eq!(
+            session.session_threads().0,
+            Some(1),
+            "配置变化被旧会话吞掉了：键里没有带 intra_threads"
+        );
+    }
+
     /// 表格路由与 `roi`/`tile` 互斥，必须在进入管线前结构化拒绝（与公式路由同形）。
     ///
     /// 坐标**恰好**仍能对上（页级文本区域的 polygon 会被 `+ offset` 映射回原图），所以
@@ -3629,14 +3776,16 @@ rec:
 
 #[cfg(test)]
 mod session_cache_rule_tests {
-    //! 会话缓存判据本身的覆盖（复审 P1-1）：**不加载任何模型**。
+    //! 会话缓存判据本身的覆盖（复审 P1-1 / P1）：**不加载任何模型**。
     //!
     //! 三个会话点共用 [`needs_rebuild`]，而真实模型用例在缺少资产的环境里会**静默 skip**；
-    //! 所以"声明变了必须重建"这条规则自己必须有一条无模型的守卫，否则它在干净 clone
-    //! 上什么也没被证明。三个站点的端到端行为各有一条真实模型用例钉着。
+    //! 所以“声明变了必须重建”“会话构造参数变了必须重建”这两条规则自己必须各有一条无模型
+    //! 的守卫，否则它们在干净 clone 上什么也没被证明。三个站点的端到端行为各有一条
+    //! 真实模型用例钉着。
 
     use super::{SessionCacheKey, needs_rebuild};
     use crate::model_verify::FileIdentity;
+    use crate::table::structure::TableStructureConfig;
     use crate::test_support::TempDir;
 
     const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
@@ -3650,7 +3799,7 @@ mod session_cache_rule_tests {
         let dir = TempDir::new("cache-rule-declaration");
         dir.write("model.onnx", b"hello");
         let file = FileIdentity::of(&dir.path().join("model.onnx")).expect("identity");
-        let first = SessionCacheKey::new(file.clone(), Some(HELLO_SHA256));
+        let first = SessionCacheKey::engine_only(file.clone(), Some(HELLO_SHA256));
 
         assert!(
             !needs_rebuild(Some(&first), &first),
@@ -3659,19 +3808,22 @@ mod session_cache_rule_tests {
         assert!(
             needs_rebuild(
                 Some(&first),
-                &SessionCacheKey::new(file.clone(), Some(BOGUS_SHA256))
+                &SessionCacheKey::engine_only(file.clone(), Some(BOGUS_SHA256))
             ),
             "a different declaration on an unchanged file must not be answered by the hot session"
         );
         assert!(
             !needs_rebuild(
                 Some(&first),
-                &SessionCacheKey::new(file.clone(), Some(&HELLO_SHA256.to_uppercase()))
+                &SessionCacheKey::engine_only(file.clone(), Some(&HELLO_SHA256.to_uppercase()))
             ),
             "case is the only difference verification ignores, so it must not force a rebuild"
         );
         assert!(
-            needs_rebuild(Some(&first), &SessionCacheKey::new(file.clone(), None)),
+            needs_rebuild(
+                Some(&first),
+                &SessionCacheKey::engine_only(file.clone(), None)
+            ),
             "dropping the declaration is a different statement about the file"
         );
         assert!(needs_rebuild(None, &first), "an empty cache always builds");
@@ -3684,10 +3836,10 @@ mod session_cache_rule_tests {
         let dir = TempDir::new("cache-rule-padded");
         dir.write("model.onnx", b"hello");
         let file = FileIdentity::of(&dir.path().join("model.onnx")).expect("identity");
-        let first = SessionCacheKey::new(file.clone(), Some(HELLO_SHA256));
+        let first = SessionCacheKey::engine_only(file.clone(), Some(HELLO_SHA256));
         assert!(needs_rebuild(
             Some(&first),
-            &SessionCacheKey::new(file, Some(&format!(" {HELLO_SHA256}")))
+            &SessionCacheKey::engine_only(file, Some(&format!(" {HELLO_SHA256}")))
         ));
     }
 
@@ -3700,16 +3852,22 @@ mod session_cache_rule_tests {
         dir.write("model.onnx", b"hello!");
         let rewritten = FileIdentity::of(&dir.path().join("model.onnx")).expect("identity");
         assert!(needs_rebuild(
-            Some(&SessionCacheKey::new(before.clone(), Some(HELLO_SHA256))),
-            &SessionCacheKey::new(rewritten, Some(HELLO_SHA256))
+            Some(&SessionCacheKey::engine_only(
+                before.clone(),
+                Some(HELLO_SHA256)
+            )),
+            &SessionCacheKey::engine_only(rewritten, Some(HELLO_SHA256))
         ));
 
         dir.write("other.onnx", b"hello");
         let other_path = FileIdentity::of(&dir.path().join("other.onnx")).expect("identity");
         assert!(
             needs_rebuild(
-                Some(&SessionCacheKey::new(before.clone(), Some(HELLO_SHA256))),
-                &SessionCacheKey::new(other_path, Some(HELLO_SHA256))
+                Some(&SessionCacheKey::engine_only(
+                    before.clone(),
+                    Some(HELLO_SHA256)
+                )),
+                &SessionCacheKey::engine_only(other_path, Some(HELLO_SHA256))
             ),
             "the same bytes under a different path are a different file"
         );
@@ -3721,14 +3879,75 @@ mod session_cache_rule_tests {
         let dir = TempDir::new("cache-rule-stable");
         dir.write("model.onnx", b"hello");
         let path = dir.path().join("model.onnx");
-        let first = SessionCacheKey::new(
+        let first = SessionCacheKey::engine_only(
             FileIdentity::of(&path).expect("identity"),
             Some(HELLO_SHA256),
         );
-        let second = SessionCacheKey::new(
+        let second = SessionCacheKey::engine_only(
             FileIdentity::of(&path).expect("identity"),
             Some(HELLO_SHA256),
         );
         assert!(!needs_rebuild(Some(&first), &second));
+    }
+
+    /// 复审 P1（表格站点）：同一文件、同一声明，**只改会话构造参数** → 必须重建。
+    ///
+    /// 这三只旋钮都在 `open` 时一次性施加（线程选项与 free-dimension override 都没有
+    /// 第二次机会），命中旧会话等于这次的配置根本没生效。键里存的是**整个**
+    /// [`TableStructureConfig`]，所以本用例按字段逐条变异：任何一只旋钮的差异都不允许
+    /// 被判成“键相同”。
+    #[test]
+    fn a_changed_table_config_rebuilds_without_any_file_change() {
+        let dir = TempDir::new("cache-rule-table-config");
+        dir.write("slanet-plus.onnx", b"hello");
+        let file = FileIdentity::of(&dir.path().join("slanet-plus.onnx")).expect("identity");
+        let base = TableStructureConfig::default();
+        let first = SessionCacheKey::table(file.clone(), Some(HELLO_SHA256), &base);
+
+        assert!(
+            !needs_rebuild(
+                Some(&first),
+                &SessionCacheKey::table(file.clone(), Some(HELLO_SHA256), &base)
+            ),
+            "identity、声明、配置全都不变 -> 不应该重建"
+        );
+
+        let mut wider = base.clone();
+        wider.input_side_len += 112;
+        assert!(
+            needs_rebuild(
+                Some(&first),
+                &SessionCacheKey::table(file.clone(), Some(HELLO_SHA256), &wider)
+            ),
+            "input_side_len 变了却不重建 = 新画布被旧会话吞掉"
+        );
+
+        let mut unfixed = base.clone();
+        unfixed.fix_input_shape = !unfixed.fix_input_shape;
+        assert!(
+            needs_rebuild(
+                Some(&first),
+                &SessionCacheKey::table(file.clone(), Some(HELLO_SHA256), &unfixed)
+            ),
+            "fix_input_shape 变了却不重建 = 形状策略被旧会话吞掉"
+        );
+
+        let mut threaded = base.clone();
+        threaded.intra_threads = Some(base.intra_threads.map_or(1, |threads| threads + 1));
+        assert!(
+            needs_rebuild(
+                Some(&first),
+                &SessionCacheKey::table(file.clone(), Some(HELLO_SHA256), &threaded)
+            ),
+            "intra_threads 变了却不重建 = 线程预算被旧会话吞掉"
+        );
+
+        // 反面守卫：config 真的参与了键的相等性。把字段从 `SessionCacheKey` 里删掉，
+        // 表格键就会与“构造参数不来自请求”的公式键完全重合，而上面的三条会一起失效。
+        assert_ne!(
+            first,
+            SessionCacheKey::engine_only(file, Some(HELLO_SHA256)),
+            "两个站点即使文件身份与声明完全相同，也不是同一把键"
+        );
     }
 }

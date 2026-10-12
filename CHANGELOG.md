@@ -562,6 +562,41 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
 - **未改变的事实范围**：中段修改仍是已登记的启发式盲点，本批没有加新的检测手段（全文件哈希或
   内容快照比对都是独立的性能预算决策）；`log.txt` 未跟踪，不能当作仓库门禁证据。
 
+## 表格会话缓存键纳入会话构造参数（复审 P1，未发布）
+
+对应复审结论第一条：“第一次请求用 `fix_input_shape = true`、边长 488；第二次请求使用
+`fix_input_shape = false` 或另一边长；文件和摘要不变；旧会话被复用，第二次策略实际不生效。”
+
+- **缺陷**：[`SessionCacheKey`](src/ocr/pipeline/rapid_structure.rs) 只有文件身份 + 声明摘要，而
+  [`TablePolicy`](src/api.rs) 的 `input_side_len` / `fix_input_shape` / `intra_threads` 决定的是
+  **已创建的那个会话本身** —— ORT 的线程选项与 free-dimension override 都在 `open` 时一次性
+  施加，之后没有第二次机会。于是“引擎实例复用 + 模型文件一个字节没变 + 只改配置”的第二次
+  请求命中旧会话，那次配置根本没生效。
+- **修法**：键新增 `config: SessionConfigKey`（`EngineOnly` / `Table(TableStructureConfig)`）。表格
+  站点存**整个** `TableStructureConfig`，而不是手挑三个字段 —— 将来新增一只会影响会话的旋钮
+  自动进键，不需要记得改这里。`table_session` 先组装 config，**同一份**既进键又交给 `open`，
+  所以“键里比较的”与“会话实际用到的”不可能分叉。公式两个站点改用 `SessionCacheKey::engine_only`
+  （它们的会话参数全部来自引擎唯一的运行时档案，请求里没有可变的设置）。
+- **后果不是“配置稍慢生效”，而是一次形状不匹配的推理**。把键退回“不含 config”后的实测失败：
+  `Got invalid dimensions for input: x … index: 2 Got: 600 Expected: 488` —— 同一张请求里的预处理
+  仍按**新**边长生成张量，而被复用的会话仍钉在**旧**边长上。该事实已写进用例文档。
+- 新增两条守卫：
+  - 端到端 `a_changed_table_config_is_not_answered_by_a_hot_session`（真实 SLANet-plus + 真实表格页）：
+    四段前后请求分别只改边长 / 形状固定策略 / intra 线程，后置条件读会话自己的
+    `config()` / `input_dims()` / `session_threads()`，而不是只断言“没报错”。
+  - 无模型规则用例 `a_changed_table_config_rebuilds_without_any_file_change`：同一身份 + 同一声明，
+    三处配置变异各自必须重建、同配置不得重建，且表格键与公式键不得重合。
+- **两类守卫的分工已实测**：把调用点的键退回 `engine_only` 后，端到端用例 FAILED（上面那条 ORT
+  形状错误），而规则用例仍绿 —— 它钉的是键类型，不是调用点。因此两者都不可省。还原后全部
+  通过，文件哈希与改前逐字节一致。
+- 文档：`api.rs` 的 `TablePolicy` 新增“配置跨请求也生效”一节；`SessionCacheKey` 与 `table_session`
+  各新增一节说明为什么构造参数必须是键的一部分。
+- 本批提交前实跑全套七项均为 0（fmt `--check` / clippy `--all-targets --features serve -D warnings` /
+  `--all-targets` / serve 串行 / serve_startup / 两个 node 检）；测试计数 lib **747 → 749 passed**
+  （+2，`#[ignore]` 仍 2）、serve 并行与串行各 **289**（串行 278.56s），其余测试目标计数不变。
+- **未改变的事实范围**：键里的文件身份仍是启发式（中段修改盲区，见“记录回正”一节）；表格的
+  `expected_model_sha256 = None` 回落登记摘要这条路径**仍未进键**（复审 P1-b，下一批）。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、
