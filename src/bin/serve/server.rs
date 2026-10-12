@@ -1276,7 +1276,7 @@ impl ServeShared {
     /// `POST /api/ocr` 的引擎准入（§7.6 第 3 步 + M2 的惰性创建）。
     ///
     /// - `Ready` → 执行；`Loading`/`Rebuilding` → 入队等待（**不拒绝**）；
-    /// - `BlockedModelsMissing` → 先看磁盘上的**当前**事实：若模型已经齐备（典型场景是
+    /// - `BlockedModelsMissing` → 先重新观察磁盘上的**存在性**：若模型已经齐备（典型场景是
     ///   刚下载完），转入 `Loading` 并把会话创建留给 worker（推理/建会话绝不在 accept
     ///   线程）；否则 409 + 与 `/api/models` 同源同值的缺失清单；
     /// - `Failed` → 503 `engine_unavailable`（原因在 `/api/status` 与 `detail.reason` 里）。
@@ -1286,7 +1286,9 @@ impl ServeShared {
     fn admit_ocr(&self) -> Result<String, ServeError> {
         let admission = self.engine_state().ocr_admission();
         if matches!(admission, OcrAdmission::ModelsMissing { .. }) {
-            // 只有这一种结论需要看磁盘上的当前事实（下载可能刚刚补齐模型）。
+            // 只有这一种结论需要重新观察磁盘：下载可能刚刚把文件补齐，而“在不在”每次都是
+            // 实读的。结论里的“摘要对不对”那一半仍走身份键控的校验缓存（口径见
+            // `model_plan::ModelPlan::report`：命中时报告的是上一次完整校验的摘要）。
             self.admit_with_models_on_disk()?;
             // 走到这里说明磁盘上的模型已经齐备，状态已被推进到 `Loading`（建会话留给 worker）。
             return Ok("models_on_disk".to_string());

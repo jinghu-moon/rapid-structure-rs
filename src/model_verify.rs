@@ -62,6 +62,37 @@
 //! `None`，这类文件之间的同体积替换同样落在盲区里。
 //! 缓存**只**用来省掉重复的完整读取；它不改变任何一个调用点的判定语义。
 //! 需要**确定性地**排除缓存影响时用 [`force_verify_file`]。
+//!
+//! ## "状态"是什么、不是什么（复审 P1/P2 定下的口径）
+//!
+//! 命中缓存时报告的是**上一次完整校验留下的那一份摘要**，外加一条"此后没有观察到身份
+//! 变化"的证据。它是存在性 + 身份的高频结论，**不是当前磁盘内容的确定性证明**：
+//! 落在上面盲区里的修改，缓存会继续报告旧摘要。任何把命中时的状态说成"已按磁盘当前
+//! 内容核实"的表述都是越界的（本 crate 的 API 文档与 `/api/models` 的文档都按这条口径
+//! 写）。要拿到确定性结论只有两条路：[`force_verify_file`]（现在就读盘），或者让加载
+//! 路径自己把完整摘要算出来 —— 见下一节。
+//!
+//! ## 加载期证伪：磁盘推翻了缓存时，不留一条陈旧的 `present`
+//!
+//! [`VerifiedModel::verify`] 是每条模型加载路径的必经出口，而它**本来就必须**读完全部字节
+//! 才能绑定内容，于是它手上握着一条比身份更强的证据：这次读到的字节的完整摘要。摘要与
+//! 缓存条目不符时那条缓存结论已被证伪，`verify` 会**删除**该条目（为什么删而不覆盖：见
+//! `invalidate_if_falsified` 的说明）。效果：
+//!
+//! - 下一次 [`verify_file`] 必定回到冷验证，报告当前磁盘的真实摘要（收敛）；
+//! - 不匹配（[`crate::error::RapidOcrError::HashMismatch`]）也先作废再报错 —— 否则会留下
+//!   "加载拒绝、状态仍报告 present"的分叉，那比盲区本身更容易误导运维；
+//! - 没有期望摘要的凭证（`expected = None`）根本不计算摘要，因此没有证伪的证据，缓存
+//!   原样保留（这条限制被钉成测试）。
+//!
+//! 它把"报告的状态与实际加载结果分叉"从**无限期**收窄到**至多到下一次加载**：文件只要真的
+//! 被带可信摘要地加载过一次，陈旧结论就活不过那一次。它仍然不改变"命中不等于当前内容"——
+//! 那只有冷验证能证明。
+//!
+//! 作废只管**状态**，不管**已建好的会话**：会话缓存（`ocr::pipeline`）同样按身份判定是否
+//! 重建，所以同身份的中段替换不会把已存在的会话拆掉 —— 凭证的内容快照只在**新建会话**那一刻
+//! 起作用。运行期要确实性地同时刷新"报告的状态"与"内存里的会话"，仍只有
+//! `POST /api/models/reverify`（清缓存 → 冷验证 → 重建引擎）那一条路。
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -218,6 +249,10 @@ impl FileIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReverifyCause {
     /// 缓存里没有这个身份（第一次见到这个文件，或路径此前没被校验过）。
+    ///
+    /// 除了"真的第一次"，还有第二条到达这里的路：缓存条目被**加载期证伪**删除之后
+    /// （见 [`VerifiedModel::verify`] 与模块文档的证伪一节）。因此 `first_sight` 的含义是
+    /// "此刻没有可复用的结论"，不必然是"这个文件此前没被读过"。
     FirstSight,
     /// 体积或 mtime 变了：文件被替换/改写，身份不再是同一个。
     StatChanged,
@@ -454,6 +489,12 @@ pub fn normalize_expected_sha256(expected: &str) -> String {
 /// 全部字节才能绑定内容，读都读了，不重算摘要才是说谎。代价是每次构造凭证一次全量读 +
 /// 一次哈希（每会话构造至多一次）；换来的是摘要结论与内容快照出自同一次读取，
 /// 而不是两次可能不一致的观察。
+///
+/// 反方向同样有动作（复审 P1/P2）：凭证算出的完整摘要与缓存条目不符时，那条结论已被
+/// **磁盘上的当前内容证伪**，于是该条目被删除（包括比对失败、凭证根本没有被构造成的那条
+/// 错误路径）。凭证因此不只是“加载前的门禁”，也是状态缓存的**收敛信号**：一条被盲区修改
+/// 骗过的 `present` 活不过一次带可信摘要的加载。没带可信摘要时（`expected = None`）
+/// 不算摘要、也就没有证据，缓存原样保留 —— 这种凭证本来也不得声称内容已被验证。
 #[derive(Clone)]
 pub struct VerifiedModel {
     path: PathBuf,
@@ -492,6 +533,10 @@ impl VerifiedModel {
     /// 无论有没有期望，**存在性都是第一个判定**：缺失的文件必须先返回可定位的
     /// [`RapidOcrError::FileNotFound`]，不能因为“摘要也算不出来”而退化成一个含混错误。
     /// 这条不变量此前分散在各域构造器里，现在单点收口到凭证。
+    ///
+    /// 只要算了完整摘要（= 期望在场），结论都会反哺状态缓存：与缓存条目不符就删除它，
+    /// **匹配与不匹配两条分支都如此**（不匹配时先作废、再报错）。否则同一次磁盘修改会
+    /// 一边让加载拒绝、一边让 `/api/models` 继续拿着旧摘要回答 `present`（复审 P1/P2）。
     pub fn verify(path: &Path, expected: Option<&str>) -> Result<Self> {
         if !path.is_file() {
             return Err(RapidOcrError::FileNotFound(path.to_path_buf()));
@@ -502,6 +547,10 @@ impl VerifiedModel {
         let actual_sha256 = expected
             .map(|expected| {
                 let actual = format!("{:x}", Sha256::digest(&content));
+                // 这一次读取就是比“身份没变”更强的证据：它若与缓存里那条“上一次完整
+                // 校验”的结论不符，那条已经错了。先作废再判定，使**比对失败的那一条
+                // 请求也照样收敛状态**，不会留下“加载拒绝、状态仍是 present”的分叉。
+                invalidate_if_falsified(path, &actual);
                 if !actual.eq_ignore_ascii_case(expected) {
                     return Err(RapidOcrError::HashMismatch {
                         path: path.to_path_buf(),
@@ -651,6 +700,35 @@ fn store(identity: &FileIdentity, sha256: &str) {
     );
 }
 
+/// **证伪即作废**：本次完整摘要与缓存条目不符时删除该条目（返回是否真的删掉了一条）。
+///
+/// 只有 [`VerifiedModel::verify`] 有资格调用它：它手上的摘要来自刚刚读完的全部字节，
+/// 强于“身份没观察到变化”，因此足以判定本地那一条结论是**错的**。冷验证走的是
+/// [`store`]（直接覆盖），不需要这里。
+///
+/// 为什么是删除而不是覆盖成这次的新摘要：这条路径上没有任何一次观察把“当前身份”与
+/// “当前摘要”一起取过来 —— `verify` 读的是内容，它不取 [`FileIdentity`]（取也只能是读盘
+/// **之后**的另一个时刻）。用读前或读后的身份配上这次的摘要，会写进一条从未被一起观察过
+/// 的记录：文件正被改写的中间状态也可能被钉成“已验证”。删除只放弃一次加速机会（下一次
+/// 冷验证重新读盘），换来的是一条不会被误用的账。
+///
+/// 键就是 [`store`] 写入时用的那个路径值，不做规范化：两个写法不同的路径在缓存里本来就是
+/// 两条独立记录（与命中规则一致），这里不去猜测它们是否指向同一个文件。
+fn invalidate_if_falsified(path: &Path, actual_sha256: &str) -> bool {
+    let Ok(mut guard) = cache().lock() else {
+        return false;
+    };
+    let Some(entry) = guard.get(path) else {
+        return false;
+    };
+    if entry.sha256.eq_ignore_ascii_case(actual_sha256) {
+        // 磁盘现状与缓存结论一致：条目描述的就是当前内容，保留它（它省下的是下一次读盘）。
+        return false;
+    }
+    guard.remove(path);
+    true
+}
+
 /// 摘要前 8 字节的十六进制（日志用；完整摘要太长）。
 fn hex16(bytes: &[u8; 32]) -> String {
     bytes[..8]
@@ -680,8 +758,9 @@ mod tests {
 
     use super::{
         FileIdentity, PARTIAL_DIGEST_WINDOW_BYTES, PartialDigest, ReverifyCause, VerifiedModel,
-        clear_verification_cache, force_verify_file, lookup_for_test, normalize_expected_sha256,
-        sha256_file_cached, verification_stats, verify_file, verify_sha256,
+        clear_verification_cache, force_verify_file, invalidate_if_falsified, lookup_for_test,
+        normalize_expected_sha256, sha256_file_cached, verification_stats, verify_file,
+        verify_sha256,
     };
     use crate::error::RapidOcrError;
     use crate::model_store::sha256_file;
@@ -1178,6 +1257,161 @@ mod tests {
             verify_file(&path).expect("hash").sha256,
             forced.sha256,
             "the forced re-verification corrected the cached conclusion"
+        );
+    }
+
+    /// **证伪收敛（复审 P1/P2）**：盲区里的中段修改骗得过身份，骗不过一次真实的加载。
+    ///
+    /// 上一条用例钉的是“身份看不出这次修改”；这一条钉的是“谁看得出”：凭证路径本来就必须
+    /// 读完全部字节才能绑定内容，它手上的那份完整摘要足以证伪缓存条目。作废之后状态必须
+    /// 重新读盘并给出当前磁盘的真实摘要 —— “报告的状态”与“实际加载结果”的分叉不再是无限期。
+    #[test]
+    fn a_middle_only_edit_is_falsified_by_a_verified_load_and_the_next_status_rehashes() {
+        let _serial = serial();
+        let dir = TempDir::new("verify-falsify-on-load");
+        let path = dir.path().join("model.onnx");
+        let size = 256 * 1024;
+        write(&path, &pattern(size, 11));
+        let first = verify_file(&path).expect("hash");
+        assert!(first.computed);
+        let stale = first.sha256.clone();
+
+        let offset = (PARTIAL_DIGEST_WINDOW_BYTES + 1024) as usize;
+        rewrite_same_identity(&path, offset, b"\x10\x20\x30\x40");
+        assert_eq!(
+            lookup_for_test(&path).expect("the cache answers"),
+            ReverifyCause::CacheHit,
+            "the identity still cannot see this edit — that is the previous case's point"
+        );
+
+        let current = sha256_file(&path).expect("uncached");
+        assert_ne!(current, stale, "the content really did change");
+        let credential = VerifiedModel::verify(&path, Some(&current))
+            .expect("the load-time verification sees the current content");
+        assert_eq!(credential.actual_sha256(), Some(current.as_str()));
+
+        let second = verify_file(&path).expect("hash");
+        assert!(
+            second.computed,
+            "a load that falsified the cached digest must not leave a hot entry behind"
+        );
+        assert_eq!(second.cause, ReverifyCause::FirstSight);
+        assert_eq!(
+            second.sha256, current,
+            "the reported state now matches the disk"
+        );
+
+        let third = verify_file(&path).expect("hash");
+        assert!(
+            !third.computed,
+            "the convergence is not a one-shot invalidation loop"
+        );
+        assert_eq!(third.sha256, current);
+    }
+
+    /// **失败路径同样负责收敛**：比对失败就是在说“磁盘不是声明的那一份”，于是那条
+    /// 陈旧的 `present` 也同样是错的。只让“加载成功”负责作废缓存会留下一个更误导人的洞：
+    /// 加载已经拒绝、`/api/models` 却还在报告上一个摘要与 `present`。
+    #[test]
+    fn a_refused_load_also_falsifies_the_stale_cache_entry() {
+        let _serial = serial();
+        let dir = TempDir::new("verify-falsify-on-refusal");
+        let path = dir.path().join("model.onnx");
+        let size = 256 * 1024;
+        write(&path, &pattern(size, 12));
+        let first = verify_file(&path).expect("hash");
+        assert!(first.computed);
+        let stale = first.sha256.clone();
+
+        let offset = (PARTIAL_DIGEST_WINDOW_BYTES + 2048) as usize;
+        rewrite_same_identity(&path, offset, b"\x01\x02\x03\x04\x05\x06");
+
+        let error = VerifiedModel::verify(&path, Some(&stale))
+            .expect_err("the current content is not the declared one");
+        match error {
+            RapidOcrError::HashMismatch {
+                expected, actual, ..
+            } => {
+                assert_eq!(expected, stale);
+                assert_ne!(actual, stale, "the mismatch is a real content change");
+            }
+            other => panic!("expected a hash mismatch, got {other:?}"),
+        }
+
+        let second = verify_file(&path).expect("hash");
+        assert!(
+            second.computed,
+            "a refused load falsifies the entry all the same"
+        );
+        assert_eq!(second.sha256, sha256_file(&path).expect("uncached"));
+    }
+
+    /// **如实钉住限制**：`expected = None` 的凭证不计算摘要，因此没有证伪的证据，缓存
+    /// 原样保留。这不是漏改，是设计：没有“当前内容应当是什么”的声明，就没有“缓存错了”
+    /// 的判定依据。把未校验的一次读取说成完整性证据，正是复审要排除的那类越界声明。
+    #[test]
+    fn an_unverified_credential_leaves_the_cache_alone() {
+        let _serial = serial();
+        let dir = TempDir::new("verify-unverified-keeps-cache");
+        let path = dir.path().join("model.onnx");
+        let size = 256 * 1024;
+        write(&path, &pattern(size, 13));
+        let first = verify_file(&path).expect("hash");
+        assert!(first.computed);
+
+        let offset = (PARTIAL_DIGEST_WINDOW_BYTES + 512) as usize;
+        rewrite_same_identity(&path, offset, b"\x7f\x7e");
+        let credential = VerifiedModel::verify(&path, None).expect("no expectation is allowed");
+        assert!(!credential.is_verified());
+
+        assert_eq!(
+            lookup_for_test(&path).expect("the cache answers"),
+            ReverifyCause::CacheHit,
+            "DOCUMENTED LIMITATION: an unverified load produces no digest and is not evidence"
+        );
+        let second = verify_file(&path).expect("hash");
+        assert!(!second.computed);
+        assert_eq!(second.sha256, first.sha256);
+    }
+
+    /// 证伪只在**真不符**时发生：一次与缓存一致的加载不得把后续状态查询全部打回冷验证
+    /// （否则缓存就没了）。“相符保留 / 不符删除 / 无条目不动作”三态在这里直接钉住。
+    #[test]
+    fn falsification_only_removes_an_entry_the_full_digest_contradicts() {
+        let _serial = serial();
+        let dir = TempDir::new("verify-falsify-rule");
+        let path = dir.path().join("model.onnx");
+        write(&path, b"hello");
+        let first = verify_file(&path).expect("hash");
+        assert!(first.computed);
+        assert_eq!(first.sha256, HELLO_SHA256);
+
+        let unrelated = dir.path().join("absent.onnx");
+        assert!(
+            !invalidate_if_falsified(&unrelated, HELLO_SHA256),
+            "there is no entry for a path that was never verified"
+        );
+        assert!(
+            !invalidate_if_falsified(&path, &first.sha256.to_uppercase()),
+            "an agreeing digest leaves the entry alone, case-insensitively like the verdict"
+        );
+        assert_eq!(
+            lookup_for_test(&path).expect("the cache answers"),
+            ReverifyCause::CacheHit
+        );
+
+        assert!(
+            invalidate_if_falsified(&path, "deadbeef"),
+            "a contradicting digest drops the entry"
+        );
+        assert_eq!(
+            lookup_for_test(&path).expect("the cache answers"),
+            ReverifyCause::FirstSight,
+            "the entry is gone, not overwritten with a never-observed identity"
+        );
+        assert!(
+            !invalidate_if_falsified(&path, "deadbeef"),
+            "there is nothing left to drop the second time"
         );
     }
 

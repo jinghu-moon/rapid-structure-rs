@@ -150,6 +150,20 @@ impl ModelFileSpec {
     /// 越界的 `name` 不会去读磁盘（那正是要避免的事），直接报 `Corrupt`：
     /// 它既不是 `Present`（没有证据），也不能是 `Missing`（`Missing` 会被前端
     /// 解读为“请下载它”，而这个文件按定义不属于本集合）。
+    ///
+    /// # `Present` 到底证明什么（复审 P1/P2 的口径）
+    ///
+    /// 摘要来自库的**身份键控校验缓存**（[`crate::model_verify`]）：身份没变时命中，回答的是
+    /// **上一次完整校验**留下的那一份。因此 `Present` 的准确含义是“文件在这儿，且它的身份
+    /// 与我们上一次核实的那一份一致”，它**不是**“已按当前磁盘内容逐字节核实”：同体积、
+    /// 同 mtime 且首尾各 64 KiB 都不变的**中段**修改落在设计上登记的盲区里（该模块把这条
+    /// 盲区钉成了测试）。两个确定性口子：
+    ///
+    /// - [`crate::model_verify::force_verify_file`]：现在就读盘重算（`--reverify-models` 与
+    ///   `POST /api/models/reverify` 的语义）；
+    /// - 加载路径上的 [`crate::model_verify::VerifiedModel::verify`]：它本来就要读完全部字节
+    ///   才能绑定内容，算出的摘要与缓存条目不符时该条目被删除（比对失败也删），所以一条
+    ///   被证伪的 `Present` 活不过一次带可信摘要的加载。
     pub fn state_in(&self, root: &Path) -> ModelFileState {
         self.state_in_probed(root).0
     }
@@ -228,8 +242,13 @@ impl ModelFileSpec {
 #[serde(rename_all = "snake_case")]
 pub enum ModelFileState {
     Missing,
+    /// 存在且摘要与声明一致。命中身份键控缓存时，那份摘要是**上一次完整校验**的结论，
+    /// 不是这一次磁盘重读的证明（口径见 [`ModelFileSpec::state_in`]）。
     Present,
-    Corrupt { expected: String, actual: String },
+    Corrupt {
+        expected: String,
+        actual: String,
+    },
 }
 
 impl ModelFileState {
