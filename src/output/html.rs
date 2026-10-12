@@ -344,6 +344,33 @@ pub(crate) fn escape_attr(value: &str) -> String {
         .replace('\t', "&#9;")
 }
 
+/// 净化判据的**数据**：标签集合 + 两类属性规则。
+///
+/// 解析骨架（下面的 `sanitize_table_html_with`）不认得任何具体白名单，判据全部由这里传入。
+/// 生产上只有 [`TABLE_RULES`] 一张面孔；把判据抽成参数是审核点 5 的要求 —— "收紧前 / 收紧后"
+/// 的对比必须在**同一份解析器**上进行，否则对比出的差异可能来自第二份实现的偏差，而不是白名单
+/// 本身。测试侧的 `legacy_rules()` 正是这样复用骨架的：它只换 `span_attrs` / `max_span` /
+/// `enum_attrs` 三个旋钮，其余代码路径逐字共用。
+struct SanitizerRules<'a> {
+    /// 允许留下的标签名（小写）。
+    tags: &'a [&'a str],
+    /// 整数 span 属性名；取值必须是落在 `min_span..=max_span` 的十进制整数。
+    span_attrs: &'a [&'a str],
+    min_span: u32,
+    max_span: u32,
+    /// 枚举属性名 → 允许取值（小写比较，命中后以小写形式重新拼装）。
+    enum_attrs: &'a [(&'a str, &'a [&'a str])],
+}
+
+/// 生产判据，全部取自 `table_whitelist` 生成物（唯一权威：`assets/table_html_whitelist.json`）。
+const TABLE_RULES: SanitizerRules<'static> = SanitizerRules {
+    tags: ALLOWED_TABLE_TAGS,
+    span_attrs: ALLOWED_TABLE_ATTRS,
+    min_span: MIN_SPAN,
+    max_span: MAX_SPAN,
+    enum_attrs: &[],
+};
+
 /// 表格 HTML 的**唯一**净化实现（`docs/11` §3 E15.2；白名单权威见 `docs/12` §4.2 P1-6）。
 ///
 /// # 它做什么
@@ -378,7 +405,18 @@ pub(crate) fn escape_attr(value: &str) -> String {
 /// 标签以第一个 `>` 结束，因此属性值里的裸 `>`（`<td title="a>b">`）会把标签截短。这会
 /// 丢掉一个本来就会被白名单拒绝的属性，并把 `b">` 当成文本 —— 既不改行为也不引入风险。
 /// 发射器自己产出的属性只有数字与引号，不会触发这条路径。
+///
+/// # 判据放在哪里
+///
+/// 本函数是把判据固定为 [`TABLE_RULES`] 的薄封装，真正的解析走 `sanitize_table_html_with`。
+/// 内核不认得任何具体白名单，所以测试能用旧判据（`legacy_rules()`）在**同一份解析器**上复现
+/// 收紧前的输出 —— 审核点 5 要求的“前后对比”因此不会掺入第二份实现的偏差。
 pub fn sanitize_table_html(raw: &str) -> String {
+    sanitize_table_html_with(raw, &TABLE_RULES)
+}
+
+/// [`sanitize_table_html`] 的判据参数化内核；生产代码只经上面那个入口调用它。
+fn sanitize_table_html_with(raw: &str, rules: &SanitizerRules<'_>) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(start) = rest.find('<') {
@@ -394,7 +432,7 @@ pub fn sanitize_table_html(raw: &str) -> String {
             rest = "";
             break;
         };
-        if let Some(tag) = sanitize_tag(&after[1..end]) {
+        if let Some(tag) = sanitize_tag(&after[1..end], rules) {
             out.push_str(&tag);
         }
         rest = &after[end + 1..];
@@ -412,8 +450,8 @@ fn comment_length(input: &str) -> Option<usize> {
     })
 }
 
-/// 一个标签（不含尖括号）→ 净化后的标记；不在白名单里返回 `None`。
-fn sanitize_tag(inner: &str) -> Option<String> {
+/// 一个标签（不含尖括号）→ 净化后的标记；不在 `rules.tags` 里返回 `None`。
+fn sanitize_tag(inner: &str, rules: &SanitizerRules<'_>) -> Option<String> {
     let inner = inner.trim();
     if inner.is_empty() {
         return None;
@@ -424,19 +462,20 @@ fn sanitize_tag(inner: &str) -> Option<String> {
     };
     let mut pieces = body.splitn(2, char::is_whitespace);
     let name = pieces.next().unwrap_or("").to_ascii_lowercase();
-    if !ALLOWED_TABLE_TAGS.contains(&name.as_str()) {
+    if !rules.tags.contains(&name.as_str()) {
         return None;
     }
     if closing {
         return Some(format!("</{name}>"));
     }
     let attrs = pieces.next().unwrap_or("").trim_end_matches('/');
-    Some(format!("<{name}{}>", sanitize_attrs(attrs)))
+    Some(format!("<{name}{}>", sanitize_attrs(attrs, rules)))
 }
 
-/// 属性串 → 只保留 [`ALLOWED_TABLE_ATTRS`] 里的属性（当前为 `colspan`/`rowspan`），
-/// 取值必须是 `MIN_SPAN..=MAX_SPAN`（即 1..=64）的正整数。取值一律重新拼装，因此没有编码歧义。
-fn sanitize_attrs(raw: &str) -> String {
+/// 属性串 → 只保留 `rules` 里的属性，其余一律丢弃。生产判据下即
+/// [`ALLOWED_TABLE_ATTRS`]（当前为 `colspan`/`rowspan`），取值必须是
+/// `MIN_SPAN..=MAX_SPAN`（即 1..=64）的正整数。取值一律重新拼装，因此没有编码歧义。
+fn sanitize_attrs(raw: &str, rules: &SanitizerRules<'_>) -> String {
     let bytes = raw.as_bytes();
     let mut out = String::new();
     let mut index = 0usize;
@@ -480,13 +519,30 @@ fn sanitize_attrs(raw: &str) -> String {
                 value = raw[value_start..index].to_string();
             }
         }
-        if ALLOWED_TABLE_ATTRS.contains(&name.as_str()) {
-            // 白名单属性都是 span 整数：只接受 [MIN_SPAN, MAX_SPAN] 的整数，
+        let span_matched = if rules.span_attrs.contains(&name.as_str()) {
+            // 白名单属性都是 span 整数：只接受 [min_span, max_span] 的整数，
             // 其余（`rowspan="999999"`、`colspan="0"`、非数字）一律丢弃。
             if let Ok(number) = value.parse::<u32>()
-                && (MIN_SPAN..=MAX_SPAN).contains(&number)
+                && (rules.min_span..=rules.max_span).contains(&number)
             {
                 out.push_str(&format!(" {name}=\"{number}\""));
+            }
+            true
+        } else {
+            false
+        };
+        if span_matched {
+            continue;
+        }
+        // 枚举属性（生产判据下为空；旧实现曾把 `align`/`valign` 归入这一类）。
+        if let Some((_, allowed)) = rules
+            .enum_attrs
+            .iter()
+            .find(|(attr, _)| *attr == name.as_str())
+        {
+            let normalized = value.to_ascii_lowercase();
+            if allowed.contains(&normalized.as_str()) {
+                out.push_str(&format!(" {name}=\"{normalized}\""));
             }
         }
     }
@@ -515,8 +571,8 @@ const TABLES_STYLE: &str = r#"
 #[cfg(test)]
 mod tests {
     use super::{
-        REPORT_SCRIPT, ReportMode, escape_html, relative_image_name, render_report,
-        sanitize_table_html,
+        REPORT_SCRIPT, ReportMode, SanitizerRules, TABLE_RULES, escape_html, relative_image_name,
+        render_report, sanitize_table_html, sanitize_table_html_with,
     };
     use crate::{OcrJsonItem, OcrTableItem};
 
@@ -1121,5 +1177,374 @@ mod tests {
             cleaned.contains("<table><tr><td>x</td></tr></table>"),
             "{cleaned}"
         );
+    }
+
+    // ---- 审核点 5：白名单收紧的前后对比证据 ---------------------------------------------
+    //
+    // P1-6 把两侧收敛到同一规范，其中改变了可见判据：
+    // * Rust 引擎出口（本文件）：`align`/`valign` 从白名单移除，span 上界 1000 → 64（收紧）。
+    // * 页面渲染侧（`src/bin/web/index.html`）：标签集 11 → 28、colspan 下界 `>1` → `>=1`
+    //   （放宽），`align`/`valign` 则本来就不在页面白名单里。这一侧不经过下面的内核，
+    //   由 fingerprint 对拍与 `node tools/check-page-result-contract.mjs` 守住，不列入本组
+    //   用例的前后对比范围。
+    //
+    // 边界测试只能证明“新规则生效”，证明不了“真实产品输出没被改动”。下面这组用例把两件事
+    // 分开验收：
+    //
+    // * `legacy_rules()` 在**同一份解析内核**上复现收紧前的 Rust 判据（只换三个旋钮），所以
+    //   前/后输出之差只可能来自白名单本身，不可能来自第二份实现的偏差。
+    // * `whitelist_tightening_leaves_the_committed_corpus_unchanged` 对仓库内全部真实/黄金/
+    //   合成表格 HTML 逐字节比对 before 与 after：要求零差异。
+    // * `the_before_after_comparison_is_discriminating` 用构造样本钉住上一条不是恒真。
+    // * `the_golden_vocabulary_cannot_emit_a_removed_attribute` 把“真实表格没有超过 64 列”
+    //   从口头断言换成可复现证据：结构模型的解码词表里 span token 上界是 20，而且根本没有
+    //   `align`/`valign` token —— 被删的属性模型发不出来。
+    // * `the_saved_before_after_record_is_current` 校验入库产物
+    //   `tests/fixtures/table-whitelist-before-after.json`（变更前后实际 HTML 的对比记录）
+    //   仍与当前语料、当前判据一致；产物由末尾那个 `#[ignore]` 探针重生成。
+    //
+    // 确认范围到此为止：**已纳入测试的数据与模型**（上面点名的 fixture + 黄金词表），不是
+    // “任意输入都不会变”。
+
+    /// 收紧前的判据（旧实现 `sanitize_attrs` 的三个旋钮）：`rowspan`/`colspan` 接受 1..=1000，
+    /// `align`/`valign` 接受固定 7 值枚举（小写化后原样保留）。标签集合与今天相同。
+    fn legacy_rules() -> SanitizerRules<'static> {
+        const LEGACY_SPAN_ATTRS: &[&str] = &["rowspan", "colspan"];
+        const LEGACY_ALIGNMENTS: &[&str] = &[
+            "left", "center", "right", "top", "middle", "bottom", "justify",
+        ];
+        const LEGACY_ENUM_ATTRS: &[(&str, &[&str])] =
+            &[("align", LEGACY_ALIGNMENTS), ("valign", LEGACY_ALIGNMENTS)];
+        SanitizerRules {
+            tags: crate::output::table_whitelist::ALLOWED_TABLE_TAGS,
+            span_attrs: LEGACY_SPAN_ATTRS,
+            min_span: 1,
+            max_span: 1000,
+            enum_attrs: LEGACY_ENUM_ATTRS,
+        }
+    }
+
+    /// 递归收集 JSON 产物里含 `<table` 的字符串，返回（键路径, HTML）。
+    fn collect_table_html(
+        node: &serde_json::Value,
+        trail: String,
+        sink: &mut Vec<(String, String)>,
+    ) {
+        match node {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    collect_table_html(child, format!("{trail}/{key}"), sink);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    collect_table_html(child, format!("{trail}/{index}"), sink);
+                }
+            }
+            serde_json::Value::String(text) if text.contains("<table") => {
+                sink.push((trail, text.clone()));
+            }
+            _ => {}
+        }
+    }
+
+    /// 加载仓库内的表格 HTML 语料（真实捕获 + 合成表格 + 黄金参考），按 label 排序。
+    /// 这些都是随仓库提交的产物，因此“前后对比”在任何环境都能复现。
+    fn committed_table_corpus() -> Vec<(String, String)> {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let mut corpus = Vec::new();
+        for name in [
+            "json-output/p17-table-real.json",
+            "json-output/p17-table-synthetic.json",
+        ] {
+            let raw = std::fs::read_to_string(fixtures.join(name))
+                .unwrap_or_else(|error| panic!("{name} must be committed: {error}"));
+            let doc: serde_json::Value = serde_json::from_str(&raw).expect(name);
+            let mut found = Vec::new();
+            collect_table_html(&doc, String::new(), &mut found);
+            assert!(!found.is_empty(), "{name} carries no table html");
+            corpus.extend(
+                found
+                    .into_iter()
+                    .map(|(trail, html)| (format!("{name}#{trail}"), html)),
+            );
+        }
+        // 黄金参考：`reference.html` 是逐 token 数组（模型解码的直接产物，未经净化）。
+        let manifest = "table-golden/manifest.json";
+        let raw = std::fs::read_to_string(fixtures.join(manifest))
+            .unwrap_or_else(|error| panic!("{manifest} must be committed: {error}"));
+        let doc: serde_json::Value = serde_json::from_str(&raw).expect(manifest);
+        let tokens = doc["reference"]["html"]
+            .as_array()
+            .expect("reference.html must be a token array");
+        let joined = tokens
+            .iter()
+            .map(|token| token.as_str().expect("token string"))
+            .collect::<String>();
+        assert!(
+            joined.contains("<table"),
+            "golden reference must be a table"
+        );
+        corpus.push((format!("{manifest}#/reference/html/joined"), joined));
+        corpus.sort_by(|left, right| left.0.cmp(&right.0));
+        corpus
+    }
+
+    /// 入库记录只存**人工可读的小样本**：真实捕获、黄金参考、构造样本。合成语料单条 31KB，
+    /// 存进产物会把对比记录撑成另一份语料，它的全量对比由上面的内存内用例负责。
+    fn recorded_samples() -> Vec<(String, String)> {
+        let mut samples = Vec::new();
+        for (label, input) in committed_table_corpus() {
+            if label.contains("p17-table-synthetic") {
+                continue;
+            }
+            samples.push((label, input));
+        }
+        samples.extend(
+            constructed_samples()
+                .into_iter()
+                .enumerate()
+                .map(|(index, input)| (format!("constructed/{index}"), input)),
+        );
+        samples
+    }
+
+    /// 必须能在新旧判据下分辨开的构造样本。
+    fn constructed_samples() -> Vec<String> {
+        vec![
+            "<table><tr><td align=\"center\">x</td></tr></table>".into(),
+            "<table><tr><td VALIGN=\"Top\">x</td></tr></table>".into(),
+            "<table><tr><td colspan=\"65\">x</td></tr></table>".into(),
+            "<table><tr><td rowspan=\"1000\">x</td></tr></table>".into(),
+        ]
+    }
+
+    /// 真实捕获与黄金参考的表格 HTML 在收紧前后逐字节相同 —— 这就是“产品输出未回归”的
+    /// 可复现证据（范围限于已纳入测试的数据与模型）。
+    #[test]
+    fn whitelist_tightening_leaves_the_committed_corpus_unchanged() {
+        let legacy = legacy_rules();
+        let corpus = committed_table_corpus();
+        assert!(corpus.len() >= 5, "语料太少，对比不成立: {}", corpus.len());
+        let mut changed = Vec::new();
+        for (label, input) in &corpus {
+            let before = sanitize_table_html_with(input, &legacy);
+            let after = sanitize_table_html_with(input, &TABLE_RULES);
+            if before != after {
+                changed.push(format!("{label}\n  before: {before}\n  after : {after}"));
+            }
+        }
+        assert!(
+            changed.is_empty(),
+            "收紧改变了以下真实/黄金/合成表格输出:\n{}",
+            changed.join("\n")
+        );
+    }
+
+    /// 上一条的“零差异”不能是因为对比本身永真。这里钉住：四种被收紧的取值在旧判据下必须
+    /// 留下、在新判据下必须丢弃；同时语料里真实出现过的合法 span 取值在新旧判据下都保留。
+    #[test]
+    fn the_before_after_comparison_is_discriminating() {
+        let legacy = legacy_rules();
+        for (input, dropped) in [
+            (
+                "<table><tr><td align=\"center\">x</td></tr></table>",
+                " align=\"center\"",
+            ),
+            (
+                "<table><tr><td VALIGN=\"Top\">x</td></tr></table>",
+                " valign=\"top\"",
+            ),
+            (
+                "<table><tr><td colspan=\"65\">x</td></tr></table>",
+                " colspan=\"65\"",
+            ),
+            (
+                "<table><tr><td rowspan=\"1000\">x</td></tr></table>",
+                " rowspan=\"1000\"",
+            ),
+        ] {
+            let before = sanitize_table_html_with(input, &legacy);
+            let after = sanitize_table_html_with(input, &TABLE_RULES);
+            assert!(
+                before.contains(dropped),
+                "旧判据必须保留 {dropped}: {before}"
+            );
+            assert!(
+                !after.contains(dropped),
+                "新判据必须丢弃 {dropped}: {after}"
+            );
+            assert_ne!(before, after, "对比在 {input} 上必须能分辨");
+        }
+        // 反向对照：合法取值在两侧都必须原样保留，否则“零差异”是解析器坏了而不是没越界。
+        let shared = "<table><tr><td colspan=\"3\" rowspan=\"2\">x</td></tr></table>";
+        assert_eq!(sanitize_table_html_with(shared, &legacy), shared);
+        assert_eq!(sanitize_table_html(shared), shared);
+    }
+
+    /// 模型能发出什么：从黄金产物自带的解码词表里取 span 上界，并断言词表里没有对齐属性。
+    /// 这把“真实表格不会超过 64 列”从口头承诺换成可复现的硬约束。
+    #[test]
+    fn the_golden_vocabulary_cannot_emit_a_removed_attribute() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let raw = std::fs::read_to_string(root.join("tests/fixtures/table-golden/manifest.json"))
+            .expect("golden manifest must be committed");
+        let doc: serde_json::Value = serde_json::from_str(&raw).expect("golden manifest is JSON");
+        let tokens = doc["vocabulary"]["tokens"]
+            .as_array()
+            .expect("vocabulary.tokens array");
+
+        let mut seen_spans: Vec<u32> = Vec::new();
+        let mut alignment_tokens: Vec<&str> = Vec::new();
+        for token in tokens {
+            let text = token.as_str().expect("token string");
+            if text.contains("align") {
+                alignment_tokens.push(text);
+            }
+            for name in ["colspan", "rowspan"] {
+                let needle = format!("{name}=\"");
+                let Some(at) = text.find(&needle) else {
+                    continue;
+                };
+                let digits: String = text[at + needle.len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
+                seen_spans.push(
+                    digits.parse().unwrap_or_else(|error| {
+                        panic!("bad {name} value in token {text:?}: {error}")
+                    }),
+                );
+            }
+        }
+
+        assert!(!seen_spans.is_empty(), "黄金词表应当含 span 属性 token");
+        let min_seen = *seen_spans.iter().min().expect("min span");
+        let max_seen = *seen_spans.iter().max().expect("max span");
+        assert!(
+            min_seen >= crate::output::table_whitelist::MIN_SPAN,
+            "词表下界 {min_seen} 低于新判据下界，会被误删"
+        );
+        assert!(
+            max_seen <= crate::output::table_whitelist::MAX_SPAN,
+            "模型能发出的最大 span {max_seen} 超出了收紧后的上界，上界改动会掉属性"
+        );
+        assert!(
+            alignment_tokens.is_empty(),
+            "黄金词表不应含对齐类 token: {alignment_tokens:?}"
+        );
+    }
+
+    /// 入库的前后对比产物必须是**活的**：输入仍能在当前语料里找到，前后输出仍能被当前
+    /// 判据重算出来。否则产物只是一张陈旧快照，不构成证据。
+    #[test]
+    fn the_saved_before_after_record_is_current() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let raw =
+            std::fs::read_to_string(root.join("tests/fixtures/table-whitelist-before-after.json"))
+                .expect("变更前后对比产物必须入库");
+        let doc: serde_json::Value = serde_json::from_str(&raw).expect("对比产物是合法 JSON");
+        assert_eq!(doc["schema_version"].as_u64(), Some(1));
+        let records = doc["records"].as_array().expect("records array");
+
+        let legacy = legacy_rules();
+        let corpus = committed_table_corpus();
+        let mut unchanged = 0usize;
+        let mut tightened = 0usize;
+        for record in records {
+            let label = record["label"].as_str().expect("label");
+            let input = record["input"].as_str().expect("input");
+            let before = record["before"].as_str().expect("before");
+            let after = record["after"].as_str().expect("after");
+            let verdict = record["verdict"].as_str().expect("verdict");
+            if let Some((_, found)) = corpus.iter().find(|(known, _)| known == label) {
+                assert_eq!(
+                    found, input,
+                    "记录 {label} 的输入与当前语料不一致（产物陈旧）"
+                );
+            } else {
+                assert!(
+                    label.starts_with("constructed/"),
+                    "记录 {label} 既不是语料也不是构造样本"
+                );
+            }
+            assert_eq!(
+                sanitize_table_html_with(input, &legacy),
+                before,
+                "记录 {label} 的 `before` 与旧判据重算结果不一致"
+            );
+            assert_eq!(
+                sanitize_table_html(input),
+                after,
+                "记录 {label} 的 `after` 与生产判据重算结果不一致"
+            );
+            match verdict {
+                "unchanged" => {
+                    assert_eq!(before, after, "记录 {label} 声称不变却有差异");
+                    unchanged += 1;
+                }
+                "tightened" => {
+                    assert_ne!(before, after, "记录 {label} 声称收紧却无差异");
+                    tightened += 1;
+                }
+                other => panic!("记录 {label} 的 verdict 未知: {other:?}"),
+            }
+        }
+        assert!(unchanged >= 3, "真实/黄金语料的对比记录太少: {unchanged}");
+        assert!(
+            tightened >= 1,
+            "必须至少留一条 before != after 的记录，证明对比有分辨力"
+        );
+    }
+
+    /// 重生成 `tests/fixtures/table-whitelist-before-after.json`。判据或语料变更后手工跑一次：
+    /// `cargo test --lib whitelist_before_after -- --ignored`。
+    #[test]
+    #[ignore = "写入入库产物；只在白名单判据或表格语料变更后手工执行"]
+    fn whitelist_before_after_record_regeneration() {
+        use serde_json::json;
+
+        const NOTE: &str = "审核点 5 的变更前后对比证据：input 是仓库内真实捕获 / 黄金参考的表格 HTML（或标为 constructed 的构造样本）；before 由收紧前的 Rust 引擎判据（align/valign 放行、span 1..=1000）、after 由生产判据在同一份解析内核（src/output/html.rs 的 sanitize_table_html_with）上算出。守卫用例 the_saved_before_after_record_is_current 会重算并比对，产物陈旧即失败。确认范围：已纳入测试的数据与模型，不是任意输入。页面 JS 侧的改动（标签集 11→28、colspan 下界 >1→>=1）不走这个内核，由 fingerprint 测试与 node tools/check-page-result-contract.mjs 守住，不在本产物范围内。";
+
+        let legacy = legacy_rules();
+        let records: Vec<_> = recorded_samples()
+            .into_iter()
+            .map(|(label, input)| {
+                let before = sanitize_table_html_with(&input, &legacy);
+                let after = sanitize_table_html_with(&input, &TABLE_RULES);
+                json!({
+                    "label": label,
+                    "input": input,
+                    "before": before,
+                    "after": after,
+                    "verdict": if before == after { "unchanged" } else { "tightened" },
+                })
+            })
+            .collect();
+        let doc = json!({
+            "schema_version": 1,
+            "note": NOTE,
+            "legacy_rules": {
+                "span_attrs": ["rowspan", "colspan"],
+                "min_span": 1,
+                "max_span": 1000,
+                "enum_attrs": ["align", "valign"],
+            },
+            "current_rules": {
+                "span_attrs": crate::output::table_whitelist::ALLOWED_TABLE_ATTRS,
+                "min_span": crate::output::table_whitelist::MIN_SPAN,
+                "max_span": crate::output::table_whitelist::MAX_SPAN,
+                "enum_attrs": [],
+            },
+            "records": records,
+        });
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/table-whitelist-before-after.json");
+        std::fs::write(
+            &path,
+            format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()),
+        )
+        .expect("write the before/after record");
+        println!("wrote {} records to {}", records.len(), path.display());
     }
 }

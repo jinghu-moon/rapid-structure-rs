@@ -279,8 +279,10 @@
   `sanitize_attrs` 用 `ALLOWED_TABLE_ATTRS.contains` + `MIN_SPAN..=MAX_SPAN` 判据重写。
 - **产品可见的收紧（破坏性，但更安全）**：① 引擎与页面标签集统一为引擎的 28 标签集（含 `html`/`body`
   外壳，页面因此从原 11 标签扩集；未引入任何新增可执行标签/属性）；② `align`/`valign` 按安全交集移出
-  白名单（真实发射器从不产出它们，仅保留 `colspan`/`rowspan`）；③ 引擎 span 上界由 1000 收紧到 64，与页面对齐；
+  白名单（仅保留 `colspan`/`rowspan`）；③ 引擎 span 上界由 1000 收紧到 64，与页面对齐；
   ④ 页面 `colspan` 下界由 `>1` 改为 `>=1`，与引擎的 `[1,64]` 一致，保证双重净化幂等。
+  本批当时只给了“新规则生效”的边界测试；“不影响真实输出”的确认范围与前后对比证据由后面的
+  **白名单收紧的前后对比证据（审核点 5）** 一节补上（注：① 与 ④ 对页面而言是**放宽**，不是收紧）。
 - 新增用例：span 边界（1✓ / 64✓ / 65✗ / 1000✗）、`align`/`valign` 拒绝、转义字节对照、fingerprint 三份对拍。
 
 ## 评测域字节摘要单点化（P1-8，未发布）
@@ -380,6 +382,30 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
   并证明报告里的字段是**内容**摘要而不是路径摘要（同一记录换键顺序/空白写法→摘要必变、
   记录条数没有变），并断言它与库内单点逐字相等。用例不依赖模型资产；`formula_eval` 目标
   自己的用例从 14 条增长到 15 条（lib 734 不变）。
+
+## 白名单收紧的前后对比证据（审核点 5，未发布）
+
+对应外部审核结论第 5 条（中）：P1-6 的白名单收紧有边界测试，但“不会影响真实产品输出”的证据
+较弱，“真实表格没有超过 64 列”也只是 `[推算]`。本批不改变任何产品行为，只把结论换成可复现
+证据，并把确认范围明确限定为**已纳入测试的数据与模型**：
+
+- 判据从解析骨架里抽出来：`output::html` 新增私有 `SanitizerRules`（标签集 + span 属性 + 枚举属性），
+  `sanitize_table_html` 成为把判据固定为 `TABLE_RULES`（取自 `table_whitelist` 生成物）的薄封装，
+  真正的解析下沉为 `sanitize_table_html_with`。生产输出字节不变。
+- 测试侧 `legacy_rules()` 用**同一内核**复现收紧前的引擎判据（`align`/`valign` 放行、span `1..=1000`），
+  因此前/后之差只可能来自白名单本身，不掺入第二份实现的偏差。
+- 入库对比产物 `tests/fixtures/table-whitelist-before-after.json`：真实捕获表页（`p17-table-real.json`）
+  与黄金参考（`table-golden/manifest.json` 的 `reference.html`）的**变更前后完整 HTML**，另存 4 条
+  构造样本；守卫用例 `the_saved_before_after_record_is_current` 会重新加载语料、重算两侧并比对，
+  产物陈旧即失败；重生成走 `#[ignore]` 探针 `whitelist_before_after_record_regeneration`。
+- 新增用例：`whitelist_tightening_leaves_the_committed_corpus_unchanged`（仓库内全部真实/黄金/合成
+  表格 HTML 逐字节 before == after）、`the_before_after_comparison_is_discriminating`（钉住零差异不是恒真）、
+  `the_golden_vocabulary_cannot_emit_a_removed_attribute`（黄金词表 span token 取值 2..=20 ≤ 新上界 64，
+  且词表内无 `align`/`valign` token → 被删属性模型根本发不出来）。
+- **分开验收**：产品决策（收紧本身）与等价重构（判据参数化）不再混写；页面 JS 侧的改动
+  （标签集 11→28、colspan 下界 `>1`→`>=1`，属放宽）不经过 Rust 内核，仍由 fingerprint 三份对拍与
+  `node tools\check-page-result-contract.mjs` 验收，本组前后对比不覆盖它。
+- lib 测试 734 → 738（新增 4 条非 ignored 用例），另加 1 条 `#[ignore]` 重生成探针；serve 并行 / 串行仍 289。
 
 ## 已知限制
 

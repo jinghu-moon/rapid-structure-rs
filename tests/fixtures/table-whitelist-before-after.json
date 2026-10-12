@@ -1,0 +1,76 @@
+{
+  "current_rules": {
+    "enum_attrs": [],
+    "max_span": 64,
+    "min_span": 1,
+    "span_attrs": [
+      "colspan",
+      "rowspan"
+    ]
+  },
+  "legacy_rules": {
+    "enum_attrs": [
+      "align",
+      "valign"
+    ],
+    "max_span": 1000,
+    "min_span": 1,
+    "span_attrs": [
+      "rowspan",
+      "colspan"
+    ]
+  },
+  "note": "审核点 5 的变更前后对比证据：input 是仓库内真实捕获 / 黄金参考的表格 HTML（或标为 constructed 的构造样本）；before 由收紧前的 Rust 引擎判据（align/valign 放行、span 1..=1000）、after 由生产判据在同一份解析内核（src/output/html.rs 的 sanitize_table_html_with）上算出。守卫用例 the_saved_before_after_record_is_current 会重算并比对，产物陈旧即失败。确认范围：已纳入测试的数据与模型，不是任意输入。页面 JS 侧的改动（标签集 11→28、colspan 下界 >1→>=1）不走这个内核，由 fingerprint 测试与 node tools/check-page-result-contract.mjs 守住，不在本产物范围内。",
+  "records": [
+    {
+      "after": "<html><body><table><tbody><tr><td>Methods</td><td>R</td><td>P</td><td>F</td><td>FPS</td></tr><tr><td>SegLink [26] PixelLink [4] TextSnake [18] TextField [37]</td><td>70.0 73.2 73.9 75.9 76.7 77.1 81.7 78.2</td><td>86.0 83.0 83.2 87.4 87.4 87.6 84.2</td><td>77.0 77.8 78.3 81.3 81.7</td><td>8.9 1.1 5.2</td></tr></tbody></table></body></html>",
+      "before": "<html><body><table><tbody><tr><td>Methods</td><td>R</td><td>P</td><td>F</td><td>FPS</td></tr><tr><td>SegLink [26] PixelLink [4] TextSnake [18] TextField [37]</td><td>70.0 73.2 73.9 75.9 76.7 77.1 81.7 78.2</td><td>86.0 83.0 83.2 87.4 87.4 87.6 84.2</td><td>77.0 77.8 78.3 81.3 81.7</td><td>8.9 1.1 5.2</td></tr></tbody></table></body></html>",
+      "input": "<html><body><table><tbody><tr><td>Methods</td><td>R</td><td>P</td><td>F</td><td>FPS</td></tr><tr><td>SegLink [26] PixelLink [4] TextSnake [18] TextField [37]</td><td>70.0 73.2 73.9 75.9 76.7 77.1 81.7 78.2</td><td>86.0 83.0 83.2 87.4 87.4 87.6 84.2</td><td>77.0 77.8 78.3 81.3 81.7</td><td>8.9 1.1 5.2</td></tr></tbody></table></body></html>",
+      "label": "json-output/p17-table-real.json#/regions/73/table/html",
+      "verdict": "unchanged"
+    },
+    {
+      "after": "<table><tbody><tr><td>Methods</td><td>R</td><td>P</td><td>F</td><td>FPS</td></tr><tr><td>SegLink [26] PixelLink [4] TextSnake [18] TextField [37]</td><td>70.0 73.2 73.9 75.9 76.7 77.1 81.7 78.2</td><td>86.0 83.0 83.2 87.4 87.4 87.6 84.2</td><td>77.0 77.8 78.3 81.3 81.7</td><td>8.9 1.1 5.2</td></tr></tbody></table>",
+      "before": "<table><tbody><tr><td>Methods</td><td>R</td><td>P</td><td>F</td><td>FPS</td></tr><tr><td>SegLink [26] PixelLink [4] TextSnake [18] TextField [37]</td><td>70.0 73.2 73.9 75.9 76.7 77.1 81.7 78.2</td><td>86.0 83.0 83.2 87.4 87.4 87.6 84.2</td><td>77.0 77.8 78.3 81.3 81.7</td><td>8.9 1.1 5.2</td></tr></tbody></table>",
+      "input": "<table><tbody><tr><td>Methods</td><td>R</td><td>P</td><td>F</td><td>FPS</td></tr><tr><td>SegLink [26] PixelLink [4] TextSnake [18] TextField [37]</td><td>70.0 73.2 73.9 75.9 76.7 77.1 81.7 78.2</td><td>86.0 83.0 83.2 87.4 87.4 87.6 84.2</td><td>77.0 77.8 78.3 81.3 81.7</td><td>8.9 1.1 5.2</td></tr></tbody></table>",
+      "label": "json-output/p17-table-real.json#/regions/73/table/table_html",
+      "verdict": "unchanged"
+    },
+    {
+      "after": "<html><body><table><tbody><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr></tbody></table></body></html>",
+      "before": "<html><body><table><tbody><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr></tbody></table></body></html>",
+      "input": "<html><body><table><tbody><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td></tr></tbody></table></body></html>",
+      "label": "table-golden/manifest.json#/reference/html/joined",
+      "verdict": "unchanged"
+    },
+    {
+      "after": "<table><tr><td>x</td></tr></table>",
+      "before": "<table><tr><td align=\"center\">x</td></tr></table>",
+      "input": "<table><tr><td align=\"center\">x</td></tr></table>",
+      "label": "constructed/0",
+      "verdict": "tightened"
+    },
+    {
+      "after": "<table><tr><td>x</td></tr></table>",
+      "before": "<table><tr><td valign=\"top\">x</td></tr></table>",
+      "input": "<table><tr><td VALIGN=\"Top\">x</td></tr></table>",
+      "label": "constructed/1",
+      "verdict": "tightened"
+    },
+    {
+      "after": "<table><tr><td>x</td></tr></table>",
+      "before": "<table><tr><td colspan=\"65\">x</td></tr></table>",
+      "input": "<table><tr><td colspan=\"65\">x</td></tr></table>",
+      "label": "constructed/2",
+      "verdict": "tightened"
+    },
+    {
+      "after": "<table><tr><td>x</td></tr></table>",
+      "before": "<table><tr><td rowspan=\"1000\">x</td></tr></table>",
+      "input": "<table><tr><td rowspan=\"1000\">x</td></tr></table>",
+      "label": "constructed/3",
+      "verdict": "tightened"
+    }
+  ],
+  "schema_version": 1
+}
