@@ -198,16 +198,18 @@ fn ort_error<E: std::fmt::Display>(error: E) -> RapidOcrError {
 }
 
 impl OrtSession {
-    /// Opens an ONNX model without domain contract validation.
+    /// 不经凭证的会话构造入口 —— **只给测试与探针用**（复审 P1-2）。
     ///
-    /// 优化级别、线程、provider 与 `dimension_overrides` 都只在 [`open_session`] 里施加一次。
-    /// Domain sessions must call [`Self::probe_io`] and validate their typed
-    /// contract through [`crate::runtime::contracts`].
+    /// 可见性与存在性一起收窄：`pub(crate)` + `#[cfg(test)]`。生产构建里这个函数**不存在**，
+    /// crate 外部也拿不到它 —— 库的使用者能用的会话构造入口只有 [`Self::open_verified`]，
+    /// 它只接受 [`VerifiedModel`]，把“被校验的内容”与“被加载的内容”钉成同一份字节。
     ///
-    /// 本入口把路径读成字节再交给 ORT（与 [`Self::open_verified`] 同一条加载链），
-    /// 仅用于测试夹具与没有凭证可用的探针场景；生产会话一律用 [`Self::open_verified`]，
-    /// 它把“被校验的内容”与“被加载的内容”钉成同一份字节（[`VerifiedModel`]）。
-    pub fn open_unchecked(
+    /// 优化级别、线程、provider 与 `dimension_overrides` 都只在 [`open_session`] 里施加一次
+    /// （本入口与 [`Self::open_verified`] 汇到同一条字节加载链 [`Self::open_bytes`]）。
+    /// 域契约验证不在这里：域会话必须自己调 [`Self::probe_io`] 并经
+    /// [`crate::runtime::contracts`] 校验各自的 typed contract。
+    #[cfg(test)]
+    pub(crate) fn open_unchecked(
         model_path: &Path,
         runtime_cfg: &RuntimeConfig,
         dimension_overrides: &[DimensionOverride],
@@ -217,6 +219,9 @@ impl OrtSession {
     }
 
     /// 从**已验证内容**打开会话（审核点 1：校验对象 = 加载对象）。
+    ///
+    /// 这是公开面上**唯一**的会话构造入口（复审 P1-2）：不经凭证的那条已经收回
+    /// crate 内部且只在测试构建里存在。
     ///
     /// 模型字节来自 [`VerifiedModel::content`]（凭证构造那一刻的快照），而不是重新打开
     /// [`VerifiedModel::path`]：校验与打开之间文件被替换时，这里加载的仍是校验过的那份。
@@ -234,7 +239,7 @@ impl OrtSession {
         )
     }
 
-    /// 字节加载的唯一出口：`open_unchecked` / `open_verified` 都汇到这里。
+    /// 字节加载的**唯一**出口：`open_unchecked`（测试专用）/ `open_verified` 都汇到这里。
     fn open_bytes(
         model_path: &Path,
         model_bytes: &[u8],
@@ -748,21 +753,39 @@ mod tests {
     /// 2. `run_raw` 的第一个参数是 `&'s mut Session`（覆盖第一处）；
     /// 3. 每个 `pub fn run_` 的接收者都是 `&mut self`（覆盖第二处）。
     ///
-    /// 第 1 条只扫 `#[cfg(test)]` 之前的部分：测试代码里可以出现任意字样，而这条不变量
-    /// 是关于生产代码的。
+    /// 第 1 条只扫**测试模块之前**的部分：测试代码里可以出现任意字样，而这条不变量是关于
+    /// 生产代码的。边界认“cfg 测试门 + 紧跟一个模块声明”这个形状，不认“第一个 cfg 测试门”：
+    /// 生产代码中间可以合法地出现被单独关住的项（复审 P1-2 收回 crate 内部的测试专用
+    /// `open_unchecked`），拿它当分界会把后面的整段生产代码丢掉。
     #[test]
     fn every_run_entrance_takes_an_exclusive_borrow() {
         let source = include_str!("session.rs");
 
         // 探针字符串由碎片拼出：`include_str!` 会把本文件读进来，直接写字面量会让下面每条
         // 断言命中测试自己。
-        let test_marker = ["#[cfg", "(test)]"].concat();
-        let production = source
-            .split(&test_marker)
-            .next()
-            .expect("`split` always yields at least one part");
+        let gate_prefix = ["#[cfg", "("].concat();
+        let lines = source.lines().collect::<Vec<_>>();
+        let tests_gate = lines
+            .iter()
+            .enumerate()
+            .find_map(|(index, line)| {
+                let trimmed = line.trim();
+                if !(trimmed.starts_with(&gate_prefix) && trimmed.contains("test")) {
+                    return None;
+                }
+                let declaration = lines[index + 1..]
+                    .iter()
+                    .find(|next| !next.trim().is_empty())?
+                    .trim();
+                ["mod ", "pub mod ", "pub(crate) mod ", "pub(super) mod "]
+                    .iter()
+                    .any(|head| declaration.starts_with(head))
+                    .then_some(index)
+            })
+            .expect("this file must keep a cfg-gated test module declaration");
+        let production = lines[..tests_gate].join("\n");
         assert!(
-            production.len() < source.len(),
+            !production.is_empty() && production.len() < source.len(),
             "the scan must be limited to production code, otherwise it reads its own literals"
         );
 

@@ -146,6 +146,8 @@
 
 承接第一阶段，落地方案 P0-3 的**结构性不变量**：“强度由凭证决定，而不是由调用路径决定”，
 结构上不再存在“忘记校验”的旁路：
+（注：这一句在当时的完整度上**不成立** —— 会话构造器都改了，但 `OrtSession::open_unchecked`
+还是 `pub` 并随 `OrtSession` 对外可见，外部调用方可以整条绕过；该残留由复审 P1-2 关闭，见下文。）
 
 - **`VerifiedModel::verify` 加存在性优先守卫**：无论有没有期望，缺失文件都先返回
   `FileNotFound`（不再退化为“算不出摘要”的含混错误）。这条不变量此前分散在各域构造器，
@@ -435,6 +437,39 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
   靠那 4 条无模型守卫钉住。另有 2 条 `#[ignore]` 探针；serve 串行仍 289。
 - `api.rs` 两处策略文档同步写明“跨请求也成立”。本提交实跑了全套七项门禁（fmt / clippy /
   `--all-targets` / serve 串行 / serve_startup / 两个 node 检）均通过。
+
+## 不经凭证的会话入口收回 crate 内部（复审 P1-2，破坏性变更，未发布）
+
+对应复审结论第二条（P1）：`runtime::session::OrtSession::open_unchecked` 仍是 `pub`，并经
+`exports.rs` 随 `OrtSession` 一起对外可见。它直接读路径字节建 ORT 会话，不要求 `VerifiedModel`、
+也不做域契约验证：生产域会话确实全部走 `open_verified`，但库的使用者仍可整条绕过完整性边界。
+开发期没有兼容包袱，因此按建议把它从公开面拿掉，而不是把结论降级成“域会话入口不可绕过”。
+
+- `pub fn open_unchecked` → `#[cfg(test)] pub(crate) fn open_unchecked`：**可见性与存在性一起收窄**。
+  非测试构建里这个函数根本不存在（`cargo check --all-targets` 会连 lib/bin 的**非测试**目标一起编，
+  编过就是“生产代码里没人调用它”的编译期证据）；crate 外部也拿不到它。字节加载的汇合点
+  `open_bytes` 仍为私有，避免“绕开凭证”只是换个名字。
+- 公开面上的会话构造入口只剩 `OrtSession::open_verified(&VerifiedModel, …)`，`exports.rs` 就地写明这条边界。
+- `config.rs` 中 `effective_session_threads` 的文档不再指向一个公开方法（改说“测试侧的夹具 opener”），
+  否则那个 intra-doc 链接会指向私有项。
+- 新增回潮守卫 `tests/session_open_surface_guard.rs`（4 条非 `#[ignore]` 用例，不需模型资产）：
+  ① 定义必须是 `pub(crate)` 且紧邻其上的代码行只能是 cfg 测试门，出现 `pub fn open_unchecked` 即失败；
+  ② `src/` 里除定义外的每一处调用都必须落在本文件第一个 `#[cfg(…test…)] mod …` 之后（两个“整文件测试”
+     文件走白名单，其前提由第 ④ 条钉住；测试边界只认“门 + 模块声明”的形状，否则定义行自己的
+     `#[cfg(test)]` 会被误认成分界点）；③ 公开重导出面（`exports.rs` / `lib.rs`）不得出现 `unchecked`，
+     同时 `OrtSession` 必须仍可达（守卫针对的是**方法**，不是类型）；④ `test_support.rs` 与
+     `serve/tests.rs` 确实靠 cfg 测试门挂进构建。
+  判别力（均已实跑后精确还原）：把 `pub(crate)` 改回 `pub` → ①② 双失败；删掉 `#[cfg(test)]` 门 → ① 失败。
+- 连带动了一个既有的源码扫描守卫：`runtime/session.rs` 的 `every_run_entrance_takes_an_exclusive_borrow` 把
+  “第一个 `#[cfg(test)]`”当成生产/测试的分界，而新增的 cfg 门恰好在前 → 它把整段生产代码丢了，
+  `cargo test --all-targets` 直接报“`.run(inputs` 必须恰好两处”失败（全套门禁抓到的，不是事后补的）。
+  分界规则改为“cfg 测试门 + 紧跟模块声明”，即真正的测试模块边界。改后覆盖变强：把一个新的
+  `pub fn run_*(&self)` 入口插在 `open_unchecked` **之后**，旧规则看不见、新规则拦住（已实跑后还原）。
+- **结论范围**：至此“外部没有不经凭证的会话入口”就整个 crate 而言成立；不改变的是文件身份
+  判定的启发式性质与中段修改盲点（见上一节与 docs/12 §4.2）。
+- docs/12 附录 §10 的 `src/ocr/session.rs` 一行原文已过期（“`OcrSession::new` 不接收摘要，直接
+  `open_unchecked`”），本批更正，并在§10 开头说明：未被就地标注的行不代表对当前代码仍成立。
+- 测试计数：lib 仍 746 passed + 2 ignored；新增一个集成测试目标（4 条）。
 
 ## 已知限制
 

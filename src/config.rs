@@ -203,9 +203,9 @@ impl RuntimeConfig {
     /// 这份配置**实际**要求 ORT 会话使用的 `(intra_threads, inter_threads)`。
     ///
     /// 这是线程策略的**唯一实现**：引擎路径（[`crate::runtime::profile::RuntimeProfile::plan`]）
-    /// 与直接构造会话的路径（`FormulaSession` / `formula_bench` / `formula_eval` /
-    /// [`crate::runtime::session::OrtSession::open_unchecked`]）都调用这一个函数，
-    /// 因此同一个公开字段在所有入口处只有一种含义。
+    /// 与直接构造会话的路径（`FormulaSession` / `formula_bench` / `formula_eval`，以及
+    /// 测试侧的夹具 opener）都调用这一个函数，因此同一个公开字段在所有入口处
+    /// 只有一种含义。
     ///
     /// 语义：
     ///

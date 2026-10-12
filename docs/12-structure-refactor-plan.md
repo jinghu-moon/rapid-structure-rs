@@ -435,6 +435,8 @@ powershell -File tools\run_windows_baseline.ps1
   `manifest.json` 按 `role=table_structure` 取期望摘要，再委托 `verify_sha256`；`src/table/structure.rs:347` 在**创建任何 ORT 会话之前**调用它。
 - **文本没有这一层**：`src/ocr/session.rs:40-50` 的 `OcrSession::new(model_path, runtime_cfg, kind)` 不接收摘要，
   直接 `OrtSession::open_unchecked`；文本模型的完整性只在服务准入/下载层保证。
+  （**现状记录，已修**：P0-3 二阶段把会话构造器改为收 `&VerifiedModel`；而“外部调用方仍可用
+  `open_unchecked` 整条绕过”这一残留由复审 P1-2 关闭，见 §9 与本文件末尾的更新。）
 - 同一条件两条文案（`src/api.rs:689` vs `rapid_structure.rs:1286`）。
 
 **根因（评审一.3 的表述）**
@@ -1284,6 +1286,7 @@ node tools\check-page-result-contract.mjs
 | 随时 · P1-8 | （本批） | `evaluation/digest.rs` 单点 `digest_hex`，三处改调（含 run 侧第二处同形内联 engine_fingerprint） | 行为等价；已知答案向量 + digest_file 一致性旁证；sampling/fixture 既有 manifest 测试不变 | lib 730（新增 2 条旁证）、serve 串行 289、全套件测试通过（r6 回正：当时写的是“全套件无回归”） | §8.1/§8.2 全绿（本次提交） | `bin/formula_eval:1134` 是审计未列入的**第四处生产拷贝**（bin 链接公开 `evaluation::digest` 可达），本批按"不超规模"裁决未动，后续候选（**审核点 4 已并入，见下一行**）；测试内的 sha256_hex 参照实现（model_store/json/formula-preprocess golden）有意不合并 |
 | 随时 · P1-8（审核点 4 补齐） | 审核修复批 | `src/bin/formula_eval.rs`：`compare_with_reference` 的内联 `Sha256` 块改调 `evaluation::digest::digest_hex`（并删去局部 `use sha2::{Digest, Sha256}`）；新增用例 `the_reference_digest_goes_through_the_single_digest_helper` | 语义比对逐字同形（同算法、`format!("{:x}")` 小写 64 字符、同一 `raw.as_bytes()` 输入），报告字节不变；用例同侧钉住：① 两个预定答案向量（与任意 SHA-256 实现可重算）；② 同一记录换键顺序/空白写法 → 摘要必变而记录条数不变（证明钉的是内容不是路径）；③ 与单点 `digest_hex` 逐字相等 | 迁移前该字段由本地内联产生（已用 `git show` 比对旧实现确认算法/编码一致）；新用例直接跑 `compare_with_reference`，不依赖模型资产 | §8.1 全套（本批提交） | 分片合并的 `same_source()` 判据本身已有用例（`reference_comparison_aggregates_across_shards`），本批不重复；测试内的 `TempGuard` 是 bin 局部最小临时目录工具（库内 `test_support` 是 `#[cfg(test)]` 私有，bin 不可用）；M-5（`formula_eval.rs` 骨架下沉）仍按 §5 暂缓 |
 | 会话缓存键 · 复审 P1-1 | 复审修复批 | `ocr/pipeline/rapid_structure.rs`：三个懒加载会话的键由 `FileIdentity` 改为 `SessionCacheKey { identity, declared }`，重建判定收口到唯一判据 `needs_rebuild`；三处构造点（公式识别器/公式检测器/表格会话）同步。`model_verify.rs` 新增 `normalize_expected_sha256` 单点，`api.rs` 策略文档补写“跨请求也成立” | 原契约漏洞：声明只在**重建分支**被读，所以“热会话 + 同一路径 + 换一个错误摘要”会让新声明静默通过（审核给的三步复现序列在旧实现下不会报错）；声明进入键后即按这次的声明重校。`declared` 经规范化只折叠 `verify` 本来就忽略的大小写；trim/去前缀会把两个**不同判定**折叠成同一个键，等于保留同一类洞 | lib 738 → 746（新增 8 条 = `model_verify` 规范化同形 1 + 无模型判据 4 + 需真实模型的端到端 3）、serve 并行/串行 289 | §8.1 全套七项实跑全 0（本批提交：fmt / clippy `--all-targets --features serve -D warnings` / `--all-targets` / serve 串行 / serve_startup / 两个 node 检） | 判别力：把 `needs_rebuild` 改回“只看身份”后 5 条新用例**全部失败**（已实跑后精确还原）。残余盲点不变：体积/mtime 写回原值的**中段修改**仍属启发式盲区（§4.2 已登记），本批不把它描述成安全边界；3 条端到端用例缺资产时提前返回（静默跳过），故判据另由 4 条无模型守卫钉住 |
+| 不经凭证的会话入口 · 复审 P1-2 | 复审修复批 | `runtime/session.rs`：`pub fn open_unchecked` → `#[cfg(test)] pub(crate) fn open_unchecked`；`exports.rs` 写明公开面上只剩 `open_verified`；`config.rs` 的 `effective_session_threads` 文档去掉指向它的 intra-doc 链接；新增 `tests/session_open_surface_guard.rs`（4 条）；更正 §10 里 `src/ocr/session.rs` 那一行已过期的结论 | 审核点：生产域会话虽全走 `open_verified`，但外部调用方仍可直接拿 `OrtSession::open_unchecked(path, …)` 整条绕过完整性边界，所以 P0-3 二阶段写的“结构上不存在忘记校验的旁路”当时并不成立。开发期无兼容约束，按建议从公开面拿掉，而不是把结论降级为“域会话入口不可绕过”。编译器保证两件事（crate 外拿不到 + 非测试构建里不存在），守卫保证第三件事（不许改回公开） | 判别力（实跑后精确还原）：改回 `pub` → 守卫 ①② 双失败；删 `#[cfg(test)]` 门 → ① 失败。`cargo check --all-targets` 能过 = 非测试目标里没人调用它（守卫 ② 的编译期对拍）。连带修正既有守卫 `every_run_entrance_takes_an_exclusive_borrow` 的分界：它拿“第一个 cfg 测试门”当生产/测试边界，新增的门恰好在前 → `--all-targets` 报“`.run(inputs` 必须恰好两处”失败（门禁抓到）；改成“门 + 紧跟模块声明”后覆盖反而变强 | lib 仍 746 passed + 2 ignored；新增集成测试目标 `session_open_surface_guard`（4 条，不需模型）；§8.1 全套（本批提交） | 守卫是源码扫描（与 `exports_dead_code_guard`、`serve/mod.rs` 的 `dependency_boundary` 同族，不引入 trybuild 类依赖）：它钉的是名字与形状，不是链接器视图；若彻底删掉 `open_unchecked`，本守卫与它共存亡。不改变：文件身份仍是启发式，中段修改盲点照旧（§4.2） |
 | 记录回正（审核结论末段 · r6） | 审核修复批 | `log.txt`（本地总结，未跟踪）：标题"提交总览（12 次）"与实际 13 行的矛盾 → 按列表计数并补入 r1–r5（共 18 次）；"serve 289 恒绿，零回归" → 拆成可复现表述；"计划内全部任务完成" → 限定为修订后清单；P1-6 的 `[推算]` 与"4 项收紧" → 指向 `1fbdb6d` 的前后对比证据 + "引擎收紧/页面放宽"分开验收；新增"审核修复批 r1–r5"一节逐条列事实与未修边界 | 逐条与 `git log`、§9 各行、CHANGELOG 对拍；测试数演进 712→…→734→738（lib 738 passed + 2 ignored、serve 并行/串行 289、`formula_eval` 15） | 本批仅改文档（含未跟踪的 log.txt），源码与 `1fbdb6d` 字节一致，未重跑全套七项；只跑 fmt --check 与两个 node 检 | "零回归"与"串行恒绿"这两个措辞在任何跟踪文档里都不再出现；"确认范围 = 已纳入测试的数据与模型"已写进 §4.2/§9 与本行 |
 
 ---
@@ -1291,6 +1294,10 @@ node tools\check-page-result-contract.mjs
 ## 10 附录：证据索引
 
 `[实测]` = 本文作者读过原文（含评审 `m01562` 提出、我已复验的行）；`[审计]` = 四份只读审计报告给出、动手前需再核。
+
+本索引钉的是**动手分析当时**的代码现状（行号也一样会漂）；后续批次改写过的结论以 §9 为准。
+已被后续批次推翻的行就地标注（目前：`src/ocr/session.rs` 一行由复审 P1-2 更正）；
+未被标注的行**不代表它对当前代码仍成立**，引用前请重读原文。
 
 | 文件 | 行 | 结论 | 级别 |
 | --- | --- | --- | --- |
@@ -1307,7 +1314,7 @@ node tools\check-page-result-contract.mjs
 | `src/table/registration.rs` | 144-156 | `verify_registered_model`：从 `manifest.json` 推导可信期望摘要并委托 `verify_sha256`（**不是重复封装**） | `[实测]` |
 | `src/formula/recognizer.rs` | 87 / 90-101 | 默认 `from_model` 传 `None`；`from_model_with_hash` 已调用 `verify_sha256` | `[实测]` |
 | `src/formula/detect.rs` | 108 / 117-125 | 同上（对称入口） | `[实测]` |
-| `src/ocr/session.rs` | 40-50 | `OcrSession::new` 不接收摘要，直接 `open_unchecked`（文本路径无凭证） | `[实测]` |
+| `src/ocr/session.rs` | 44-51 | `OcrSession::new` 收 `&VerifiedModel` 并走 `open_verified`；本行原文写的是**重构前现状**（“不接收摘要，直接 `open_unchecked`”），已于复审 P1-2 更正 —— 那条不经凭证的入口现在是 `pub(crate)` + `#[cfg(test)]` | `[实测]` |
 | `src/evaluation/stats.rs` | 1-5 / 10-18 / 42-57 / 87 | 模块自述"避免每个 bin 各写一套"、字段无 p90、线性插值、既有断言 | `[实测]` |
 | `src/evaluation/table/run.rs` | 1526-1545 / 1582 | 最近秩 `summarize`、只验自洽未对拍 | `[实测]` |
 | `src/bin/bench_warm_e2e.rs` | 252-259 | 第三份统计口径（中位 + 最近秩） | `[实测]` |

@@ -115,6 +115,8 @@ pub use crate::runtime::provider::{
     ProviderResolution, ResolvedExecutionProvider, format_provider_preference, ort_runtime_version,
     resolve_execution_providers,
 };
+// 会话类型仍然对外可见，但公开面上只能**用凭证开会话**（`OrtSession::open_verified`）：
+// 不经凭证的那条 opener 已收回 crate 内部、且只在测试构建里存在（复审 P1-2）。
 pub use crate::runtime::session::OrtSession;
 pub use crate::runtime::timing::{LedgerConservation, LedgerShares, TimingLedger};
 // 表格识别域（`src/table/`）在 `lib.rs` 里是**私有** `mod table;`（E9 接线前不对外承诺
