@@ -565,6 +565,14 @@ pub struct RapidOcrEngine {
 /// 声明按 [`crate::model_verify::normalize_expected_sha256`] 折叠大小写（校验本来就是
 /// 忽略大小写的），此外不做任何加工。键不能比判定更宽松：把带空白、带前缀的写法折叠成
 /// 同一个键，等于让第二个错误声明因为命中缓存而根本不参与比对。
+///
+/// # 键里的文件身份是启发式，不是安全边界
+///
+/// `identity` 只能说“**没有观察到变化**”：体积与 mtime 写回原值、首尾 64 KiB 保持不变的
+/// **中段修改**仍在盲区里（登记于 [`crate::model_verify::FileIdentity`]）。声明摘要进入键
+/// 保证的是“给出摘要即校验”这条契约跨请求也成立，**不保证**磁盘上的字节与那个摘要一致；
+/// 把“被校验的”与“被使用的”钉成同一份字节的是 [`crate::model_verify::VerifiedModel`] 持有的
+/// 内容快照（会话一律从它打开）。不得把本缓存描述成内容完整性证明。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionCacheKey {
     /// 文件身份：路径 + 体积 + mtime + 首尾各 64 KiB 的局部摘要。

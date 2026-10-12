@@ -533,6 +533,35 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
   `cargo test --bin rapidstruct --features serve -- --test-threads=1`（serve 289）、
   `cargo test --test serve_startup … -- --test-threads=1`、两个 node 检（页面结果契约 / 白名单 `--check`）。
 
+## 记录回正：不可绕过措辞与缓存盲点的范围（复审末段，未发布）
+
+对应复审结论末段：“该缓存机制仍明确承认中间区域修改的残余盲点；这属于已登记的启发式限制，
+**不应被表述为安全边界**”，以及 P1-2 那一节里“结构上不可绕过”的历史写法。本批**不改行为**，
+只把措辞收到事实范围内：
+
+- `src/model_verify.rs`：`FileIdentity` 的文档原写“相等即‘缓存里的摘要仍然描述这个文件’”——
+  那把启发式说成了内容完整性证明。改为“相等 = **没有观察到变化**”，并写明中段修改（同体积 +
+  同 mtime + 首尾 64 KiB 保持不变）仍在盲区，要把“被校验的”与“被使用的”钉成同一份字节必须走
+  `VerifiedModel` 持有的内容快照。
+- `src/ocr/pipeline/rapid_structure.rs`：`SessionCacheKey` 文档新增一节“键里的文件身份是启发式，
+  不是安全边界”：声明摘要进入键保证的是“给出摘要即校验”跨请求也成立，**不保证**磁盘字节与摘要一致。
+- `docs/12` §5：P0-3 目标设计里“结构上不存在‘忘记校验’的旁路”就地标注为**设计目标**（该句在
+  P0-3 二阶段→ `86cc76e` 之间不成立，因为 `open_unchecked` 当时仍 `pub` 且对外可见）；P1-2
+  （`LazyModel`）设计里的“同一身份判据”就地标注为已被复审 P1-1 推翻，并登记 `LazyModel<T>` **至今未实施**
+  （字段仍内联在 `RapidOcrEngine` 上），将来实施时键必须带声明摘要。§10 前言的“已就地标注”清单同步。
+- `docs/12` §9：补齐两行列数（“门禁可信性”与“记录回正 r6”两行此前只有 6 个单元格而表头是 7 列，
+  渲染时最后一列会错位）；新增本批一行。内容本身未翻：只拆了列，没改事实。
+- `log.txt`（本地总结，未跟踪）：新增“第二轮复审（q1–q5）”一节；并改掉两行过期事实：
+  “末次全套七项门禁在 `1fbdb6d` 上跑通 / lib 738” → 记到最新一次；“已登记未修项：`Scripted.formulas()`
+  的下标断言” → 标注已由 `de44a40` 闭合。
+- 本批改动会重编 lib，因此重跑全套七项均为 0（fmt / clippy `--all-targets --features serve -D warnings` /
+  `--all-targets` / serve 串行 / serve_startup / 两个 node 检）；另跑 `cargo doc --no-deps --features serve`
+  （退出 0）：仓库本身带 67 条 rustdoc 警告（指向私有项的链接与既有 unresolved link），逐条筛查后
+  **没有一条**指向本批新增的 `FileIdentity` / `SessionCacheKey` / `VerifiedModel` 链接 —— 这是“新增链接
+  可解析”，不是“仓库文档无警告”。测试计数不变（lib 747 passed + 2 ignored、serve 并行/串行 289）。
+- **未改变的事实范围**：中段修改仍是已登记的启发式盲点，本批没有加新的检测手段（全文件哈希或
+  内容快照比对都是独立的性能预算决策）；`log.txt` 未跟踪，不能当作仓库门禁证据。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、
