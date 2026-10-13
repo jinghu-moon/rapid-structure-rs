@@ -758,7 +758,7 @@ impl RapidOcrEngine {
     fn recognize_text(&mut self, request: crate::api::OcrRequest) -> Result<crate::api::OcrOutput> {
         use crate::api::{
             ClassifierPolicy, OcrRegion, RegionSource, StageReport, StageState, StageTiming,
-            TextOrientation, WordKind,
+            TextOrientation,
         };
         if let Some(tile) = request.preprocess.tile {
             return self.recognize_tiled_request(request, tile);
@@ -869,14 +869,7 @@ impl RapidOcrEngine {
                                         p
                                     }),
                                 },
-                                kind: if matches!(
-                                    request.recognition.words,
-                                    crate::api::WordOutputMode::Chars
-                                ) {
-                                    WordKind::Char
-                                } else {
-                                    WordKind::Token
-                                },
+                                kind: request.recognition.words.kind_for(),
                             })
                             .collect()
                     }),
@@ -952,7 +945,7 @@ impl RapidOcrEngine {
                                             p
                                         }),
                                     },
-                                    kind: WordKind::Token,
+                                    kind: request.recognition.words.kind_for(),
                                 })
                                 .collect()
                         }),

@@ -273,11 +273,22 @@ pub(super) struct ServeContext {
 /// 字节用 `Arc<[u8]>` 持有：worker 与 HTTP 线程都只克隆这个引用，不复制图片。
 struct RetainedOcr {
     bytes: Arc<[u8]>,
-    max_side: Option<u32>,
-    /// 这个任务提交时请求的 `?table=`（E16.2）。**随任务一起保留**而不是在 worker 里
-    /// 重新读查询串：worker 只看得到任务，看不到那次 HTTP 请求，而"跑不跑表格阶段"
-    /// 必须在提交那一刻就被固定下来（否则重试或重新调度会静默换语义）。
-    table: bool,
+    /// 这个任务提交时**固定下来**的请求侧参数。随任务一起保留而不是在 worker 里
+    /// 重新读查询串：worker 只看得到任务，看不到那次 HTTP 请求，而"跑不跑表格阶段"、
+    /// "逐字框进不进载荷"必须在提交那一刻就被固定下来（否则重试或重新调度会静默换语义）。
+    params: OcrJobParams,
+}
+
+/// 一次 OCR 任务的请求侧参数（`?max_side=` / `?table=` / `?words=`）。
+///
+/// 打包成一个结构体而不是三个位置参数（同库内 `TableDecodeInput` 的理由）：这些量必须
+/// 来自**同一个请求**，位置参数会把"把 `table` 与 `words` 传反"变成一次静默的语义改变，
+/// 而类型相近的 `bool` / 枚举正是最容易传错的那一对。
+#[derive(Debug, Clone, Copy)]
+pub(super) struct OcrJobParams {
+    pub(super) max_side: Option<u32>,
+    pub(super) table: bool,
+    pub(super) words: WordOutputMode,
 }
 
 /// 任务存储 + 调度器 + 结果存储 + 保留的原图（同一把锁下的一个整体）。
@@ -1182,8 +1193,7 @@ impl ServeShared {
         &self,
         bytes: Vec<u8>,
         class: QueueClass,
-        max_side: Option<u32>,
-        table: bool,
+        params: OcrJobParams,
         reservation: Option<QueueReservation>,
         flow: &RequestFlow,
     ) -> Result<Value, ServeError> {
@@ -1226,8 +1236,7 @@ impl ServeShared {
             id.clone(),
             RetainedOcr {
                 bytes: Arc::from(bytes.into_boxed_slice()),
-                max_side,
-                table,
+                params,
             },
         );
         // 新任务可能把字节预算推过上限：`insert` 内部已经按"先释放原图、再淘汰任务"处理，
@@ -1668,14 +1677,11 @@ impl ServeShared {
     ///
     /// M3 起它**不**移除保留区里的字节（识别成功后 `/annotated.png` 还要用它）：
     /// 返回的是 `Arc` 克隆，图片本身一份都不复制。
-    fn retained_ocr(&self, id: &str) -> Option<(Arc<[u8]>, Option<u32>, bool)> {
-        lock(&self.jobs).originals.get(id).map(|retained| {
-            (
-                Arc::clone(&retained.bytes),
-                retained.max_side,
-                retained.table,
-            )
-        })
+    fn retained_ocr(&self, id: &str) -> Option<(Arc<[u8]>, OcrJobParams)> {
+        lock(&self.jobs)
+            .originals
+            .get(id)
+            .map(|retained| (Arc::clone(&retained.bytes), retained.params))
     }
 
     /// OCR worker 用：登记终态载荷并结算任务状态。
@@ -2574,7 +2580,7 @@ fn ocr_worker(runtime: Arc<ServeShared>) {
         // 写出终态行）。`wait_ms` 是排队代价：入队 → 真正开跑。
         runtime.log_running(&scheduled);
         // M3：原图留在保留区里（`/annotated.png` 还要用它），这里只克隆引用。
-        let Some((bytes, max_side, table)) = runtime.retained_ocr(&scheduled.id) else {
+        let Some((bytes, params)) = runtime.retained_ocr(&scheduled.id) else {
             // 只有取消能走到这里；防御性记录，绝不把任务永久留在 `Running`。
             runtime.finish(
                 &scheduled.id,
@@ -2586,14 +2592,7 @@ fn ocr_worker(runtime: Arc<ServeShared>) {
         // M5：后端调用时长由**这里**实测，并原样写进终态行（日志与 `/api/status` 的
         // `engine_load_ms` 一样是实测值，不是估算）。
         let backend_started = Instant::now();
-        let outcome = recognize(
-            &runtime,
-            &scheduled.id,
-            bytes,
-            max_side,
-            scheduled.class,
-            table,
-        );
+        let outcome = recognize(&runtime, &scheduled.id, bytes, scheduled.class, params);
         let backend_ms = u64::try_from(backend_started.elapsed().as_millis()).unwrap_or(u64::MAX);
         runtime.finish(&scheduled.id, outcome, backend_ms);
     }
@@ -2653,9 +2652,8 @@ fn recognize(
     runtime: &ServeShared,
     job_id: &str,
     bytes: Arc<[u8]>,
-    max_side: Option<u32>,
     class: QueueClass,
-    table: bool,
+    params: OcrJobParams,
 ) -> Outcome {
     let formula = match class {
         QueueClass::Text => FormulaPolicy::default(),
@@ -2668,7 +2666,7 @@ fn recognize(
     };
     // 表格阶段同理：路由可用（`?table=1` 已被准入层接受）却解析不到结构模型，说明模型集
     // 在运行期被改动了。用同源同值的 409 如实失败，而不是静默返回一份没有表格的结果。
-    let table_policy = if table {
+    let table_policy = if params.table {
         match runtime.table_policy() {
             Some(policy) => policy,
             None => return Outcome::Failed(409, runtime.table_missing_failure()),
@@ -2676,7 +2674,7 @@ fn recognize(
     } else {
         TablePolicy::default()
     };
-    let request = text_request(bytes, max_side, formula, table_policy);
+    let request = text_request(bytes, params.max_side, formula, table_policy, params.words);
 
     let output = match recognize_with(runtime, request) {
         Ok(output) => output,
@@ -2696,15 +2694,17 @@ fn recognize(
 /// 一次请求的输入 → [`OcrRequest`]（**唯一**实现：OCR worker 的两条管线与
 /// `POST /api/evaluate` 的批量路径共用）。
 ///
-/// `stages`/`preprocess`/`detection`/`recognition`/`output` 都是内建默认值：serve 的输入面
-/// 只有图像字节、`?max_side=`、队列类别与 `?table=`（§4.2），没有第二个能改变管线形状的
-/// 请求参数。`formula` 与 `table` 由调用方给出（都是"全部路径来自模型集与启动期解析"的
+/// `stages`/`preprocess`/`detection`/`output` 都是内建默认值：serve 的输入面只有图像字节、
+/// `?max_side=`、队列类别、`?table=` 与 `?words=`（§4.2）。`?words=` 是**输出档位**而不是
+/// 管线开关：它不改变跑哪些阶段，只决定 `recognition.words` 里给不给逐词/逐字框。
+/// `formula` 与 `table` 由调用方给出（都是"全部路径来自模型集与启动期解析"的
 /// 策略结构，请求体里不允许出现任何路径）。
 pub(super) fn text_request(
     bytes: Arc<[u8]>,
     max_side: Option<u32>,
     formula: FormulaPolicy,
     table: TablePolicy,
+    words: WordOutputMode,
 ) -> OcrRequest {
     OcrRequest {
         input: ImageInput::Encoded(bytes),
@@ -2716,9 +2716,7 @@ pub(super) fn text_request(
             ..PreprocessPolicy::default()
         },
         detection: DetectionPolicy::default(),
-        recognition: RecognitionPolicy {
-            words: WordOutputMode::Off,
-        },
+        recognition: RecognitionPolicy { words },
         output: OutputPolicy::default(),
         formula,
         table,

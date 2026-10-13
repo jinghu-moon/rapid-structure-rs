@@ -192,13 +192,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             };
             let mut engine = RapidOcrEngine::new(cfg)?;
             let bytes = std::fs::read(&img_path)?;
-            let word_mode = if chars {
-                WordOutputMode::Chars
-            } else if words {
-                WordOutputMode::Words
-            } else {
-                WordOutputMode::Off
-            };
+            let word_mode = word_mode_from_flags(words, chars);
             let format = if json { OutputFormat::Json } else { format };
             let mut request = make_request(bytes, word_mode, table.policy());
             request.formula = formula.policy();
@@ -294,6 +288,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+/// CLI 的两个开关 → 档位（**唯一**实现，便于测试）。
+///
+/// `--chars` 是 `--words` 的细化：两个都给时取更细的那一档（而不是报错也不是取 `words`），
+/// 因为逐字框包含了一个词的全部信息。档位名不在这里重新发明：结果必须与
+/// [`WordOutputMode::from_name`] 的三个写法逐一对应（serve 的 `?words=` 用的就是它）。
+fn word_mode_from_flags(words: bool, chars: bool) -> WordOutputMode {
+    if chars {
+        WordOutputMode::Chars
+    } else if words {
+        WordOutputMode::Words
+    } else {
+        WordOutputMode::Off
+    }
 }
 
 fn make_request(bytes: Vec<u8>, words: WordOutputMode, table: TablePolicy) -> OcrRequest {
@@ -487,4 +496,44 @@ pub(crate) fn evaluation_report_value(
         .map_err(|error| rapid_structure_rs::RapidOcrError::Decode(error.to_string()))?;
     rapid_structure_rs::evaluation::runtime_report::attach_runtime_fields(&mut report)?;
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{make_request, word_mode_from_flags};
+    use rapid_structure_rs::WordOutputMode;
+
+    /// CLI 与 HTTP 共用**同一份**档位词表（用户复审清单第 7 条）。
+    ///
+    /// 三个开关组合的结果必须能用 [`WordOutputMode::from_name`] 同名解析回来：
+    /// 哪天有人给 CLI 加了个 `--single-char` 之类的别名，而 serve 的 `?words=` 仍然只
+    /// 认三个写法，这个断言就会失败。这比"两边各自测自己的默认值"强：它直接钉住
+    /// 两个入口不可能给出不同档位。
+    #[test]
+    fn the_cli_flags_map_to_the_same_modes_as_the_query_parameter() {
+        for (words, chars, name) in [
+            (false, false, "off"),
+            (true, false, "words"),
+            (false, true, "chars"),
+            // `--chars` 更细，两个都给时取它（而不是 `--words`）。
+            (true, true, "chars"),
+        ] {
+            let from_flags = word_mode_from_flags(words, chars);
+            assert_eq!(
+                from_flags,
+                WordOutputMode::from_name(name).expect("the documented query vocabulary"),
+                "--words={words} --chars={chars}"
+            );
+            assert_eq!(from_flags.as_str(), name);
+        }
+    }
+
+    /// 档位真的进了请求而不是在参数里被丢掉（否则上面那个断言只能证明"算对了"）。
+    #[test]
+    fn the_word_mode_reaches_the_request_recognition_policy() {
+        for mode in WordOutputMode::ALL {
+            let request = make_request(Vec::new(), mode, Default::default());
+            assert_eq!(request.recognition.words, mode, "{}", mode.as_str());
+        }
+    }
 }

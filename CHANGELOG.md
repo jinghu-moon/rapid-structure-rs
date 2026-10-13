@@ -725,6 +725,59 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
   完整性边界使用。验收措辞的上限就是复审给的那句：接受已声明的启发式限制，
   而不是“模型状态始终反映当前磁盘内容”。
 
+## 逐词/逐字框接通到 serve 的请求面（Step 1，未发布）
+
+库里早就有 `WordOutputMode`（`Off` / `Words` / `Chars`）与 `OcrWord { text, score, polygon, kind }`，
+识别管线也已经把 `Chars` 翻译成 `return_single_char_box`——缺的只是出口：`serve` 的
+`text_request()` 把档位写死成 `WordOutputMode::Off`，所以任何 HTTP 请求都拿不到逐词/逐字框。
+本批**只接通已有能力，不换模型**。此前“本项目只能做到区域级”的说法是错的，已在 `docs/05` §4.2.3
+与 README 就地更正为：**支持字符级框输出，但当前字符框是 CTC 后处理估计，不应宣称为像素级精确字符检测**。
+
+- `POST /api/ocr` 增加第三个正交参数 `?words=off|words|chars`。它与 `?queue=`、`?table=` 不同，
+  是**输出档位**而不是管线开关：跑哪些阶段不变，只决定每个文本区域的 `recognition.words`
+  给不给、给哪种粒度。**缺省仍是 `off`**——默认打开会让所有请求无条件承担响应体膨胀
+  （`chars` 按字数放大，可能撞 `--max-result-mb` → 413 `result_too_large`）与后处理开销。
+- **未知取值一律 400 `bad_request` 且不建任务**，绝不静默降级成 `off`：静默降级会让请求方
+  以为字符框已经在载荷里，而拿到的只是“选区层永远空着”这类从状态码看不出来的故障。
+  校验发生在读 body 之后、入队之前（与 `?max_side=`、`?table=` 同一步），档位随任务在提交
+  那一刻固定（新的 `OcrJobParams { max_side, table, words }`，取代原来两个平铺参数——worker
+  只看得到任务，看不到那次 HTTP 请求）。
+- 词表只有一份：`WordOutputMode::{as_str, from_name, ALL}`，CLI 的 `--words` / `--chars`、
+  serve 的 `?words=` 与网页将来发的查询串都建立在它上面；`the_cli_flags_map_to_the_same_modes_as_the_query_parameter`
+  直接断言两个入口给出的档位同名同值，而不是“两边各自测自己的默认值”。
+- **线契约变更（未发布，无下游）**：`WordKind` 补上 `#[serde(rename_all = "snake_case")]`，
+  序列化值从 `Char` / `Token` 改为 `char` / `token`，与 `RegionKind`、`TableCellMatch` 等其余
+  线上枚举同一口径。改动前核实过仓库内没有任何夹具、页面或文档依赖大写拼写；
+  `the_word_kind_wire_names_are_snake_case` 同时反向断言大写写法不再被接受，避免旧行为
+  变成隐性契约。**`CoordinateSpace` 本步不动**（它没有 `rename_all`，线上值是 `"Image"`，
+  而被 SHA-256 钉住的 `/result` 捕获夹具按这份拼写往返）——这个不对称如实登记在 `docs/05`
+  §4.2.3 与相应测试注释里，而不是顺手改坏一份冻结夹具。
+- 档位→框标签的映射上收为 `WordOutputMode::kind_for()` 一处定义。管线里“检测框逐行”与
+  “无检测、只有识别行”两条分支原先各写一次判断，后者硬写 `Token`；抽成单一映射后
+  “同一档位在不同分支标成两种词”不再可能。顺带记录一条现状：`stages.detect=false` 的
+  rec-only 分支里 `finalize_recognition_outputs` 从不设置 `output.word_boxes`，因此那条分支的
+  `words` 恒为空——那行硬编码当前不可达，本批是**拆掉陷阱**，不是修复了一个线上缺陷。
+- 遵循裁决：`words` **不**复制进 `items`。`regions[].recognition.words` 是规范事实源，第二份
+  字段只会产生同步问题；`items` 保持迁移前的三通道形状。`POST /api/evaluate` 的批量路径
+  显式取 `Off`（字符框既不进指标也不改变打分，只会按字数放大响应体）。
+- 新增 12 条测试：lib 3 条（词表封闭性、`WordKind` 线上拼写、档位→标签映射）、CLI 2 条、
+  `http.rs` 1 条（`?words=` 取值面）、serve 端到端 6 条（缺省与显式 `off` 都不输出 `words`、
+  未知取值在建任务之前就被拒绝、`words` 档全为 `token` 且序列等于 `text.split_whitespace()`、
+  `chars` 档数量等于 `text.chars().count()` 且拼接逐字等于 `text`、polygon 落在原图坐标系且被
+  行框包住、同一份图片两次提交的 word 数组逐字节相同）。端到端用例的几何是**脚本化**的：
+  它们证明 serve 原样透传文本/标签/坐标、不重缩放、不改顺序，**不**证明字符框准确度——
+  后者是 Step 4 的基准，不能用人造几何冒充精度证据。
+- 门禁九项（`docs/12` §8.1 清单，含先 `-SelfTest` 再正式扫描的两个守卫）本批提交前全套实跑，
+  退出码均为 0：`fmt --check`、`clippy --all-targets --features serve -D warnings`、
+  `test --all-targets --features serve`（lib **757 passed + 2 ignored**、serve **298**）、
+  serve 串行 `--test-threads=1`（**298 passed**，321.75s）、`serve_startup` 串行（2 passed）、
+  `check-page-result-contract.mjs`、`generate-table-whitelist.mjs --check`、守卫 selftest + 正式扫描。
+  基线对比：lib 754→757、serve 289→298，其余口径不变；`src/bin/web/index.html` 本批未动。
+- **本批未消除的风险**：字符框仍然是“CTC 列索引当字符中心 + 整行平均字宽”的估计，对
+  `i/l/m/W`、比例字体、粘连字符、小字号有系统性偏差，仓库内**没有**任何字符定位基准数据；
+  网页 Demo 也还没有透明文本层，因此 `chars` 档目前只有 API 侧的可达性，没有可复制的选区体验。
+  这两件分别属于 Step 2 与 Step 4，按既定顺序另批处理，不混入本批。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

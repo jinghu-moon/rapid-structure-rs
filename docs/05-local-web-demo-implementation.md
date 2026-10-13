@@ -514,7 +514,7 @@ OCR（尤其公式路径）单图可达数秒至数十秒，**不得长期占用
 | `GET` | `/api/models` | 模型集状态（§5.4；顶层字段是**本次运行计划**的**文本管线**作用域，公式管线在 `formula` 块（库存）与 `pipelines.formula`（计划）里） |
 | `POST` | `/api/models/download` | 启动下载任务（需 `--allow-download` **且** token）；请求体 `{"set_id": "<id>"}`，未知 id → **404 `model_set_not_found`**（绝不回落 `sets[0]`）。公式集合（566 MB）与文本集合同一条路径、同一个按钮语义 |
 | `POST` | `/api/models/reverify` | **A2 新增**：一次动作完成"重新读盘"——①清掉校验缓存，②**冷验证这次运行的整份模型计划**（含 `--formula-detector`/集合声明的公式检测模型），③**引擎此前就绪则重建会话**（否则"清缓存"只是一个按下去什么都不会变的按钮：流水线的会话缓存可能仍在服务一个磁盘上已经不是这个文件的模型）。请求体**必须为空**（有 body → 400）；单飞（第二个并发调用 **503 `busy`**，与 `POST /api/engine/reload` **同一把**资格），且整个序列在**独立线程**里执行（accept 线程绝不建会话）。响应**按管线**给结论（`text.outcome` 与 `formula.*` 分开），见 §5.5 |
-| `POST` | `/api/ocr` | 提交识别 → **202** `{job_id, queue, position, state:"queued"}`。队列由 `?queue=text\|formula` 选择，**队列类别就是管线选择**（M4，见下）。表格阶段由**正交的** `?table=1` 追加（E16，见 §4.2.2）——`queue` 决定排哪条队，`table` 决定那条队里的页面管线是否额外跑表格阶段。**页面必须显式发送它们**（M5：旧的 `submitImage` 发的是无查询串的 `/api/ocr`，于是公式开关实际上什么都没改变；E16 起页面按模式选择器发送四种组合。页面源码里的这些由 `serve::tests::the_page_reads_exactly_the_pinned_result_paths` 与 `serve::tests::the_page_carries_the_mode_selector_and_the_table_renderer` 断言） |
+| `POST` | `/api/ocr` | 提交识别 → **202** `{job_id, queue, position, state:"queued"}`。队列由 `?queue=text\|formula` 选择，**队列类别就是管线选择**（M4，见下）。表格阶段由**正交的** `?table=1` 追加（E16，见 §4.2.2）——`queue` 决定排哪条队，`table` 决定那条队里的页面管线是否额外跑表格阶段。逐词/逐字框由**第三个正交参数** `?words=off\|words\|chars` 选择（缺省 `off`，见 §4.2.3）：它是**输出档位**，不改变跑哪些阶段。**页面必须显式发送它们**（M5：旧的 `submitImage` 发的是无查询串的 `/api/ocr`，于是公式开关实际上什么都没改变；E16 起页面按模式选择器发送四种组合。页面源码里的这些由 `serve::tests::the_page_reads_exactly_the_pinned_result_paths` 与 `serve::tests::the_page_carries_the_mode_selector_and_the_table_renderer` 断言） |
 | `POST` | `/api/evaluate` | **M4 新增**：批量评估一份已标注清单 → 200 + 库的评估报告。**必须先配置 `--eval-root <DIR>`**（M1 评审 P2-3）：未配置时整个端点拒绝（400 `bad_request`，`detail.reason` 点名 `--eval-root`）；配置后清单与清单引用的**每张图**都必须规范化到该目录内，越界（`..`、绝对路径、符号链接）是可定位的 400。请求体**恰好**一个键 `{"manifest": "<本机清单路径>"}`（与 `rapidstruct evaluate --manifest` 同格式：`[{image, text, boxes}]`，`image` 相对清单目录解析）。报告字段与 CLI 的 `rapidstruct evaluate` **同一份实现**（`cases[]` + `mean_cer` + `exact_match_rate` + `mean_detection_*` + `peak_working_set_bytes` + `memory_source` + `ort_runtime` + `ort_runtime_version`），另加 `iou_threshold` 与 `manifest_file`（只给文件名）。可定位的拒绝是 **400 `bad_request`** + `detail.reason`（没有 `--eval-root`/清单越界/格式不对/用例数超过 `--max-eval-cases`/某张图越界或读不出来）；模型缺失与引擎不可用分别是 409 `models_missing` / 503 `engine_unavailable`（与 `/api/ocr` 同一份错误体） |
 | `GET` | `/api/jobs/{id}` | `{id, kind, queue, state, position, queued_ms, started_ms, elapsed_ms, error}` + M2 追加的 `{failure, download, cancel_requested}`（见 §4.3） |
 | `GET` | `/api/jobs/{id}/result` | 结果（未完成 409 `job_not_finished`；已淘汰 410 `job_evicted`） |
@@ -666,6 +666,66 @@ POST /api/ocr?table=0                       → 显式关闭（与缺省同义�
 
 **`?table=` 与 `?queue=` 的模型可用性检查都在 §4.4 准入顺序的第 4 步之后、第 6 步之前**
 （两条正交参数共用同一次判定入口）。
+
+#### 4.2.3 逐词/逐字框的输出档位（Step 1 定案）
+
+`GET`/`POST` 面上第三个正交参数。它**不是**管线开关：跑哪些阶段仍由 `queue` 与 `table` 决定，
+`words` 只决定每个文本区域的 `recognition.words` 给不给、给哪种粒度。
+
+```text
+POST /api/ocr                     → 缺省档位，等价于 words=off
+POST /api/ocr?words=off           → 显式关闭：线上没有逐词/逐字框
+POST /api/ocr?words=words         → 词（token）粒度，每个框 `kind = "token"`
+POST /api/ocr?words=chars         → 字符粒度，每个框 `kind = "char"`
+```
+
+**取值面只有这三个小写写法**（`api.rs` 的 `WordOutputMode::from_name` 是唯一词表，CLI 的
+`--words` / `--chars` 与 serve 的 `?words=` 都建立在它上面）：`char`、`WORDS`、`1`、`true`、
+空串一律 **400 `bad_request`**，而且**不建任务**。**未知取值绝不静默降级成 `off`** ——
+静默降级会让请求方（含网页 Demo）以为字符框已经在载荷里，而拿到的只是"选区层永远空着"
+这类无法从状态码看出来的故障。校验发生在读 body 之后、入队之前（与 `?max_side=`、`?table=`
+同一步）；档位随任务在提交那一刻固定（`OcrJobParams`），worker 不重读查询串。
+
+**事实源只有一处**：`regions[].recognition.words`，每项是
+`{text, score, polygon{points}, kind}`。**不**把 `words` 复制进 `items`——第二份字段只会
+产生同步问题，`items` 保持迁移前的三通道形状。
+
+**坐标空间**：word 的 polygon 与区域 polygon、`image.original_size` 同一个原图像素空间
+（`image.coordinate_space` 的线上值是 `"Image"`——这个枚举没有 `rename_all`，且入库的 `/result`
+捕获夹具按这份拼写往返，本步不动它）。宿主做选区层时**不得**把倾斜四边形退化成轴对齐外接矩形。
+
+**精度口径（必须如实）**：字符框来自 CTC 后处理**估计**——字符中心取 CTC 列索引、字符宽度取
+整行平均字宽（`src/ocr/rec/word_boxes.rs`），再经识别裁剪图→原图的单应映射。它对中文等宽文字
+通常尚可，对 `i/l/m/W`、比例字体、粘连字符、小字号会有系统性偏差。因此：
+
+> 本项目**支持**字符级框输出，但当前字符框是 CTC 后处理估计，**不应**宣称为像素级精确字符检测。
+
+改进路线（CTC forced alignment）、字符定位基准（IoU / 左右边界误差）与网页选区层分别属于
+独立的算法改造、独立评测与呈现层工作，**不混入** `docs/12` 的页面编排重构。
+
+**成本**：`chars` 档会把响应体按字数放大，可能因此撞上 `--max-result-mb` 而让任务以
+413 `result_too_large` 失败（与既有结果体积口径同一条路径）；这也是缺省必须是 `off` 的
+理由之一。`POST /api/evaluate` 与批量评估路径**显式**使用 `off`：字符框不进指标也不改变打分。
+
+**契约钉住**（谁守哪一条）：
+
+| 断言 | 测试 |
+| --- | --- |
+| 词表是封闭集（三档 round-trip，其余取值拒绝） | `api::tests::the_word_mode_vocabulary_is_a_closed_lowercase_set` |
+| `kind` 的线上拼写是 `token` / `char` | `api::tests::the_word_kind_wire_names_are_snake_case` |
+| 档位→框标签只有一处映射（两条管线分支共用） | `api::tests::the_word_mode_labels_the_boxes_it_produces` |
+| `?words=` 的查询串解析与 400 口径 | `serve::http::tests::the_documented_words_parameter_is_validated` |
+| `off`（缺省与显式）不输出 `recognition.words`，两态线上同形 | `serve::tests::the_default_and_the_explicit_off_both_omit_recognition_words` |
+| 未知取值在建任务之前被拒 | `serve::tests::an_unknown_words_value_is_rejected_before_any_job_is_created` |
+| `words` 档给 `kind = "token"` 且 token 序列就是文本的空白切分 | `serve::tests::the_words_mode_emits_token_boxes` |
+| `chars` 档给 `kind = "char"` 且逐字拼接还原 `recognition.text` | `serve::tests::the_chars_mode_emits_char_boxes_that_rebuild_the_text` |
+| word 的 polygon 在原图坐标系内、非退化、被自己的行框包住 | `serve::tests::the_word_polygons_are_in_the_original_image_space` |
+| 同一张图两次提交得到逐字节相同的 word 序列 | `serve::tests::the_word_sequence_is_identical_across_two_identical_submissions` |
+| CLI 的两个开关映射到与查询串同一份档位，并真的进入请求 | `tests::the_cli_flags_map_to_the_same_modes_as_the_query_parameter`、`tests::the_word_mode_reaches_the_request_recognition_policy` |
+
+端到端用例里 word 的几何是**脚本化**的（把行带等宽切片），因此它们证明的是"serve 把文本、
+粒度标签与坐标原样带到线上"，**不**证明字符框的准确度——后者需要 §4.2.3 之外独立的字符定位基准。
+
 
 ### 4.3 状态机与取消语义
 

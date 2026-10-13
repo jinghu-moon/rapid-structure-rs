@@ -59,7 +59,13 @@ before redistributing a complete application or model bundle.
   Applications that must avoid network access should use `Encoded`, `Pixels`,
   `Image`, or `File` inputs.
 - `OcrOutput` contains text, line polygons, scores, provider resolution, and
-  stage timings. Character-level boxes are intentionally optional.
+  stage timings. Word- and character-level boxes are intentionally optional
+  (`recognition.words`, three modes `off` / `words` / `chars`, default `off`);
+  the CLI takes `--words` / `--chars` and `serve` takes `POST /api/ocr?words=...`,
+  all three mapped onto the same `WordOutputMode` vocabulary. The boxes
+  are CTC post-processing estimates (one CTC column per character, one average
+  character width per line), not a character-detection model, so they must not
+  be presented as pixel-accurate character boundaries.
 
 ## Minimal usage
 

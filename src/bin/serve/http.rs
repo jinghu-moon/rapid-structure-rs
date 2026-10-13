@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tiny_http::{Header, Request, Response, Server, StatusCode};
 
-use rapid_structure_rs::ProviderPreference;
+use rapid_structure_rs::{ProviderPreference, WordOutputMode};
 
 use super::admit::{
     self, AdmissionError, BodySource, ChunkOutcome, HttpMethod, QueueAdmission, RequestDescriptor,
@@ -45,7 +45,9 @@ use super::jobs::JobQueue;
 use super::queue::QueueClass;
 use super::run::ServeStartError;
 use super::security::{self, SECURITY_HEADERS};
-use super::server::{Body, READ_CHUNK_BYTES, ServeContext, ServeRuntime, ServeShared};
+use super::server::{
+    Body, OcrJobParams, READ_CHUNK_BYTES, ServeContext, ServeRuntime, ServeShared,
+};
 
 /// accept loop 的等待上限（§8.1：`recv_timeout` + 关闭标志）。
 const ACCEPT_TIMEOUT: Duration = Duration::from_millis(200);
@@ -541,9 +543,16 @@ fn dispatch(
             let table = shared
                 .routing()
                 .table_requested(query_param(query, "table"))?;
+            let words = parse_words(query_param(query, "words"))?;
+            // 三个请求侧参数在入队那一刻打包成一份（[OcrJobParams]）：worker 之后只看得见
+            // 任务，看不见这次 HTTP 请求。
+            let params = OcrJobParams {
+                max_side,
+                table,
+                words,
+            };
             // 第 4 步预留的槽位随请求一路传到这里：入队成功即提交，任何提前返回都会归还容量。
-            let value =
-                shared.submit_ocr(bytes, class, max_side, table, admitted.reservation, flow)?;
+            let value = shared.submit_ocr(bytes, class, params, admitted.reservation, flow)?;
             // §4.2：任务提交返回 **202**（异步任务，不存在"同步返回结果"的第二套语义）。
             Ok(Dispatch::Respond(json_body(202, value)?, Vec::new()))
         }
@@ -838,6 +847,20 @@ fn parse_max_side(raw: Option<&str>, min_side: u32) -> Result<Option<u32>, Serve
     Ok(Some(value))
 }
 
+/// `?words=`：逐词/逐字框的输出档位，**只有 `off` / `words` / `chars` 三个取值**
+/// （缺省 `off`，与 CLI 的 `--words` / `--chars` 共用 [`WordOutputMode`] 那一份词表）。
+///
+/// 未知取值是 **400**，不是静默按 `off` 处理：静默降级会让请求方（含网页 Demo）以为
+/// 字符框已经在载荷里，而结果是“选区层永远空着”这类无法从状态码看出来的故障。
+/// 与 `?table=` 同一个口径：真正的取值校验必须在建任务**之前**完成。
+fn parse_words(raw: Option<&str>) -> Result<WordOutputMode, ServeError> {
+    match raw {
+        None => Ok(WordOutputMode::Off),
+        // 允许首尾空白（与 `?max_side=` 一致），但档位名本身大小写敏感、无别名。
+        Some(raw) => WordOutputMode::from_name(raw.trim()).ok_or(ServeError::BadRequest),
+    }
+}
+
 /// `POST /api/models/download` 的请求体：**只有** `set_id`（§7.2 禁止 URL）。
 ///
 /// 白名单式校验：`Content-Type`（若给出）必须是 `application/json`，请求体必须是**恰好**
@@ -1032,12 +1055,12 @@ fn header_of(name: &str, value: &str) -> Header {
 mod tests {
     use super::{
         EXPORT_CSP, HttpMethod, Route, RouteDecision, check_json_content_type, content_disposition,
-        export_format, page_csp, parse_max_side, parse_provider_body, parse_set_id, query_param,
-        route_of, split_url,
+        export_format, page_csp, parse_max_side, parse_provider_body, parse_set_id, parse_words,
+        query_param, route_of, split_url,
     };
     use crate::serve::error::ServeError;
     use crate::serve::export::ExportFormat;
-    use rapid_structure_rs::ProviderPreference;
+    use rapid_structure_rs::{ProviderPreference, WordOutputMode};
 
     #[test]
     fn the_router_matches_the_documented_endpoint_set_and_nothing_else() {
@@ -1257,6 +1280,28 @@ mod tests {
         assert_eq!(parse_max_side(Some(" 736 "), 30).expect("ok"), Some(736));
         for bad in ["0", "29", "abc", "-1", "999999999999999999999"] {
             assert!(parse_max_side(Some(bad), 30).is_err(), "{bad}");
+        }
+    }
+
+    /// `?words=` 的三档与"未知取值必须 400"（静默降级比报错难查得多：请求方会以为
+    /// 字符框已经在载荷里，而看到的只是空数组）。
+    #[test]
+    fn the_documented_words_parameter_is_validated() {
+        assert_eq!(parse_words(None).expect("ok"), WordOutputMode::Off);
+        for (raw, expected) in [
+            ("off", WordOutputMode::Off),
+            ("words", WordOutputMode::Words),
+            ("chars", WordOutputMode::Chars),
+            // 首尾空白允许（与 `?max_side=` 一致）。
+            (" words ", WordOutputMode::Words),
+        ] {
+            assert_eq!(parse_words(Some(raw)).expect("ok"), expected, "{raw}");
+        }
+        // 档位名本身大小写敏感、无别名、不能是布尔量。
+        for bad in [
+            "Off", "CHARS", "char", "word", "", "1", "0", "true", "table",
+        ] {
+            assert!(parse_words(Some(bad)).is_err(), "{bad}");
         }
     }
 

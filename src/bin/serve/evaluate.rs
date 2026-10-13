@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use rapid_structure_rs::evaluation::ocr::{
     EvaluationCase, EvaluationReport, EvaluationSummary, evaluate_case,
 };
-use rapid_structure_rs::{FormulaPolicy, TablePolicy, to_output_items};
+use rapid_structure_rs::{FormulaPolicy, TablePolicy, WordOutputMode, to_output_items};
 use serde_json::{Value, json};
 
 use super::error::ServeError;
@@ -242,6 +242,9 @@ pub(super) fn run(shared: &ServeShared, manifest: &Path) -> Result<Value, ServeE
             // `rapidstruct table-eval` 与 `docs/10-table-evaluation-protocol.md` 负责。
             // 这里显式关闭，而不是让表格阶段偷偷改变 CER 的输入。
             TablePolicy::default(),
+            // 逐词/逐字框同理**显式**取 `Off`（不依赖任何默认值）：指标只需要行文本与
+            // 行框，字符框既不进指标也不改变打分，却会把响应体按字数放大。
+            WordOutputMode::Off,
         );
         let output = recognize_with(shared, request)?;
         let metrics = evaluate_case(

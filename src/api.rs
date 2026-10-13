@@ -238,11 +238,59 @@ impl Default for StagePlan {
         }
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum WordOutputMode {
+    /// 缺省档位：不给逐词/逐字框（`RecognitionPolicy::default()` 与各策略默认值都走这一档）。
+    #[default]
     Off,
     Words,
     Chars,
+}
+
+impl WordOutputMode {
+    /// 请求面上的**唯一**词表（小写）。
+    ///
+    /// CLI 的 `--words` / `--chars`、serve 的 `?words=`、以及网页 Demo 将来发的查询串都必须
+    /// 映射到这同三个档位。词表放在这里，是为了让「入口各写一套取值」在测试里当场暴露，
+    /// 而不是各自演化出别名。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Words => "words",
+            Self::Chars => "chars",
+        }
+    }
+
+    /// 解析请求面上的档位名：**大小写敏感**，未知取值返回 `None`。
+    ///
+    /// 调用方必须拒绝未知取值，不能静默当成 `Off` —— 静默降级会让请求方以为字符框
+    /// 已经在载荷里。
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "words" => Some(Self::Words),
+            "chars" => Some(Self::Chars),
+            _ => None,
+        }
+    }
+
+    /// 词表本身（顺序即 [`Self::as_str`] 的顺序），供测试与文档逐一核对。
+    pub const ALL: [Self; 3] = [Self::Off, Self::Words, Self::Chars];
+
+    /// 这一档产出的框在线上的语义标签。
+    ///
+    /// 与 [`Self::as_str`] 同一类理由：档位→标签的映射只允许有一处定义。管线里
+    /// “检测框逐行”与“无检测、只有识别行”两条分支都要给 [`OcrWord::kind`]，各自写
+    /// `match` 就会让同一次请求的档位在不同分支上标成不同的词（后者曾硬写 `Token`）。
+    ///
+    /// `Off` 本来不产出任何框，落进 `Token` 只是穷尽匹配的兜底：调用方在该档位下
+    /// 根本不该构造 [`OcrWord`]。
+    pub fn kind_for(self) -> WordKind {
+        match self {
+            Self::Chars => WordKind::Char,
+            Self::Off | Self::Words => WordKind::Token,
+        }
+    }
 }
 impl StagePlan {
     pub fn validate(self, words: WordOutputMode) -> Result<()> {
@@ -269,16 +317,10 @@ pub struct DetectionPolicy {
     pub unclip_ratio: Option<f32>,
     pub text_score: Option<f32>,
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct RecognitionPolicy {
+    /// 逐词/逐字框的输出档位，缺省 [`WordOutputMode::Off`]。
     pub words: WordOutputMode,
-}
-impl Default for RecognitionPolicy {
-    fn default() -> Self {
-        Self {
-            words: WordOutputMode::Off,
-        }
-    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CoordinateSpace {
@@ -511,7 +553,13 @@ pub struct ClassificationOutcome {
     pub score: f32,
     pub applied_rotation: bool,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`OcrWord`] 的粒度：一个 token（词/切分段）还是一个字符。
+///
+/// 线契约拼写是 `snake_case`（`token` / `char`），与 [`RegionKind`]、[`TableCellMatch`]
+/// 等其余线上枚举同一口径。宿主（网页选区层、编辑器）必须靠它区分“能整词复制”与
+/// “能逐字定位”，因此这个词不能随序列化器的默认行为漂移。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WordKind {
     Char,
     Token,
@@ -1549,6 +1597,59 @@ mod tests {
             ..StagePlan::default()
         };
         assert!(p.validate(WordOutputMode::Words).is_err());
+    }
+
+    /// 词表是请求面的**封闭集**：三个档位都能被 `from_name(as_str())` 原样解析回来，
+    /// 而且除了这三个写法之外没有任何取值可用（大小写敏感、无别名）。
+    ///
+    /// CLI 的 `--words` / `--chars` 与 serve 的 `?words=` 都建立在这份词表上，因此
+    /// “两个入口各自发明一个档位名”在这里就会失败，而不是等到请求方选了字符档位
+    /// 却拿到空数组。
+    #[test]
+    fn the_word_mode_vocabulary_is_a_closed_lowercase_set() {
+        for mode in WordOutputMode::ALL {
+            assert_eq!(WordOutputMode::from_name(mode.as_str()), Some(mode));
+        }
+        assert_eq!(
+            WordOutputMode::ALL.map(WordOutputMode::as_str),
+            ["off", "words", "chars"]
+        );
+        for bad in [
+            "Off", "CHARS", "char", "word", "", " off", "off ", "1", "true",
+        ] {
+            assert_eq!(WordOutputMode::from_name(bad), None, "{bad}");
+        }
+    }
+
+    /// `WordKind` 的线上拼写钉在 `snake_case`，且与 serde 双向一致。
+    ///
+    /// 宿主（下一步的网页选区层）要写 `kind === "char"` 这样的判定，而这里没有任何
+    /// 非 serde 渲染器需要自己拼写这两个词，因此不需要 `as_str()`。一旦将来出现，
+    /// 这条测试就是要补上对照的那一处（与 `the_table_wire_names_are_snake_case` 同一手法）。
+    #[test]
+    fn the_word_kind_wire_names_are_snake_case() {
+        for (kind, name) in [(WordKind::Char, "char"), (WordKind::Token, "token")] {
+            let value = serde_json::to_value(kind).expect("kind should serialize");
+            assert_eq!(value, serde_json::json!(name));
+            let parsed: WordKind = serde_json::from_value(value).expect("kind should deserialize");
+            assert_eq!(parsed, kind, "{name}");
+        }
+        // 大写拼写不再被接受：旧的不带 `rename_all` 行为不能变成隐性契约。
+        for stale in ["Char", "Token"] {
+            assert!(serde_json::from_str::<WordKind>(&format!("\"{stale}\"")).is_err());
+        }
+    }
+
+    /// 档位→框标签的映射只有一处定义：`chars` 是 char，`words` 是 token。
+    ///
+    /// 管线的两条分支（有检测框 / 无检测框）共用它，因此“同一档位不可能是两种标签”
+    /// 不依赖分支里的 `match` 是否被人手抄对。
+    #[test]
+    fn the_word_mode_labels_the_boxes_it_produces() {
+        assert_eq!(WordOutputMode::Chars.kind_for(), WordKind::Char);
+        assert_eq!(WordOutputMode::Words.kind_for(), WordKind::Token);
+        // `Off` 不产出框；这里只钉住穷尽匹配的兜底不会反转成 `Char`。
+        assert_eq!(WordOutputMode::Off.kind_for(), WordKind::Token);
     }
 
     #[test]

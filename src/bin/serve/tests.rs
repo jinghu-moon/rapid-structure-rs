@@ -51,10 +51,10 @@ use rapid_structure_rs::{
     CoordinateSpace, DetectionOutcome, DownloadError, EngineConfig, EngineInfo, FileIdentity,
     FormulaOutcome, FormulaPolicy, GenericProviderPreference, ImageInfo, ImageSize, LangDet,
     LangRec, ModelFileSpec, ModelType, OcrOutput, OcrRegion, OcrRequest, OcrTimings, OcrVersion,
-    Polygon, ProviderInfo, ProviderResolutionInfo, RapidOcrError, RecognitionOutcome, RegionKind,
-    RegionSource, ResolvedProvider, StageReports, TableCellMatch, TableCellOutcome,
+    OcrWord, Polygon, ProviderInfo, ProviderResolutionInfo, RapidOcrError, RecognitionOutcome,
+    RegionKind, RegionSource, ResolvedProvider, StageReports, TableCellMatch, TableCellOutcome,
     TableDegradation, TableOutcome, TablePolicy, TableStructureConfidence, TableTextPolicy,
-    sha256_file,
+    WordOutputMode, sha256_file,
 };
 use serde_json::{Value, json};
 
@@ -92,6 +92,12 @@ struct Scripted {
     /// 输出里附加的**表格**区域数（E16.2/E16.3 的契约用例：`/result` 的 `table.html`
     /// 只有真的有一条表格区域时才被这条端到端路径覆盖）。
     table_regions: usize,
+    /// 每次识别收到的（请求体, `WordOutputMode`）（Step 1：`?words=` 真的到达了引擎）。
+    ///
+    /// 与 `formulas`/`tables` 同一手法：按请求体关联，不按下标。本后端的输出**也**由这一档
+    /// 合成（见 [`scripted_output_modes`]），因此“引擎看到了哪一档”与“载荷里有哪种框”
+    /// 是同一件事的两面，不能各说一套。
+    word_modes: Arc<Mutex<Vec<(String, WordOutputMode)>>>,
 }
 
 impl Scripted {
@@ -110,6 +116,7 @@ impl Scripted {
             gate: None,
             formula_regions: 0,
             table_regions: 0,
+            word_modes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -174,6 +181,23 @@ impl Scripted {
             .clone()
     }
 
+    /// 每次识别收到的（请求体, 逐词/逐字档位），按后端进入顺序；Step 1。
+    fn word_modes(&self) -> Vec<(String, WordOutputMode)> {
+        self.word_modes
+            .lock()
+            .expect("the scripted recorder is not poisoned")
+            .clone()
+    }
+
+    /// 指定请求体收到的档位；一次都没记录时直接 panic（参数被丢掉也是回归）。
+    fn word_mode(&self, body: &str) -> WordOutputMode {
+        self.word_modes()
+            .iter()
+            .find(|(recorded, _)| recorded == body)
+            .unwrap_or_else(|| panic!("no word mode recorded for request body {body:?}"))
+            .1
+    }
+
     fn factory(self) -> EngineFactory {
         Arc::new(
             move |_config: &EngineConfig| -> Result<Box<dyn OcrBackend>, RapidOcrError> {
@@ -205,6 +229,11 @@ impl OcrBackend for ScriptedBackend {
             .expect("the scripted recorder is not poisoned")
             .push((body.clone(), request.formula.clone()));
         self.state
+            .word_modes
+            .lock()
+            .expect("the scripted recorder is not poisoned")
+            .push((body.clone(), request.recognition.words));
+        self.state
             .tables
             .lock()
             .expect("the scripted recorder is not poisoned")
@@ -227,11 +256,12 @@ impl OcrBackend for ScriptedBackend {
                 "scripted failure: the image cannot be decoded".to_string(),
             ));
         }
-        Ok(scripted_output_with(
+        Ok(scripted_output_modes(
             self.state.regions,
             self.state.text_bytes,
             self.state.formula_regions,
             self.state.table_regions,
+            request.recognition.words,
         ))
     }
 
@@ -306,6 +336,74 @@ pub(crate) fn scripted_output_with(
     formula_regions: usize,
     table_regions: usize,
 ) -> OcrOutput {
+    scripted_output_modes(
+        regions,
+        text_bytes,
+        formula_regions,
+        table_regions,
+        WordOutputMode::Off,
+    )
+}
+
+/// 脚本化文本区域的行框：`(x0, y0, x1, y1)`。
+///
+/// [`scripted_output_modes`] 用它构造区域 polygon，[`scripted_words`] 把 word 框铺在**同一行带**
+/// 里。两处共用一组常量，“word 框被自己的行框包住”才是可断言的形式（而不是两处各自写死）。
+const SCRIPT_ROW: (f32, f32, f32, f32) = (1.0, 1.0, 10.0, 5.0);
+
+/// 按档位合成 `recognition.words`（Step 1 的端到端契约用例）。
+///
+/// 这里的几何是**脚本化**的：把 [`SCRIPT_ROW`] 那条行带按项数等宽切片。这条链路要钉的是
+/// “serve 把 word 的文本、粒度标签与坐标原样带到线上：不重缩放、不丢项、不改顺序”，
+/// **不是**“模型给的字符框够准”——后者属于字符定位基准（IoU / 左右边界误差），
+/// 不能用人造几何来冒充。
+///
+/// - `Off` → `None`：线上不允许用空数组冒充“档位已开启”。
+/// - `Words` → 按空白切分的 token。
+/// - `Chars` → 逐个 `char`，不丢任何字符，因此拼接必然等于 `text`。
+fn scripted_words(text: &str, mode: WordOutputMode) -> Option<Vec<OcrWord>> {
+    let items: Vec<&str> = match mode {
+        WordOutputMode::Off => return None,
+        WordOutputMode::Words => text.split_whitespace().collect(),
+        WordOutputMode::Chars => text
+            .char_indices()
+            .map(|(start, ch)| &text[start..start + ch.len_utf8()])
+            .collect(),
+    };
+    let (x0, y0, x1, y1) = SCRIPT_ROW;
+    let kind = mode.kind_for();
+    let band = (x1 - x0) / items.len().max(1) as f32;
+    Some(
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let left = x0 + band * index as f32;
+                let right = left + band;
+                OcrWord {
+                    text: (*item).to_string(),
+                    score: 0.9,
+                    polygon: Polygon {
+                        points: [[left, y0], [right, y0], [right, y1], [left, y1]],
+                    },
+                    kind,
+                }
+            })
+            .collect(),
+    )
+}
+
+/// 同上，再按 `mode` 决定文本区域的 `recognition.words` 给不给、给哪种粒度（Step 1）。
+///
+/// 公式与表格区域**不跟随**档位：它们根本没有 `recognition`（见上面的注释），
+/// 逐词/逐字框在语义上只属于 CTC 文本区域。
+pub(crate) fn scripted_output_modes(
+    regions: usize,
+    text_bytes: usize,
+    formula_regions: usize,
+    table_regions: usize,
+    mode: WordOutputMode,
+) -> OcrOutput {
     let provider = ProviderResolutionInfo {
         requested: GenericProviderPreference::Cpu,
         selected_ep: ResolvedProvider::Cpu,
@@ -318,19 +416,22 @@ pub(crate) fn scripted_output_with(
             } else {
                 "x".repeat(text_bytes)
             };
+            // word 框要落在自己的行框里，所以两处共用 [`SCRIPT_ROW`]。
+            let (x0, y0, x1, y1) = SCRIPT_ROW;
+            let words = scripted_words(&text, mode);
             OcrRegion::text(
                 RegionSource::Detected {
                     detector_index: index,
                 },
                 Some(Polygon {
-                    points: [[1.0, 1.0], [10.0, 1.0], [10.0, 5.0], [1.0, 5.0]],
+                    points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
                 }),
                 Some(DetectionOutcome { score: 0.9 }),
                 None,
                 Some(RecognitionOutcome {
                     text,
                     score: 0.9,
-                    words: None,
+                    words,
                 }),
             )
         })
@@ -2872,6 +2973,315 @@ fn the_table_region_round_trips_through_the_result_endpoint() {
         outcome["html"].as_str().expect("html").contains("<script>"),
         "the wire format carries the model's own HTML"
     );
+}
+
+// ---------------------------------------------- Step 1：`?words=` 的输出档位
+
+/// 三档共用的样板：带查询串提交一张图 → 等终态 → 取回 `/result` 的 JSON。
+///
+/// 两个作用：把“`?words=` 真的传到了引擎”折进每一条端到端断言（不再需要单独一条只测
+/// 参数的用例），并且用**请求体**关联而不是按下标（复审 P2-3）：worker 不止一个，
+/// 后端进入顺序不等于提交顺序。
+fn submit_words_query(
+    server: &TestServer,
+    scripted: &Scripted,
+    query: &str,
+    body: &str,
+    expected: WordOutputMode,
+) -> Value {
+    let accepted = server.post(
+        &format!("/api/ocr{query}"),
+        &[("Content-Type", "application/octet-stream")],
+        body.as_bytes(),
+    );
+    assert_eq!(accepted.status, 202, "{query}: {}", accepted.text());
+    let id = accepted.json()["job_id"].as_str().expect("id").to_string();
+    let view = server.wait_terminal(&id, Duration::from_secs(20));
+    assert_eq!(view["state"], "succeeded", "{view}");
+    assert_eq!(
+        scripted.word_mode(body),
+        expected,
+        "the query must reach the engine as a mode, not be dropped on the way: {:?}",
+        scripted.word_modes()
+    );
+    server.get(&format!("/api/jobs/{id}/result")).json()
+}
+
+/// 结果里所有**文本**区域（公式与表格区域没有 `recognition`，逐词/逐字框只属于它们）。
+fn text_regions(result: &Value) -> Vec<&Value> {
+    result["regions"]
+        .as_array()
+        .expect("regions")
+        .iter()
+        .filter(|region| region["kind"] == "text")
+        .collect()
+}
+
+/// polygon 的轴对齐范围 `(x0, y0, x1, y1)`，附带“恰好四点、每点两分量”的结构检查。
+///
+/// 取的是**外接范围**，不是把四边形替换成矩形：word 的框可以带倾斜，这里只问“它有没有
+/// 跑出图外、跑出自己那一行”，不声明形状本身。
+fn polygon_bounds(points: &Value) -> (f64, f64, f64, f64) {
+    let rows = points.as_array().expect("polygon points");
+    assert_eq!(rows.len(), 4, "a polygon is exactly four points");
+    let mut xs = Vec::with_capacity(4);
+    let mut ys = Vec::with_capacity(4);
+    for row in rows {
+        let pair = row.as_array().expect("a point is (x, y)");
+        assert_eq!(pair.len(), 2, "a point is (x, y)");
+        xs.push(pair[0].as_f64().expect("x is a number"));
+        ys.push(pair[1].as_f64().expect("y is a number"));
+    }
+    (
+        xs.iter().copied().fold(f64::INFINITY, f64::min),
+        ys.iter().copied().fold(f64::INFINITY, f64::min),
+        xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        ys.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+    )
+}
+
+/// 缺省与显式 `?words=off` 都**不输出** `recognition.words`。
+///
+/// 钉的是“连空数组都不给”：`[]` 与 `null` 在宿主侧含义不同（前者会被当成“已开启但一行
+/// 也没识出来”），而缺省必须是 off，否则每个请求都无条件多付一份响应体与后处理。
+#[test]
+fn the_default_and_the_explicit_off_both_omit_recognition_words() {
+    let dir = complete_model_dir("words-off");
+    let scripted = Scripted::fast();
+    let server = TestServer::start(TestOptions::new(dir, scripted.clone()));
+
+    let omitted = submit_words_query(&server, &scripted, "", "words absent", WordOutputMode::Off);
+    let explicit = submit_words_query(
+        &server,
+        &scripted,
+        "?words=off",
+        "words explicit off",
+        WordOutputMode::Off,
+    );
+
+    for result in [&omitted, &explicit] {
+        for region in text_regions(result) {
+            let words = &region["recognition"]["words"];
+            assert!(
+                words.is_null(),
+                "`off` must omit the array entirely, not emit an empty one: {words}"
+            );
+        }
+    }
+    // 两档在线上不可区分（同一份 `regions`）：缺省不会多付一份载荷。
+    assert_eq!(omitted["regions"], explicit["regions"]);
+}
+
+/// `?words=` 的未知取值是 400，而且**不建任务**（worker 一次都没被调用）。
+#[test]
+fn an_unknown_words_value_is_rejected_before_any_job_is_created() {
+    let dir = complete_model_dir("words-unknown");
+    let scripted = Scripted::fast();
+    let server = TestServer::start(TestOptions::new(dir, scripted.clone()));
+
+    // 静默降级比报错难查得多：请求方会以为字符框已经在载荷里。
+    for raw in ["char", "WORDS", "1", "true", ""] {
+        let response = server.post(
+            &format!("/api/ocr?words={raw}"),
+            &[("Content-Type", "application/octet-stream")],
+            b"unknown words value",
+        );
+        assert_eq!(response.status, 400, "?words={raw}: {}", response.text());
+    }
+    assert!(
+        scripted.word_modes().is_empty(),
+        "a rejected query must not reach the engine: {:?}",
+        scripted.word_modes()
+    );
+}
+
+/// `?words=words` 输出的框全部标为 `token`，且 token 序列就是文本的空白切分。
+#[test]
+fn the_words_mode_emits_token_boxes() {
+    let dir = complete_model_dir("words-tokens");
+    let scripted = Scripted::fast();
+    let server = TestServer::start(TestOptions::new(dir, scripted.clone()));
+
+    let result = submit_words_query(
+        &server,
+        &scripted,
+        "?words=words",
+        "token mode",
+        WordOutputMode::Words,
+    );
+    for region in text_regions(&result) {
+        let text = region["recognition"]["text"].as_str().expect("text");
+        let words = region["recognition"]["words"]
+            .as_array()
+            .expect("`words` must emit an array");
+        assert!(!words.is_empty(), "no boxes for {text:?}");
+        assert_eq!(
+            words
+                .iter()
+                .map(|word| word["kind"].as_str().expect("kind"))
+                .collect::<Vec<_>>(),
+            vec!["token"; words.len()],
+            "`words` is the token granularity"
+        );
+        assert_eq!(
+            words
+                .iter()
+                .map(|word| word["text"].as_str().expect("word text"))
+                .collect::<Vec<_>>(),
+            text.split_whitespace().collect::<Vec<_>>(),
+            "tokens must appear in reading order, verbatim"
+        );
+    }
+}
+
+/// `?words=chars` 输出的框全部标为 `char`，逐字拼接必须还原 `recognition.text`。
+///
+/// 这一条是选区层能复制的前提：宿主把字符框按顺序拼回去，得到的就是用户看到的那行字，
+/// 不需要自己再切词，也不会把一个词拆成两种粒度。
+#[test]
+fn the_chars_mode_emits_char_boxes_that_rebuild_the_text() {
+    let dir = complete_model_dir("words-chars");
+    let scripted = Scripted::fast();
+    let server = TestServer::start(TestOptions::new(dir, scripted.clone()));
+
+    let result = submit_words_query(
+        &server,
+        &scripted,
+        "?words=chars",
+        "char mode",
+        WordOutputMode::Chars,
+    );
+    for region in text_regions(&result) {
+        let text = region["recognition"]["text"].as_str().expect("text");
+        let words = region["recognition"]["words"]
+            .as_array()
+            .expect("`chars` must emit an array");
+        assert_eq!(
+            words.len(),
+            text.chars().count(),
+            "one box per char, nothing dropped"
+        );
+        let kinds: Vec<&str> = words
+            .iter()
+            .map(|word| word["kind"].as_str().expect("kind"))
+            .collect();
+        assert!(
+            kinds.iter().all(|kind| *kind == "char"),
+            "`chars` is the char granularity, got {kinds:?}"
+        );
+        let rejoined: String = words
+            .iter()
+            .map(|word| word["text"].as_str().expect("char text"))
+            .collect();
+        assert_eq!(rejoined, text, "char concatenation must rebuild the text");
+    }
+}
+
+/// word 的 polygon 一律在**原图坐标系**里：与图像尺寸、区域框同一坐标空间。
+///
+/// 断的是“serve/序列化没有把识别裁剪图上的坐标原样吐给宿主”这类错：坐标一旦不在原图
+/// 空间，网页的透明文本层就会整体错位。这里**不**声明框得准不准——那是字符定位基准
+/// （IoU / 左右边界误差）要回答的问题。
+#[test]
+fn the_word_polygons_are_in_the_original_image_space() {
+    let dir = complete_model_dir("words-geometry");
+    let scripted = Scripted::fast();
+    let server = TestServer::start(TestOptions::new(dir, scripted.clone()));
+
+    let result = submit_words_query(
+        &server,
+        &scripted,
+        "?words=chars",
+        "char geometry",
+        WordOutputMode::Chars,
+    );
+    // 线上拼写是 `"Image"`：`CoordinateSpace` 没有 `rename_all`，只有一个变体，而且入库的
+    // `/result` 捕获夹具按这份拼写往返（`the_three_output_channels_are_frozen_…`），Step 1
+    // 不动它。宿主需要的是“坐标与原图像素同一空间”这个语义，不是某个大小写。
+    // （`WordKind` 本次改成 `snake_case` 是因为它从未出现在任何冻结夹具与文档里。）
+    assert_eq!(result["image"]["coordinate_space"], "Image");
+    let width = result["image"]["original_size"]["width"]
+        .as_f64()
+        .expect("width");
+    let height = result["image"]["original_size"]["height"]
+        .as_f64()
+        .expect("height");
+
+    for region in text_regions(&result) {
+        let (row_x0, row_y0, row_x1, row_y1) = polygon_bounds(&region["polygon"]["points"]);
+        let words = region["recognition"]["words"]
+            .as_array()
+            .expect("char boxes");
+        for word in words {
+            let (x0, y0, x1, y1) = polygon_bounds(&word["polygon"]["points"]);
+            // 非退化：零宽/零高的框在网页上选不中，也不该出现在线上。
+            assert!(x1 > x0 && y1 > y0, "degenerate word box: {word}");
+            assert!(
+                x0 >= 0.0 && y0 >= 0.0 && x1 <= width && y1 <= height,
+                "word box {word} is outside the {width}x{height} image"
+            );
+            // 行包含：逐字框必须落在自己那一行里（这里允许与行框重合）。
+            assert!(
+                x0 >= row_x0 - 1e-4
+                    && x1 <= row_x1 + 1e-4
+                    && y0 >= row_y0 - 1e-4
+                    && y1 <= row_y1 + 1e-4,
+                "word box {word} escapes its own row box ({row_x0}, {row_y0}, {row_x1}, {row_y1})"
+            );
+        }
+    }
+}
+
+/// 字符顺序稳定：同一张图两次提交的逐字序列逐字节相同，且中心 x 严格递增。
+///
+/// “稳定”两层含义都要：同一个请求重跑不能换顺序（否则缓存/对比无意义），以及
+/// 数组顺序与几何顺序一致（否则宿主按 polygon 排 `span` 时会得倒一个乱序选区）。
+#[test]
+fn the_word_sequence_is_identical_across_two_identical_submissions() {
+    let dir = complete_model_dir("words-stable");
+    let scripted = Scripted::fast();
+    let server = TestServer::start(TestOptions::new(dir, scripted.clone()));
+
+    let first = submit_words_query(
+        &server,
+        &scripted,
+        "?words=chars",
+        "stable order",
+        WordOutputMode::Chars,
+    );
+    let second = submit_words_query(
+        &server,
+        &scripted,
+        "?words=chars",
+        "stable order",
+        WordOutputMode::Chars,
+    );
+
+    let boxes_of = |result: &Value| {
+        serde_json::to_string(&result["regions"][0]["recognition"]["words"]).expect("serialize")
+    };
+    assert_eq!(
+        boxes_of(&first),
+        boxes_of(&second),
+        "the same image must yield the same word array: text, kind, coordinates and order"
+    );
+
+    let words = second["regions"][0]["recognition"]["words"]
+        .as_array()
+        .expect("char boxes");
+    let centers: Vec<f64> = words
+        .iter()
+        .map(|word| {
+            let (x0, _, x1, _) = polygon_bounds(&word["polygon"]["points"]);
+            (x0 + x1) / 2.0
+        })
+        .collect();
+    for pair in centers.windows(2) {
+        assert!(
+            pair[1] > pair[0],
+            "array order must follow left-to-right geometry, got {centers:?}"
+        );
+    }
 }
 
 // ---------------------------------------------- E16.2 / E16.3：页面侧的三项优化
