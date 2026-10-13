@@ -307,9 +307,11 @@ manifest (see `assets/manifest.example.json`).
 
 ### What the digest cache does — and does not — guarantee
 
-Every per-file state question (`/api/models`, the formula admission check, and the
-two formula load paths) is answered through one process-wide identity-keyed cache
-(`src/model_verify.rs`). A file's **identity** is its path, size, mtime **and the
+Every per-file **digest** question (`/api/models`, the state table returned by
+`validate_model_files`, and the two formula load paths) is answered through one
+process-wide identity-keyed cache (`src/model_verify.rs`); the admission check on
+both queues is existence-only, so it reports `null` digests instead of paying for a
+re-hash. A file's **identity** is its path, size, mtime **and the
 SHA-256 of its first and last 64 KiB**; the cached value is the full SHA-256 that
 was actually computed for that identity. A hit costs one `stat` plus one 128 KiB
 read, independent of file size; a full re-hash happens on first sight, and again
@@ -322,15 +324,37 @@ The promise is deliberately narrow and exact:
 > changes; the service does **not** claim that the on-disk content is trusted at
 > all times.
 
+What a hit reports, exactly: `present` together with a digest means *that digest is
+the result of the last full verification of this path*. It is not a statement that
+the bytes on disk were just re-read. The cache is a performance heuristic, not an
+integrity guarantee, and `present` is not evidence that the current disk content
+was verified.
+
 The residual blind spot is a same-size, same-mtime edit that also keeps the first
 and last 64 KiB byte-identical (edit the middle only). The partial digest is a
 **heuristic that narrows the window, not a security boundary** — an attacker who
-can write the file can also preserve its head and tail. The deterministic escape
-hatches are `--reverify-models` at startup (cold-verifies every file the run will
-load and refuses to start when one is missing or corrupt) and
+can write the file can also preserve its head and tail. Three deterministic entry
+points re-hash anyway: `--reverify-models` at startup (cold-verifies every file the
+run will load and refuses to start when one is missing or corrupt),
 `POST /api/models/reverify` while running (clears the cache, cold-verifies, and
 rebuilds the engine session so a replaced file cannot keep being served from
-memory).
+memory), and **every load that carries a trusted digest** — such a load reads the
+whole file, and when that full digest disagrees with the cached one the stale entry
+is dropped before the verdict comes back, including on the request whose comparison
+fails. A middle-only edit therefore survives at most until the next guarded load,
+not indefinitely.
+
+That is a narrowed window, not a real-time guarantee: a session already built from
+a now-falsified entry keeps running until an explicit reload, and a load without a
+trusted digest computes no digest at all, so it can neither confirm nor falsify
+what the cache holds.
+
+The wording boundary above is machine-enforced, not a review habit:
+`tools/check_model_state_claims.ps1` fails when a sentence uses an out-of-scope
+phrase such as “integrity guarantee” or “trusted at all times” without its own
+negation, and fails when one of the scope statements above disappears from its
+file. `-SelfTest` re-proves the rule still bites, because a guard that silently
+stops reporting is worse than no guard at all.
 
 ### One run model plan
 
