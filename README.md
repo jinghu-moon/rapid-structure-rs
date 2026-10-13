@@ -74,6 +74,13 @@ before redistributing a complete application or model bundle.
   replaced by axis-aligned boxes), while the canvas keeps drawing the visual
   boxes. Formula and table content deliberately stays out of that layer, since
   `formula.latex` and `table.markdown` are not what the user's eyes see.
+- Each copy exit has one fixed meaning, and the checks that pin it are listed in
+  `docs/05` §9.9: dragging on the image copies recognized characters and merges a
+  cross-region selection in `regions[]` order (document order, which on a vertical or
+  multi-column page is not visual order), “Copy full text” adds each table's markdown and
+  each formula's LaTeX while skipping the text lines a table already consumed,
+  double-clicking a formula row copies its LaTeX, and a rendered table is copied cell by
+  cell. A visual-Unicode rendering of a formula is not offered.
 
 ## Minimal usage
 

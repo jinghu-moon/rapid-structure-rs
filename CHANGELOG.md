@@ -846,6 +846,75 @@ Step 1 打通了出口，本批接通**使用面**。职责定案：**"在图片
   分支仍不产词框（Step 1 已登记），本批的层在那条分支上依旧为空；④ 竖排区域的角点身份在 `order_points`
   重排后丢失，层的列方向对竖排仍取 p0→p1（可能与阅读方向不一致），需 Step 3 与基准一并处理。
 
+## 复制出口的固化：跨区域顺序与公式/表格语义（Step 2 后半，未发布）
+
+`docs/05` §9.8 那张"五种出口各自得到什么"的表是**成文规则**。本批把它变成**可执行判据**：规则一条没改，
+改的是"违反了会不会立刻有人知道"。职责定案不变——拖拽选中与复制是**宿主呈现层**的功能，库不依赖
+浏览器、DOM、剪贴板；本批**零识别行为改动、零线契约改动、不加模型**，`src/bin/web/index.html`
+一个字节都没动。
+
+- **跨区域选择的定案**：合并顺序按 **`regions[]` 的索引**（= 文档顺序 = 线上顺序，因为
+  `renderTextLayer()` 按 `regions.forEach((r, ri)` 建行、每行按 `r.words` 建 span），不是按屏幕上的
+  视觉位置。"复制全文"里被表格消费的页级文本行（`table.source_line_indices`）**跳过**，区域之间以
+  `"\n"` 相接，表格只走 `table.markdown`、**绝不**把 `table.html` 当普通文本粘出去。
+- **脚本化拖拽路径 ≠ 人类的合并规则**（本批最重要的一条方法论，也是一次真实失败的产物）：第一版
+  判据用真鼠标拖拽验跨区域顺序，在 `01基础多位置文本.png` 上失败——DOM 相邻的两行（`ri=1` 左侧竖排、
+  `ri=2` 最右）在屏幕上并非上下堆叠，合成拖拽路径的 focus 落到了 `region 0`。页面没有错（`regions[]`
+  顺序本来不保证等于视觉顺序），**错的是拿路径去断言规则**。定案：配对先要求**严格上下堆叠**
+  （下行 `y0 ≥ 上行 y0 + 2`）、相邻异区域、各 ≥4 个可命中 span、两端 `elementFromPoint` 回到自己，
+  被拒配对按 `sameRegion`/`tooShort`/`notStacked`/`noHit` 计数打印；断言动作改成 **click +
+  shift-click**（`Input.dispatchMouseEvent`，`modifiers:8`）；真拖拽照做但只作为观测值记录。
+- `tools/check-page-flow-cdp.mjs` 从 9 条不变量扩到 **14 条**，新增的 10–14 是：⑩ 每一次"复制全文"的
+  clipboard hand-off 都逐字等于按 wire 重建的期望值（不是只比第一次——页面有 `execCommand` 与
+  `clipboard.writeText` 两条路径，两条记录的是同一段文本）；⑪ 透明层的排他：层里出现过的每个 `data-ri` 必须指向 `kind === "text"` 的区域，`formula.latex` 与
+  `table.markdown` 一律不得铺在图上；⑫ 双击公式行交给 clipboard 的文本 == 该区域的 `formula.latex`；
+  ⑬ 渲染表格确有 ≥1 个 `td`/`th` 且 `user-select` 为原生可选中，**该区域的透明层 span 数为 0**；
+  ⑭ 跨区域选区（click 放光标 + shift-click 扩展）的 anchor/focus 落在 `riA < riB` 两个文本区域、选区是两行拼接的子串且不是任何单行
+  自己的子串、公式与表格载荷不得被卷入。
+- `tools/run-page-flow-cdp.ps1` 新增 `-Mode` / `-AssertTable` / `-AssertFormula`（模式走页面自己的
+  模式行，所以服务端没配公式检测器/表格模型时页面会正确地拒绝，检查如实报这条拒绝；两个 assert 开关
+  要求本轮**真的**产出了该类区域，否则等于对一张没有表格的页面宣称"表格出口已验证"）。
+- 新增页面源码 tripwire `src/bin/serve/tests.rs::the_web_demo_copy_exits_follow_the_registered_semantics`：
+  四个出口仍接在当初登记的那份数据上（全文出口 `regions[]` 顺序 / `table.markdown` /
+  `sourceLineIndices` / `consumed.has(i)` / `parts.join("\n")` 且不含 `.html`；公式出口 `data-latex` +
+  `copyTextToClipboard(latex)`；层出口只认 `kind === "text"` 且函数体内不出现 `markdown`/`latex`；
+  表格出口经 `sanitizeTableHtml(` 进 `.rt-wrap`）。
+- 实测三张不同的图，各跑一遍 14 条（真实 `serve` + headless Chrome，medium 模型）：
+  `01基础多位置文本.png` 41 区域 / 892 span（全 `char`、非轴对齐 21、塌缩 0）/ 跨区域 `[4,5]`；
+  `08数字公式与符号.png`（`-Mode formula -AssertFormula`）54 区域（公式 8）/ 538 span（非轴对齐 22、
+  塌缩 4）/ 跨区域 `[1,2]` / 双击 region 46 交出 `\scriptstyle \int   0 ^ { \wedge } \infty \; \math`；
+  `04表格与键值对.png`（`-Mode text-table -AssertTable`）62 区域（表格 2）/ 533 span（非轴对齐 2）/
+  跨区域 `[0,1]` / 渲染表格 region 60 得 26 个 `td`/`th` 且该区域层 span 0 个。三次 `POST` 202、
+  轮询 103/108/110 次全 200、两个 `/result` 全 200、页面异常 0；**三次拖拽观测值与 shift-click 的
+  断言结果一致**。
+- 反证：CDP 侧 19 例变异全部 FAILED（7 例复制/表格/层、5 例公式与模式切换、7 例跨区域顺序），
+  Rust tripwire 侧 6 例变异全部 FAILED 且各自停在对应那条断言上；变异脚本跑完即还原，
+  `git status` 对 `src/bin/web/index.html` 为空。
+- 工具侧两条会静默坑掉整轮实测的事实，已写进脚本与 `docs/05` §9.9：① 这个 ps1 **必须用 pwsh 7**
+  启动——它没有 BOM，Windows PowerShell 5.1 会把写死的中文默认图片路径按 ANSI 解成乱码，Chrome 拿到
+  一个不存在的文件，于是**整轮空跑**却仍产出一份"全空"报告；脚本现在先 `Test-Path -LiteralPath`
+  再决定跑不跑，把静默空跑变成一句话失败。② `-Image` 传相对路径会被 Chrome 按**它自己的**工作目录
+  解析，改为先 `GetFullPath`。
+- 门禁九项（`docs/12` §8.1 清单，含先 `-SelfTest` 再正式扫描的两个守卫）外加 `node --check
+  tools\check-page-flow-cdp.mjs`，提交前全套实跑，**退出码均为 0**：`fmt --check`、
+  `clippy --all-targets --features serve -D warnings`、`test --all-targets --features serve`
+  （lib **757 passed + 2 ignored**、rapidstruct bin **301**）、serve 串行 `--test-threads=1`
+  （**301 passed**，318.31s）、`serve_startup` 串行（2 passed）、`check-page-result-contract.mjs`、
+  `generate-table-whitelist.mjs --check`（fingerprint `32cf61e1…` 与上批一致）、`node --check`、
+  守卫 selftest + 正式扫描（220 个文本文件 / 15 条越界短语 / 6 份必须句，PASS）。
+  基线对比：lib 757 不变（本批无 lib 用例）、bin 300 → **301**（+1 条复制出口 tripwire）。
+  本批只改文档与脚本、没改 `src/` 的生产代码，因此文档与 mjs 在九项跑完**之后**还有改动，改后
+  单独复跑受影响的那三条：守卫 `-SelfTest`=0、守卫正式扫描=0、`node --check`=0（Rust 三项不读
+  这些文件，`src/bin/web/index.html` 一个字节没动，`cargo test` 的判据输入不变）。
+
+- 本批未消除，也不叙述为已消除：① headless Chrome 拒绝真正的剪贴板写入，第 10 与第 12 条验的是**页面
+  交给 clipboard API 的那段文本**（toast 如实报"复制失败，请手动选择文本"），不是"用户剪贴板里最终
+  是什么"；② 公式的"视觉 Unicode 形式"仍未提供，出口只有 LaTeX 一条；③ `regions[]` 顺序与视觉顺序
+  在竖排/多栏图上不一致，本批把它登记为**规则的边界**（人类真实拖拽在这种图上会选中路径经过的区域，
+  合并顺序仍按文档顺序）；④ 跨区域判据需要存在"严格上下堆叠且两端可命中"的相邻异区域行对，找不到时
+  报 `cross.found=false` 并附拒因计数；⑤ 字符框仍是 CTC 后处理估计，本批的任何一条判据都**不是**
+  字符边界精度的证据 → Step 3/4。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、

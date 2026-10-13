@@ -37,15 +37,43 @@
  *      more collapsed boxes than before, the page's own zoom readout changed, and every placed span
  *      still inside the displayed image (the layer shares the overlay's single layout tick).
  *
+ * Step 2's second half adds five more, about the **copy exits** — the buttons are the other half of
+ * "what the reader gets when they copy", and `user-select` alone cannot prove it. The page's own
+ * routing is captured at the instant it hands text to the clipboard, then compared against a second
+ * rebuild made here from the same `/result` body, so a change in the page's merge rule shows up as a
+ * failure instead of as a silent behaviour change:
+ *  10. 复制全文 is the wire rebuilt in `regions[]` order — text regions contribute `recognition.text`,
+ *      a table region contributes `table.markdown`, a formula region contributes `formula.latex`, and
+ *      the lines the table consumed are skipped (otherwise the same text is copied twice, the second
+ *      time outside its table context);
+ *  11. the transparent layer holds **nothing** but text-region characters: no `formula.latex` and no
+ *      `table.markdown` is laid over the image, because neither is what the reader's eyes see;
+ *  12. double-clicking a formula row copies exactly that region's `formula.latex` (LaTeX is the
+ *      default formula form; no visual-Unicode variant exists yet);
+ *  13. the rendered table exposes every recognized cell's text as real DOM `<td>` text — a table is
+ *      copied per cell, natively, not through the lossy markdown placed on the picture;
+ *  14. a selection that starts in one text region and ends in the next one (caret placed by a click,
+ *      extended by a shift-click) merges **in `regions[]` order** and stays inside those two lines —
+ *      the layer's DOM order is the registered cross-region text order, and formula or table content is
+ *      never swept in. A scripted *drag path* is then replayed over the same two points and recorded as
+ *      an observation only: this benchmark sheet's wire order is not its visual order, so the path can
+ *      legitimately land elsewhere, and that difference is reported rather than asserted.
+
+ *
  * Modes
  * -----
  *   node tools/check-page-flow-cdp.mjs --capture <capture.json>
  *       Assert the invariants against an already-recorded capture (used to prove the check
  *       *bites*: the pre-fix capture must FAIL it).
- *   node tools/check-page-flow-cdp.mjs --base <url> --cdp <port> --image <path> [--out <dir>] [--assert-tilt]
- *       Drive a live server end to end and assert the same invariants. `--assert-tilt` additionally
- *       requires at least one span to be measurably non-axis-aligned — pass it for a tilted test
- *       image, never for a straight one, or the check would assert nothing about tilt.
+ *   node tools/check-page-flow-cdp.mjs --base <url> --cdp <port> --image <path> [--out <dir>] [--mode <id>] [--assert-tilt] [--assert-table] [--assert-formula]
+ *       Drive a live server end to end and assert the same invariants. `--mode` selects the page's
+ *       own recognition mode (`text` / `formula` / `text-table` / `formula-table`) through its
+ *       selector, so `queue=`/`table=` reach the wire the way a user sends them.
+ *       `--assert-tilt` additionally requires at least one span to be measurably non-axis-aligned —
+ *       pass it for a tilted test image, never for a straight one, or the check would assert nothing
+ *       about tilt. `--assert-table` / `--assert-formula` likewise require the run to actually have
+ *       produced that kind of region: a run without them cannot support the claim, and the table and
+ *       formula exits would silently degrade to "asserted nothing".
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -61,6 +89,9 @@ const imagePath = arg('image');
 const outDir = arg('out', join('target', 'flow-gate', 'cdp-live'));
 const capturePath = arg('capture');
 const assertTilt = argv.includes('--assert-tilt');
+const assertTable = argv.includes('--assert-table');
+const assertFormula = argv.includes('--assert-formula');
+const modeId = arg('mode');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -137,6 +168,9 @@ const LAYER_PROBE = `JSON.stringify((() => {
       return im ? { w: im.naturalWidth, h: im.naturalHeight } : null;
     })(),
     regionItems: document.querySelectorAll('#regionList .region-item').length,
+    /* every region the layer was built from, not just the 60 spans sampled for geometry: the
+     * exclusivity claim covers formula and table regions, which have no span at all */
+    ris: [...new Set(all.map((s) => Number(s.getAttribute('data-ri'))))],
     zoom: (document.querySelector('#zoomLbl') || {}).textContent || null,
     /* the box the page fitted the image into, in case the fit itself is the thing going wrong */
     env: (() => {
@@ -217,6 +251,151 @@ const DRAG_TARGET = `JSON.stringify((() => {
   return { found: false, lines: lines.length, longest, longestLine, maxH, zoom: (document.querySelector('#zoomLbl') || {}).textContent || null };
 })())`;
 
+/* What the page hands to the clipboard is captured at that exact call. The page tries the synchronous
+ * textarea path (`document.execCommand('copy')`) first and falls back to the async Clipboard API, so
+ * both entry points are wrapped **before the page's own script runs** — after the fact there is no
+ * second chance, the copy already happened. The recorded string is what the page chose to copy; that
+ * is the contract under test, and it is a different question whether this particular headless browser
+ * then let the write through (the page reports that itself, through its toast). */
+const COPY_HOOK = `(() => {
+  window.__demoCopies = [];
+  const push = (via, text) => window.__demoCopies.push({ via, text: String(text === null || text === undefined ? '' : text) });
+  const exec = Document.prototype.execCommand;
+  Document.prototype.execCommand = function (cmd) {
+    if (String(cmd).toLowerCase() === 'copy') {
+      const el = document.activeElement;
+      const sel = document.getSelection();
+      push('execCommand', el && el.tagName === 'TEXTAREA' ? el.value : sel ? sel.toString() : '');
+    }
+    return exec.apply(this, arguments);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = (text) => { push('clipboard', text); return write(text); };
+  }
+  return 'hooked';
+})()`;
+
+/* The recognition mode must be taken through the page's own radio group. A mode the page refuses for
+ * a missing model role cannot be smuggled in by hand-writing `queue=` on the request: the page would
+ * never have produced that request, and the check would be testing the harness. */
+const MODE_SELECT = (id) => `JSON.stringify((() => {
+  const before = document.querySelector('#modeOpts [data-mode="${id}"]');
+  if (!before) return { selected: false, missing: true, cap: (document.querySelector('#modeCap') || {}).textContent || null };
+  before.click();
+  /* The page re-renders the whole radiogroup on selection, so the node that was just clicked is
+   * detached and still carries the *old* aria-checked. Read the fresh one: the claim under test
+   * is "the page left this mode selected", not "this element object answered". */
+  const b = document.querySelector('#modeOpts [data-mode="${id}"]');
+  return {
+    selected: !!b && b.getAttribute('aria-checked') === 'true',
+    disabled: !!b && b.getAttribute('aria-disabled') === 'true',
+    cap: (document.querySelector('#modeCap') || {}).textContent || null,
+    toasts: [...document.querySelectorAll('#toasts .toast')].map((t) => t.textContent),
+  };
+})())`;
+
+/* The three button exits, pressed in the order a reader would find them. They are dispatched by
+ * script, so real user activation is not guaranteed and the clipboard write itself may still be
+ * refused — the point of the probe is which text the page routes there. */
+const FORMULA_DBLCLICK = `JSON.stringify((() => {
+  const item = [...document.querySelectorAll('#regionList .region-item')].find((e) => e.querySelector('.fx-slot'));
+  if (!item) return null;
+  const ri = Number(item.getAttribute('data-i'));
+  item.querySelector('.fx-slot').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  return { ri };
+})())`;
+
+const TABLE_RENDER = `JSON.stringify((() => {
+  const btn = document.querySelector('#regionList [data-table-render]');
+  if (!btn) return null;
+  btn.click();
+  const item = btn.closest('.region-item');
+  const ri = item ? Number(item.getAttribute('data-i')) : null;
+  const cells = item ? [...item.querySelectorAll('.rt-wrap table td, .rt-wrap table th')] : [];
+  const norm = (s) => String(s).replace(/\\s+/g, ' ').trim();
+  const first = cells.length ? getComputedStyle(cells[0]) : null;
+  return {
+    ri,
+    tdTexts: cells.map((t) => norm(t.textContent)),
+    tdUserSelect: first ? first.userSelect || first.webkitUserSelect || 'auto' : null,
+    layerSpansOfThisRegion: [...document.querySelectorAll('#textLayer .tl-word')]
+      .filter((s) => Number(s.getAttribute('data-ri')) === ri).length,
+  };
+})())`;
+
+/* A cross-region selection. The layer holds one `.tl-line` per text region **in `regions[]` order**,
+ * so a selection that starts in one region and ends in the next can only be answered correctly by
+ * that order — which is the registered merge rule for cross-region selection, and the one thing a
+ * reader cannot see coming when they select past the end of a line.
+ *
+ * The pair is picked so the gesture is the one a reader actually makes: two adjacent lines from two
+ * different regions, the first strictly **above** the second on screen (stacked, not overlapping), so
+ * "region order" and "the order the eyes meet them" agree for this run. A pair that fails that test —
+ * e.g. a vertical column on the left whose next region in wire order sits on the far right — cannot
+ * support the claim, and is counted in the rejection report instead of being selected anyway.
+ *
+ * The gesture is click, then shift-click. A scripted *drag path* would move the focus through
+ * whatever lies under each interpolated point (this benchmark sheet's regions are deliberately not in
+ * visual order), so it measures the path rather than the merge rule; the drag is still performed and
+ * recorded, but as an observation, not as the assertion. */
+const CROSS_TARGET = `JSON.stringify((() => {
+  const lines = [...document.querySelectorAll('#textLayer .tl-line')];
+  const inView = (x, y) => x > 2 && y > 2 && x < innerWidth - 2 && y < innerHeight - 2;
+  const meas = (l) => [...l.querySelectorAll('.tl-word')]
+    .filter((s) => s.style.display !== 'none')
+    .map((s) => {
+      const r = s.getBoundingClientRect();
+      return { el: s, text: s.textContent, x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+    });
+  const union = (sp) => {
+    if (!sp.length) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const s of sp) {
+      const r = s.el.getBoundingClientRect();
+      x0 = Math.min(x0, r.left); y0 = Math.min(y0, r.top);
+      x1 = Math.max(x1, r.right); y1 = Math.max(y1, r.bottom);
+    }
+    return { x0, y0, x1, y1 };
+  };
+  const hittable = (s) => s.w >= 3 && s.h >= 3 && inView(s.x, s.y) && document.elementFromPoint(s.x, s.y) === s.el;
+  const pick = (sp) => {
+    const idx = sp.map((_, i) => i).filter((i) => hittable(sp[i]));
+    if (!idx.length) return null;
+    return sp[idx[Math.floor(idx.length / 2)]];
+  };
+  const name = (e) => (e ? e.tagName + '.' + (e.className || '?') : 'null');
+  const rej = { sameRegion: 0, tooShort: 0, notStacked: 0, noHit: 0 };
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    const riA = Number(lines[i].getAttribute('data-ri'));
+    const riB = Number(lines[i + 1].getAttribute('data-ri'));
+    if (riA === riB) { rej.sameRegion += 1; continue; }
+    const a = meas(lines[i]);
+    const b = meas(lines[i + 1]);
+    if (a.length < 4 || b.length < 4) { rej.tooShort += 1; continue; }
+    lines[i].querySelector('.tl-word').scrollIntoView({ block: 'center', inline: 'center' });
+    const ua = union(a), ub = union(b);
+    /* strictly stacked: the reader meets line A before line B, in the same order the layer holds them */
+    if (!(ua && ub) || ub.y0 < ua.y0 + 2) { rej.notStacked += 1; continue; }
+    const from = pick(a);
+    const to = pick(b);
+    if (!from || !to) { rej.noHit += 1; continue; }
+    return {
+      found: true,
+      riA: riA,
+      riB: riB,
+      aText: a.map((s) => s.text).join(''),
+      bText: b.map((s) => s.text).join(''),
+      stack: { aTop: ua.y0, aBottom: ua.y1, bTop: ub.y0, bBottom: ub.y1 },
+      from: { x: from.x, y: from.y, text: from.text, hit: name(document.elementFromPoint(from.x, from.y)) },
+      to: { x: to.x, y: to.y, text: to.text, hit: name(document.elementFromPoint(to.x, to.y)) },
+      rejected: rej,
+      zoom: (document.querySelector('#zoomLbl') || {}).textContent || null,
+    };
+  }
+  return { found: false, lines: lines.length, rejected: rej, zoom: (document.querySelector('#zoomLbl') || {}).textContent || null };
+})())`;
+
 /** Run the page against a live server and return the same shape as a recorded capture. */
 async function record() {
   if (!base || !cdpPort || !imagePath) {
@@ -269,6 +448,7 @@ async function record() {
   await send('Runtime.enable');
   await send('Page.enable');
   await send('Network.enable');
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: COPY_HOOK });
   /* A real window first, then the same emulated viewport on top of it.
    *
    * The page's left column is a flex column whose image box is `flex:1; min-height:0`, so every row
@@ -288,6 +468,17 @@ async function record() {
   await send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1300, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: `${base}/` });
   await sleep(2500);
+
+  /* The mode row only appears once `/api/models` has been read, and that first read can take seconds
+   * (models are verified on first use), so wait for the control instead of clicking into nothing. */
+  let modeProbe = null;
+  if (modeId) {
+    for (let i = 0; i < 60; i += 1) {
+      modeProbe = JSON.parse(await evaluate(MODE_SELECT(modeId)));
+      if (modeProbe.selected) break;
+      await sleep(500);
+    }
+  }
 
   const document = await send('DOM.getDocument', { depth: -1 });
   const input = await send('DOM.querySelector', { nodeId: document.result.root.nodeId, selector: '#fileInput' });
@@ -370,10 +561,23 @@ async function record() {
       const body = await res.json();
       wire = {
         size: body.image && body.image.original_size,
+        plain: body.output && body.output.plain_text,
         regions: (body.regions || []).map((r) => ({
           kind: r.kind,
           text: r.recognition && r.recognition.text,
           words: (r.recognition && r.recognition.words) || null,
+          formulaLatex: r.formula ? r.formula.latex : null,
+          table: r.table
+            ? {
+                markdown: typeof r.table.markdown === 'string' ? r.table.markdown : null,
+                sourceLineIndices: Array.isArray(r.table.source_line_indices)
+                  ? r.table.source_line_indices
+                  : [],
+                cells: (Array.isArray(r.table.cells) ? r.table.cells : []).map(
+                  (c) => (c && typeof c.text === 'string' ? c.text : ''),
+                ),
+              }
+            : null,
         })),
       };
     }
@@ -423,9 +627,102 @@ async function record() {
   /* The layer must follow the zoom the same way the overlay boxes do — same layout tick, same scale. */
   const layerZoomed = target && target.found ? JSON.parse(await evaluate(LAYER_PROBE)) : null;
 
+  /* ---- invariant 14: the cross-region merge order, selected the way a reader extends a caret ---
+   * click (caret) -> shift-click (extend). The same two points are then dragged across, and the drag
+   * result is recorded as an observation: the sheet's wire order is not its visual order, so a drag
+   * path is allowed to differ and that difference is the thing being reported, not asserted. */
+  let cross = null;
+  for (let z = 0; z < 10 && !(cross && cross.found); z += 1) {
+    cross = JSON.parse(await evaluate(CROSS_TARGET));
+    if (cross.found) break;
+    await evaluate(`(() => { const b = document.querySelector('#zoomIn'); if (!b) throw new Error('the page has no zoom-in control'); b.click(); return 'zoom'; })()`);
+    await sleep(300);
+  }
+  if (cross && cross.found) {
+    cross = JSON.parse(await evaluate(CROSS_TARGET));
+    const click = (p, shift) => {
+      const mods = shift ? 8 : 0;
+      return [
+        send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1, buttons: 1, modifiers: mods }),
+        send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1, buttons: 0, modifiers: mods }),
+      ];
+    };
+    const readSel = () => evaluate(`JSON.stringify((() => { const g = document.getSelection();
+      if (!g || !g.rangeCount) return null;
+      const ri = (n) => { while (n && n.nodeType === 3) n = n.parentElement; return n && n.classList && n.classList.contains('tl-word') ? Number(n.getAttribute('data-ri')) : null; };
+      return { text: g.toString(), collapsed: g.isCollapsed, anchorRi: ri(g.anchorNode), focusRi: ri(g.focusNode) }; })())`);
+    const clear = () => evaluate(`(document.getSelection() || {}).removeAllRanges(); 'clear'`);
+
+    await clear();
+    await Promise.all(click(cross.from, false));
+    await sleep(120);
+    await Promise.all(click(cross.to, true));
+    await sleep(200);
+    const shifted = JSON.parse(await readSel());
+    cross.selection = shifted ? shifted.text : null;
+    cross.range = shifted;
+
+    await clear();
+    const moveDrag = (type, p) =>
+      send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', clickCount: 1, buttons: type === 'mouseReleased' ? 0 : 1 });
+    await moveDrag('mousePressed', cross.from);
+    for (let i = 1; i <= 6; i += 1) {
+      const t = i / 7;
+      await moveDrag('mouseMoved', { x: cross.from.x + (cross.to.x - cross.from.x) * t, y: cross.from.y + (cross.to.y - cross.from.y) * t });
+    }
+    await moveDrag('mouseReleased', cross.to);
+    await sleep(200);
+    const dragged = JSON.parse(await readSel());
+    cross.dragSelection = dragged ? dragged.text : null;
+    cross.dragRange = dragged;
+    await clear();
+  }
+
+  /* ---- Step 2 (w5): the copy exits, measured in the same browser session ------------------
+   * Nothing here reads the page's own builder functions: the numbers recorded below are the strings
+   * the page handed to `execCommand('copy')` / `clipboard.writeText`, and the expected values are
+   * rebuilt from `wire` on this side. Two implementations of the merge rule that agree is the point. */
+  const readCopies = async () => JSON.parse(await evaluate('JSON.stringify(window.__demoCopies || [])'));
+  const added = (before, after) => (after.length > before ? after.slice(before) : []);
+  const copyProbe = { error: null };
+  let copies = [];
+  try {
+    let mark = (copies = await readCopies()).length;
+    await evaluate(`(() => { const b = document.querySelector('#copyAllBtn');`
+      + ` if (!b) throw new Error('the page has no 复制全文 control'); b.click(); return 'copy-all'; })()`);
+    await sleep(400);
+    copies = await readCopies();
+    copyProbe.copyAllEntries = added(mark, copies);
+    copyProbe.copyAll = copyProbe.copyAllEntries.length ? copyProbe.copyAllEntries[0].text : null;
+    copyProbe.copyAllVia = copyProbe.copyAllEntries.map((c) => c.via);
+
+    mark = copies.length;
+    copyProbe.formula = JSON.parse(await evaluate(FORMULA_DBLCLICK));
+    await sleep(400);
+    copies = await readCopies();
+    copyProbe.formulaEntries = added(mark, copies);
+    copyProbe.formulaCopy = copyProbe.formulaEntries.length ? copyProbe.formulaEntries[0].text : null;
+
+    mark = copies.length;
+    copyProbe.table = JSON.parse(await evaluate(TABLE_RENDER));
+    await sleep(300);
+    copies = await readCopies();
+    /* Rendering a table copies nothing: its exit is the reader selecting real <td> text, which the
+       probe below reads out of the DOM. The entries are kept only so a regression that starts
+       routing table content through a button is visible instead of assumed away. */
+    copyProbe.tableEntries = added(mark, copies);
+  } catch (error) {
+    copyProbe.error = String(error && error.message ? error.message : error);
+  }
+  copyProbe.toastTail = JSON.parse(
+    await evaluate(`JSON.stringify([...document.querySelectorAll('#toasts .toast')].map((t) => t.textContent).slice(-3))`),
+  );
+
   const capture = {
     baseUrl: base,
     assertTilt,
+    mode: modeId,
+    modeProbe,
     charsRun: { posted: postedChars(), results: requests.filter(isResult).length - resultsBefore },
     apiResponses: responses
       .map((r) => ({ ...r, ...(requests.find((q) => q.id === r.id) || {}) }))
@@ -438,6 +735,9 @@ async function record() {
     zoomTries,
     wire,
     drag,
+    cross,
+    copyProbe,
+    copies,
   };
   writeFileSync(join(outDir, 'cdp-flow.json'), JSON.stringify(capture, null, 2));
   ws.close();
@@ -664,6 +964,207 @@ if (layer && wire) {
   }
 }
 
+/* ---- Step 2 (w5): the copy exits, compared against an independent rebuild ----
+ * `wire` is the same `/result` body the page rendered, and every expectation below is derived from it
+ * here — never by calling the page's own builder. Two independent implementations of the merge rule
+ * agreeing is the whole point; reading the page's function back would prove only that it ran. */
+const copyProbe = capture.copyProbe || {};
+const formulaRegions = ((wire || {}).regions || []).filter((r) => r && r.kind === 'formula');
+const tableRegions = ((wire || {}).regions || []).filter((r) => r && r.kind === 'table');
+
+if (capture.mode) {
+  check(
+    !!capture.modeProbe && capture.modeProbe.selected === true,
+    `--mode ${JSON.stringify(capture.mode)} must be selectable through the page's own mode row, got ${JSON.stringify(capture.modeProbe)}`,
+  );
+  const queue = String(capture.mode).startsWith('formula') ? 'queue=formula' : 'queue=text';
+  check(
+    !!submitted && submitted.url.includes(queue),
+    `the page must submit the mode it was left on (${queue}), got ${submitted ? JSON.stringify(String(submitted.url).slice(-90)) : 'no POST'}`,
+  );
+  if (String(capture.mode).endsWith('-table')) {
+    check(
+      !!submitted && /[?&]table=1/.test(submitted.url),
+      `mode ${JSON.stringify(capture.mode)} must send table=1, got ${submitted ? JSON.stringify(String(submitted.url).slice(-90)) : 'no POST'}`,
+    );
+  }
+}
+if (assertFormula) {
+  check(
+    formulaRegions.length > 0,
+    `--assert-formula: this run must have produced at least one formula region, got ${formulaRegions.length} of ${(wire || {}).regions ? wire.regions.length : 0} region(s)`,
+  );
+}
+if (assertTable) {
+  check(
+    tableRegions.length > 0,
+    `--assert-table: this run must have produced at least one table region, got ${tableRegions.length} of ${(wire || {}).regions ? wire.regions.length : 0} region(s)`,
+  );
+}
+
+/* (14) cross-region selection merges in `regions[]` order and carries nothing but those two lines. */
+const cross = capture.cross || {};
+/* Only meaningful when the layer holds more than one region's line: a run with a single text region
+ * cannot cross a boundary, so the invariant is reported as not exercised rather than passed. */
+const crossable = ((layer || {}).ris || []).length >= 2;
+if (layer && wire && crossable) {
+  check(
+    cross.found === true,
+    `the layer must offer two stacked text-region lines from different regions whose spans a click can hit, got ${JSON.stringify({ lines: cross.lines, rejected: cross.rejected, zoom: cross.zoom })}`,
+  );
+  if (cross.found) {
+    const strip = (s) => String(s === null || s === undefined ? '' : s).replace(/\s+/g, '');
+    const a = strip(cross.aText);
+    const b = strip(cross.bText);
+    const sel = strip(cross.selection);
+    const regionA = wire.regions[cross.riA] || {};
+    const regionB = wire.regions[cross.riB] || {};
+    check(regionA.kind === 'text' && regionB.kind === 'text', `both lines of a cross-region selection must be text regions, got ${JSON.stringify([cross.riA, regionA.kind, cross.riB, regionB.kind])}`);
+    check(cross.riA < cross.riB, `the layer must hold its lines in regions[] order, but the upper line is region ${cross.riA} and the next is ${cross.riB}`);
+    check(
+      /tl-word/.test(String(cross.from.hit)) && /tl-word/.test(String(cross.to.hit)),
+      `both click points must land on the spans they name, got ${JSON.stringify(cross.from.hit)} / ${JSON.stringify(cross.to.hit)}`,
+    );
+    check(
+      Number(cross.range && cross.range.anchorRi) === cross.riA && Number(cross.range && cross.range.focusRi) === cross.riB,
+      `the selection must be anchored in region ${cross.riA} and extended into region ${cross.riB}, got anchor ${JSON.stringify(cross.range && cross.range.anchorRi)} focus ${JSON.stringify(cross.range && cross.range.focusRi)}`,
+    );
+    check(sel.length > 0, `click then shift-click across two regions must select something, got ${JSON.stringify(String(cross.selection).slice(0, 40))}`);
+    check(
+      (a + b).includes(sel),
+      `a cross-region selection must merge into one contiguous slice of those two lines in region order (no third region's text may be swept in), selected ${JSON.stringify(sel.slice(0, 60))} between ${JSON.stringify(a.slice(0, 30))} and ${JSON.stringify(b.slice(0, 30))}`,
+    );
+    check(
+      !a.includes(sel) && !b.includes(sel),
+      `the selection must actually cross from region ${cross.riA} into region ${cross.riB}, but it sat inside one line: ${JSON.stringify(sel.slice(0, 60))}`,
+    );
+    const foreign = [];
+    wire.regions.forEach((r) => {
+      if (!r) return;
+      const payload = r.kind === 'formula' ? r.formulaLatex : r.kind === 'table' && r.table ? r.table.markdown : null;
+      const p = strip(payload);
+      if (p.length > 4 && sel.includes(p.slice(0, Math.min(p.length, 12)))) foreign.push(`${r.kind}:${p.slice(0, 12)}`);
+    });
+    check(
+      foreign.length === 0,
+      `a cross-region selection must not sweep formula or table content into the text: ${JSON.stringify(foreign.slice(0, 2))}`,
+    );
+  }
+}
+
+if (wire) {
+  check(!copyProbe.error, `the copy exits must be reachable on the page, probe stopped with ${JSON.stringify(copyProbe.error)}`);
+
+  /* (10) the registered merge rule: region order, table → markdown, consumed lines skipped, formula → LaTeX. */
+  const consumed = new Set();
+  wire.regions.forEach((r) => {
+    if (r && r.kind === 'table' && r.table) r.table.sourceLineIndices.forEach((n) => consumed.add(n));
+  });
+  const parts = [];
+  wire.regions.forEach((r, i) => {
+    if (!r) return;
+    if (r.kind === 'table') {
+      const md = r.table && typeof r.table.markdown === 'string' ? r.table.markdown.trim() : '';
+      if (md !== '') parts.push(md);
+      return;
+    }
+    if (consumed.has(i)) return;
+    const t = r.kind === 'formula' ? r.formulaLatex : r.text;
+    if (t) parts.push(t);
+  });
+  const expectedFull = parts.join('\n');
+  check(expectedFull !== '', 'the wire must carry at least one copyable region, or this check asserts nothing');
+  /* Both clipboard paths are hooked and the page tries them in order, so one press legitimately
+   * records the *same* text twice (`execCommand` refused in headless Chrome, then `writeText`).
+   * Comparing every hand-off against the rebuild is the assertion; concatenating them would have
+   * compared a string the page never produced. Whether the browser then let the write through is a
+   * different question, and the page reports it itself through its toast. */
+  const fullEntries = copyProbe.copyAllEntries || [];
+  check(
+    fullEntries.length > 0,
+    "复制全文 must hand its text to a clipboard path (execCommand('copy') or clipboard.writeText); none was called",
+  );
+  const fullWrong = fullEntries.filter((e) => e.text !== expectedFull);
+  check(
+    fullWrong.length === 0,
+    '复制全文 must be the wire merged in regions[] order (table → table.markdown, the lines a table'
+      + ' consumed skipped, formula → formula.latex): the page handed'
+      + ` ${JSON.stringify(String(fullEntries.length ? fullEntries[0].text : '').slice(0, 60))} while the rebuild says ${JSON.stringify(expectedFull.slice(0, 60))}`,
+  );
+
+  /* (11) exclusivity: what is laid over the image is recognized characters, nothing else. */
+  if (layer) {
+    const foreign = (layer.ris || []).filter((ri) => ((wire.regions[ri] || {}).kind !== 'text'));
+    check(
+      foreign.length === 0,
+      `only text regions may contribute spans, but the layer holds ${JSON.stringify(foreign.map((ri) => `${ri}:${(wire.regions[ri] || {}).kind}`))}`,
+    );
+    const leaked = [];
+    wire.regions.forEach((r, i) => {
+      if (!r) return;
+      const probe = r.kind === 'formula'
+        ? r.formulaLatex
+        : r.kind === 'table' && r.table
+          ? r.table.markdown
+          : null;
+      if (typeof probe === 'string' && probe.trim().length > 2 && layer.layerText.includes(probe.trim())) {
+        leaked.push(`region ${i} (${r.kind}) ${JSON.stringify(probe.trim().slice(0, 30))}`);
+      }
+    });
+    check(
+      leaked.length === 0,
+      `formula LaTeX and table markdown must stay out of the transparent layer — they are not what the reader's eyes see: ${leaked.slice(0, 2).join('; ')}`,
+    );
+  }
+
+  /* (12) the formula exit copies LaTeX, the machine-readable form, not a rendering artefact. */
+  if (copyProbe.formula && Number.isInteger(copyProbe.formula.ri)) {
+    const region = wire.regions[copyProbe.formula.ri] || {};
+    check(region.kind === 'formula', `the row double-clicked must be a formula region, got ${JSON.stringify(region.kind)}`);
+    const formulaEntries = copyProbe.formulaEntries || [];
+    check(
+      formulaEntries.length > 0,
+      `double-clicking formula row ${copyProbe.formula.ri} must hand its LaTeX to a clipboard path, none was called`,
+    );
+    const formulaWrong = formulaEntries.filter((e) => e.text !== region.formulaLatex);
+    check(
+      formulaWrong.length === 0,
+      `double-clicking formula row ${copyProbe.formula.ri} must copy exactly its formula.latex: the page handed`
+        + ` ${JSON.stringify(String(formulaEntries.length ? formulaEntries[0].text : '').slice(0, 60))}, the wire says ${JSON.stringify(String(region.formulaLatex).slice(0, 60))}`,
+    );
+  } else if (formulaRegions.length) {
+    check(false, `the run produced ${formulaRegions.length} formula region(s) but the page rendered no double-clickable formula row`);
+  }
+
+  /* (13) the table exit is per-cell native DOM text, and the markdown never becomes picture overlay. */
+  if (copyProbe.table && Number.isInteger(copyProbe.table.ri)) {
+    const region = wire.regions[copyProbe.table.ri] || {};
+    check(region.kind === 'table', `the rendered table must belong to a table region, got ${JSON.stringify(region.kind)}`);
+    const cells = (((region.table || {}).cells) || [])
+      .map((t) => String(t).replace(/\s+/g, ' ').trim())
+      .filter((t) => t !== '');
+    const missing = cells.filter((t) => !(copyProbe.table.tdTexts || []).includes(t));
+    check(
+      (copyProbe.table.tdTexts || []).length > 0,
+      `clicking 渲染表格 must put a real <table> in the DOM (the cell text a reader can select), got ${JSON.stringify((copyProbe.table.tdTexts || []).length)} td/th cell(s)`,
+    );
+    check(
+      missing.length === 0,
+      `every recognized cell's text must be selectable DOM text in the rendered table, missing ${JSON.stringify(missing.slice(0, 3))}`,
+    );
+    check(
+      !/none/.test(String(copyProbe.table.tdUserSelect)),
+      `the rendered cells must stay selectable, user-select=${JSON.stringify(copyProbe.table.tdUserSelect)}`,
+    );
+    check(
+      copyProbe.table.layerSpansOfThisRegion === 0,
+      `a table region must contribute no span to the transparent layer, got ${copyProbe.table.layerSpansOfThisRegion}`,
+    );
+  } else if (tableRegions.length) {
+    check(false, `the run produced ${tableRegions.length} table region(s) but the page rendered no 渲染表格 control to exercise the cell exit`);
+  }
+}
+
 console.log(`capture: ${label}`);
 console.log(`  POST /api/ocr           -> ${submitted ? submitted.status : 'MISSING'}`);
 console.log(`  GET /api/jobs/{id}      -> ${polls.length} poll(s) ${polls.map((p) => p.status).join(',')}`);
@@ -680,10 +1181,18 @@ if (layer) {
   if (capture.zoomTries) console.log(`  zoom attempts           -> ${JSON.stringify(capture.zoomTries.slice(-4))}`);
   if (layer.env) console.log(`  fit box / zoom control  -> ${JSON.stringify(layer.env)}`);
 }
+if (capture.mode) console.log(`  recognition mode        -> ${JSON.stringify(capture.mode)} selected=${JSON.stringify(capture.modeProbe && capture.modeProbe.selected)}, regions formula=${formulaRegions.length} table=${tableRegions.length}`);
+console.log(`  layer region kinds      -> ${JSON.stringify(((layer || {}).ris || []).map((ri) => ((wire || {}).regions || [])[ri] ? (wire.regions[ri].kind === 'text' ? 'text' : wire.regions[ri].kind) : '?'))}`);
+console.log(`  cross-region extend    -> ${JSON.stringify(String(cross.selection || '').slice(0, 60))} across regions ${JSON.stringify([cross.riA, cross.riB])} range ${JSON.stringify(cross.range)} stacked=${JSON.stringify(cross.stack)}`);
+console.log(`  cross-region drag (obs) -> ${JSON.stringify(String(cross.dragSelection || '').slice(0, 60))} range ${JSON.stringify(cross.dragRange)} rejected pairs ${JSON.stringify(cross.rejected)}`);
+console.log(`  复制全文              -> ${JSON.stringify(String(copyProbe.copyAll === null || copyProbe.copyAll === undefined ? copyProbe.copyAll : String(copyProbe.copyAll).replace(/\s+/g, ' ').slice(0, 60)))} via ${JSON.stringify(copyProbe.copyAllVia || [])} (${JSON.stringify((copyProbe.copyAllEntries || []).length)} hand-off(s))`);
+console.log(`  formula dblclick        -> region ${JSON.stringify(copyProbe.formula && copyProbe.formula.ri)} copied ${JSON.stringify(String(copyProbe.formulaCopy || '').slice(0, 50))}`);
+console.log(`  table render            -> region ${JSON.stringify(copyProbe.table && copyProbe.table.ri)}, ${(((copyProbe.table || {}).tdTexts) || []).length} td/th cell(s), user-select ${JSON.stringify(copyProbe.table && copyProbe.table.tdUserSelect)}, layer spans of it ${JSON.stringify(copyProbe.table && copyProbe.table.layerSpansOfThisRegion)}`);
+console.log(`  last toasts           -> ${JSON.stringify(copyProbe.toastTail || [])}`);
 
 if (problems.length) {
   for (const problem of problems) console.error(`FAIL ${problem}`);
   console.error(`\npage flow check FAILED (${problems.length} problem(s))`);
   process.exit(1);
 }
-console.log('\npage flow check PASSED: one upload polls its job, fetches its result, clears the animation, renders regions, and the transparent text layer is selectable text that equals the wire, sits on its own polygons, follows the zoom, and yields to a real mouse drag');
+console.log('\npage flow check PASSED: one upload polls its job, fetches its result, clears the animation, renders regions, and the transparent text layer is selectable text that equals the wire, sits on its own polygons, follows the zoom, yields to a real mouse drag, and leaves the formula and table content to their own copy exits');

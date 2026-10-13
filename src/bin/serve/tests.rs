@@ -8212,6 +8212,100 @@ fn the_web_demo_text_layer_uses_the_shared_mode_vocabulary_and_an_affine_box() {
     );
 }
 
+/// **网页 Demo 的复制出口（Step 2 后半）：四个出口的语义在页面源码里钉住。**
+///
+/// "在图片上选中并复制"是宿主呈现层的功能，但**必须有成文规则**，否则每次改页面都在悄悄改
+/// 用户复制到的内容。登记的规则是：普通文本复制识别出来的字符；公式默认复制 `formula.latex`
+/// （视觉 Unicode 形式**尚未提供**）；表格按单元格复制——渲染进 DOM 的真 `<td>` 文字，纯文本
+/// 出口那份 `table.markdown` 是**有损**平铺、只用于全文；跨区域选择按 `regions[]` 顺序合并，且
+/// 被表格消费的页级文本行不得重复出现。浏览器里的实测在 `tools/check-page-flow-cdp.mjs`（第
+/// 10-14 条不变量，含跨区域选中顺序的实测），这一条钉的是页面**没有把出口换到别的数据上**。
+#[test]
+fn the_web_demo_copy_exits_follow_the_registered_semantics() {
+    let page = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/bin/web/index.html"),
+    )
+    .expect("the inlined page must be readable");
+
+    /// 取一段函数/监听器的源码：起点是它的开头，终点是它自己的收尾缩进（页面统一 8 空格）。
+    fn body<'a>(page: &'a str, start: &str, end: &str) -> &'a str {
+        let at = page
+            .find(start)
+            .unwrap_or_else(|| panic!("the page must keep `{start}`"));
+        let stop = at
+            + page[at..]
+                .find(end)
+                .unwrap_or_else(|| panic!("`{start}` must be closed by `{end}`"));
+        &page[at..stop]
+    }
+
+    // ① 复制全文：跨区域按 regions[] 顺序合并，表格走 markdown，被表格消费的行跳过。
+    let full = body(&page, "function fullTextForCopy() {", "\n        }");
+    assert!(
+        full.contains("regions.forEach((r, i)"),
+        "复制全文 must merge in `regions[]` order; the region index is what that order rule reads"
+    );
+    assert!(
+        full.contains("r.table.markdown") && full.contains("parts.push(md.trim())"),
+        "a table region must reach the plain-text exit through `table.markdown` (the lossy flat \
+         form the page documents), never through its HTML markup"
+    );
+    assert!(
+        full.contains("sourceLineIndices.forEach") && full.contains("consumed.has(i)"),
+        "the page-level lines a table consumed must be skipped, or the same text is copied twice, \
+         the second time outside its table context"
+    );
+    assert!(
+        full.contains("parts.join(\"\\n\")"),
+        "the cross-region merge rule must be an explicit newline between regions, not an accident \
+         of concatenation"
+    );
+    assert!(
+        !full.contains(".html"),
+        "the plain-text exit must not paste table markup (or any html field) as ordinary text"
+    );
+
+    // ② 公式出口：双击公式行复制的是 `formula.latex`，不是渲染产物的文本。
+    let dbl = body(
+        &page,
+        "$(\"regionList\").addEventListener(\"dblclick\"",
+        "\n        });",
+    );
+    assert!(
+        dbl.contains("slot.getAttribute(\"data-latex\")"),
+        "double-clicking a formula row must copy the LaTeX the server sent (`formula.latex`), which \
+         the row keeps in `data-latex`; the rendered slot's own textContent is empty by design"
+    );
+    assert!(
+        dbl.contains("copyTextToClipboard(latex)"),
+        "the formula exit must route that LaTeX to the clipboard, not to a re-render of it"
+    );
+
+    // ③ 文本层排他：图上可选中的只有文本区域的字符，公式与表格内容一律不进层。
+    let layer = body(&page, "function renderTextLayer() {", "\n        }");
+    assert!(
+        layer.contains("r.kind !== \"text\""),
+        "the transparent layer must be built from text regions only"
+    );
+    assert!(
+        !layer.contains("markdown") && !layer.contains("latex"),
+        "formula LaTeX and table markdown must never be laid over the picture: they are not what \
+         the reader's eyes see, and selecting them would copy something the image does not show"
+    );
+
+    // ④ 表格出口：按单元格复制 = 渲染出真 `<td>` 文字，且必须经过净化入口。
+    let table = body(&page, "function toggleTableRender(btn) {", "\n        }");
+    assert!(
+        table.contains("wrap.innerHTML = sanitizeTableHtml("),
+        "the rendered table must come from the sanitizing entry point; cell text is model output"
+    );
+    assert!(
+        table.contains(".rt-wrap"),
+        "the rendered cells must live in the page's own `.rt-wrap` container, which is where the \
+         browser-native selection reads them from"
+    );
+}
+
 /// **契约钉住（页面一侧）**：页面读的就是上面清单里的那些名字。
 ///
 /// 这一条与上一条合起来才是"两侧都钉住"：上一条保证服务端改名会失败，这一条保证页面

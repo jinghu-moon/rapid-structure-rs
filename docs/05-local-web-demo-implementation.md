@@ -1437,7 +1437,7 @@ u = p1 - p0（字形右方向）   d = p3 - p0（字形下方向）   boxW = 推
 - `src/bin/serve/tests.rs::the_served_char_boxes_satisfy_the_optional_page_contract`：线上 `polygon.points` 必为四点，且 `words` 是**可选路径**（`off` 档缺失合法，请求了却没给要走 toast＋诊断面板，不许静默"少一层文字"）；
 - `src/bin/serve/tests.rs::the_web_demo_text_layer_uses_the_shared_mode_vocabulary_and_an_affine_box`：页面用的是 Step 1 那一份词表（`off|words|chars`），且盒由 polygon 求矩阵，不是 `left/top/width/height` 那种轴对齐写法；
 - `tools/check-page-result-contract.mjs`：页面读的 result 路径集合（含 `regions[].recognition.words`）；
-- `tools/check-page-flow-cdp.mjs` 第 5–9 条：只能在真实浏览器里测的那五条（层可见且带 `char` 标签、层文本与 `/result` 逐字同序、每个 span 的矩阵落在自己的 p0 与两条列方向上、真实鼠标拖选出连续片段、缩放后还是同一份层）。
+- `tools/check-page-flow-cdp.mjs` 第 5–9 条：只能在真实浏览器里测的那五条（层可见且带 `char` 标签、层文本与 `/result` 逐字同序、每个 span 的矩阵落在自己的 p0 与两条列方向上、真实鼠标拖选出连续片段、缩放后还是同一份层）。上表那五条复制出口的**实测**在第 10–14 条，见 §9.9。
 
 **实测（本机 `rapidstruct serve` + headless Chrome，medium 模型，3200×2000 测试图）**：
 
@@ -1454,6 +1454,42 @@ u = p1 - p0（字形右方向）   d = p3 - p0（字形下方向）   boxW = 推
 | 页面异常 | 0 | 0 |
 
 **本批未消除**：① 公式的"视觉 Unicode 形式"复制没做，只有 LaTeX 一条出口；② 字符框本身仍是 CTC 后处理估计（列索引当字符中心 + 整行平均字宽），本节的实测只证明**层与框一致、可拖选**，不证明字符边界精度——那是 Step 3/4；③ 守卫隐藏的比例随显示尺度变化，两条图在本机窗口尺度下为 0，更小的窗口或更大的图仍会出现（那时这些字符在 DOM 里但不可命中，拖选会绕过它们）。
+
+### 9.9 复制出口的固化：谁复制什么、按什么顺序（Step 2 后半定案）
+
+§9.8 末尾那张五行表是**成文规则**。本节把它变成**可执行判据**——每次改页面都必须重新跑的东西——并登记实测过程中暴露的三条边界。规则本身没有变，变的是"违反它会不会有人立刻知道"。
+
+**定案（跨区域选择）**：图上拖选跨到第二个区域时，合并顺序按 **`regions[]` 的索引**，不是按屏幕上的视觉位置，也不是按 DOM 之外的任何二次排序。理由是 `renderTextLayer()` 按 `regions.forEach((r, ri)` 建行、每行按 `r.words` 建 span，所以**文档顺序就是线上顺序**，浏览器的原生 Selection 沿文档顺序拼接文本，不需要也不允许页面插手合并。被表格消费的页级文本行（`table.source_line_indices`）在"复制全文"出口里**跳过**，否则同一段文字会复制两次、第二次还脱离表格上下文。
+
+**脚本化拖拽路径 ≠ 人类的合并规则**（本节最要紧的一条方法论）。第一版判据用真实鼠标拖拽来验跨区域顺序，在 `01基础多位置文本.png` 上直接失败：DOM 相邻的两行（`ri=1` 是左侧竖排、`ri=2` 在最右）在屏幕上**并非上下堆叠**，一条从前者到后者的合成拖拽路径的 focus 落到了 `region 0`，选区于是变成"region0 尾 + region1 头"。这不是页面错了——`regions[]` 顺序本来就不保证等于视觉顺序（竖排、多栏、表格穿插的图都会遇到）；**错的是拿拖拽路径去断言合并规则**，路径测的是鼠标轨迹经过哪些元素，规则说的是两段文本相接时谁在前。因此定案为：
+
+- 候选配对先筛：**严格上下堆叠**（下行的 `y0 ≥ 上行 y0 + 2`）、相邻两个异区域行、各 ≥4 个可命中 span，且两端的命中点都能被 `elementFromPoint` 回到自己的 span；被拒的配对按原因计数打印（`sameRegion` / `tooShort` / `notStacked` / `noHit`），免得"没找到可测配对"和"找到了但规则不成立"混成同一个失败；
+- 断言动作改用 **click + shift-click**（`Input.dispatchMouseEvent`，`modifiers:8` 即 Shift）：命中点是确定的，验的是浏览器把 anchor/focus 落到哪两个 `data-ri`、以及选区文本是否等于两行拼接的子串；
+- 真实拖拽**照做但只作观测值**（`cross.dragSelection` / `cross.dragRange`），报告里明写它是观测，不参与判定。
+
+**判据三腿**：
+
+| 腿 | 位置 | 钉什么 |
+| --- | --- | --- |
+| 浏览器实测 | `tools/check-page-flow-cdp.mjs` 第 10–14 条 | ⑩ 每一次"复制全文"的 clipboard hand-off 都逐字等于按 wire 重建的期望值（文本 `.text` + 表格 `markdown` + 公式 LaTeX，消费行跳过，`\n` 相接）；⑪ 透明层的**排他**：层里出现过的每个 `data-ri` 必须指向 `kind === "text"` 的区域，`formula.latex` 与 `table.markdown` 一律不得铺在图上；⑫ 双击公式行交给 clipboard 的文本 == 该区域的 `formula.latex`；⑬ 渲染表格确有 ≥1 个 `td`/`th` 且 `user-select` 为原生可选中，**该区域的透明层 span 数为 0**；⑭ 跨区域选区（click 放光标 + shift-click 扩展）按 `regions[]` 顺序：anchor 落在 `riA`、focus 落在 `riB` 且 `riA < riB`，选区非空、是两行文本拼接的子串、且不是任何单行自己的子串（证明确实跨过去了），公式/表格载荷不得被卷入 |
+| 页面源码 tripwire | `src/bin/serve/tests.rs::the_web_demo_copy_exits_follow_the_registered_semantics` | 四个出口仍接在**当初登记的那份数据**上：全文出口读 `regions[]` 顺序 / `table.markdown` / `sourceLineIndices` / `consumed.has(i)` / `parts.join("\n")` 且不含 `.html`；公式出口读 `data-latex` 并 `copyTextToClipboard(latex)`；层出口只认 `kind === "text"` 且函数体内不出现 `markdown`/`latex`；表格出口经 `sanitizeTableHtml(` 进 `.rt-wrap` |
+| 线契约 | `tools/check-page-result-contract.mjs` | 页面读到的 result 路径集合（含 `regions[].recognition.words` 这条可选路径的形状） |
+
+**实测（本机真实 `serve` + headless Chrome，medium 模型，三张不同的图，各跑一遍 14 条）**：
+
+| 图 / 参数 | 区域 | 层 span | 跨区域（断言） | 其余出口 |
+| --- | --- | --- | --- | --- |
+| `01基础多位置文本.png`（缺省模式，`chars`） | 41 | 892（全 `char`，非轴对齐 21，塌缩 0） | `regions[4,5]`，拒因 `{notStacked:1, noHit:3}` | 复制全文 2 次 hand-off（`execCommand` + `clipboard`）逐字等于重建值；无公式/表格出口可测（该图两类区域都没有） |
+| `08数字公式与符号.png`（`-Mode formula -AssertFormula`） | 54（公式 8） | 538（非轴对齐 22，塌缩 4） | `regions[1,2]`，拒因 `{noHit:1}` | 双击 region 46 → `\\scriptstyle \\int   0 ^ { \\wedge } \\infty \\; \\math`；全文含公式 LaTeX 与数字行 |
+| `04表格与键值对.png`（`-Mode text-table -AssertTable`） | 62（表格 2） | 533（非轴对齐 2，塌缩 0） | `regions[0,1]`，拒因全 0 | 渲染表格 region 60 → 26 个 `td`/`th`，`user-select:auto`，该区域层 span **0** 个 |
+
+三次都是 `POST /api/ocr?…` 202 → 103/108/110 次轮询全 200 → 两个 `/result` 全 200 → 14 条 PASSED，识别耗时 24.07 / 25.34 / 25.76 s；三次的**拖拽观测值**与 shift-click 的断言结果一致（`[4,5]` / `[1,2]` / `[0,1]`），说明这条路径在本机尺度下不是纸面规则。
+
+**反证（判据不是装饰）**：CDP 侧 19 例变异全部 FAILED（7 例打在复制/表格/层出口，5 例打在公式与模式切换，7 例打在跨区域顺序），Rust tripwire 侧 6 例变异全部 FAILED 且各次都停在**对应那条**断言上：把 `parts.join("\n")` 改成 `join("")`、把 `consumed.has(i)` 改成 `false`、把公式出口换成 `slot.textContent`、给全文出口喂 `r.table.html`、把层的区域筛选换成 `kind !== "table"`、往层 span 的文本里并进 `r.table.markdown`。变异脚本跑完即还原，`git status` 对 `src/bin/web/index.html` 为空。
+
+**工具侧两条事实（会静默坑掉整轮实测，就地登记）**：① `run-page-flow-cdp.ps1` 必须用 **pwsh 7** 启动——它没有 BOM，Windows PowerShell 5.1 会把里面写死的中文默认图片路径按 ANSI 解成乱码，Chrome 拿到一个不存在的文件，**整轮空跑**却仍然产出一份"全空"报告。脚本现在先 `Test-Path -LiteralPath` 再决定跑不跑，把这件事变成一句话失败；② `-Image` 传相对路径会被 Chrome 按**它自己的**工作目录解析，脚本改为先 `GetFullPath`。
+
+**本节未消除（不等于已解决，勿转述）**：① headless Chrome 拒绝真正的剪贴板写入，第 10 与第 12 条验的是**页面交给 clipboard API 的那段文本**（toast 会如实报"复制失败，请手动选择文本"），不是"用户剪贴板里最终是什么"；② 公式的"视觉 Unicode 形式"仍未提供，出口只有 LaTeX 一条；③ `regions[]` 顺序与视觉顺序在竖排/多栏图上不一致，本节把它登记为**规则的边界**而不是缺陷，人类真实拖拽在这种图上会选中路径经过的区域，合并顺序仍按文档顺序；④ 跨区域判据要求存在"严格上下堆叠且两端可命中"的相邻异区域行对，找不到时报 `cross.found=false` 并附拒因计数，而不是静默跳过。
 
 ---
 
