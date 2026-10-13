@@ -66,6 +66,14 @@ before redistributing a complete application or model bundle.
   are CTC post-processing estimates (one CTC column per character, one average
   character width per line), not a character-detection model, so they must not
   be presented as pixel-accurate character boundaries.
+- Turning those boxes into "drag across the image and copy the text" is a host
+  presentation-layer responsibility, not a library one: this crate never depends
+  on a browser, DOM or clipboard. The bundled web demo shows one complete way to
+  do it — `?words=chars` feeds a transparent DOM text layer above the image,
+  every span affine-mapped from its own word polygon (tilted lines are not
+  replaced by axis-aligned boxes), while the canvas keeps drawing the visual
+  boxes. Formula and table content deliberately stays out of that layer, since
+  `formula.latex` and `table.markdown` are not what the user's eyes see.
 
 ## Minimal usage
 

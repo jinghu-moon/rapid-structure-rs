@@ -1400,6 +1400,61 @@ img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; form-action 'no
 - 离线预览（`demoInitialModels()`）也带 `table` 路由块与 `pipelines.*.plan`，且其结构模型**刻意不归属任何集合**，用来复现这条路径。
 - 回归：`node tools\check_web_model_gating.js --models <api-models.json>`（把页面里的判定函数原样抽出、喂真实 JSON 跑 13 条断言，并用**修前的同名函数**作反向对照）。Rust 侧只有一条绊线测试钉住"分支存在且顺序正确"，因为页面的 JS 在 `cargo test` 里跑不起来。
 
+### 9.8 透明文本层：图上拖选与复制（Step 2 定案）
+
+**职责划分先说清楚**：库不依赖浏览器、DOM、剪贴板，因此"在图片上拖拽选中文字并复制"**不是** `rapid-structure-rs` 的功能，而是宿主呈现层的功能；库的责任是把**文本 + 几何**给足（`regions[].recognition.words`，Step 1 已接通到 `?words=`），自带 Demo 的责任是把它变成可拖选的 DOM。这条划分与 OCRmyPDF 那一类工具一致：可复制文本来自宿主加的 text layer，不是识别引擎本身。
+
+**为什么 Canvas 不够**：Canvas 上只有像素，Selection/Clipboard 拿不到任何字符位置。所以定案是**分工**：Canvas 继续负责视觉框与高亮，DOM 文本层只负责选择与复制；两者共用同一个布局时机（`layoutCanvas()` 尾部调 `layoutTextLayer()`），不会出现"框在动、字没动"的错位。DOM 结构 `.text-layer > .tl-line[data-ri] > .tl-word[data-ri][data-kind]`，元素全部 `createElement` + `textContent` 生成——识别文本是模型产物，绝不进 `innerHTML`（与表格 HTML 同一口径，门禁 G8）。
+
+**几何口径（本节的关键定案）**：每个 span 的定位只由它的 word polygon 两条边求出，`fontSize = |p0→p3|`，矩阵列为
+
+```
+matrix( ux/boxW, uy/boxW,  dx/boxH, dy/boxH,  p0.x·sx, p0.y·sy )
+u = p1 - p0（字形右方向）   d = p3 - p0（字形下方向）   boxW = 推进宽比值 × boxH
+```
+
+推进宽用 `.tl-probe` 以**同一套字体口径**量出（比值换算，不写死字符宽度），因此 `i/W`、比例字体不会被当成等宽。倾斜/旋转的行**不会**被替换成轴对齐外接矩形——那是丢旋转，不是近似。矩阵的 `(e,f)` 是**相对 `.stage` 原点**的显示像素（`.tl-line{inset:0}` 覆盖 `.stage`，`.stage` 无 border/padding），再叠 `getBoundingClientRect().left/top` 就是把视口偏移算了两遍——自动化脚本在此踩过，已写成注释钉住。
+
+**交互与可访问性口径**：层 `pointer-events:none`、`z-index:1`，只有 span `pointer-events:auto; user-select:text`，所以空白处仍然点得到叠框；字形 `color:transparent`，可见反馈交给 `::selection`。span 点击反向定位到区域（`selectRegion(ri)`），但**有选区时不抢选中态**（拖选结束时浏览器也派发 click，顺手改选中态会让列表 scrollIntoView、选区看起来在漂）。整层 `aria-hidden="true"`：这层是给鼠标用的，键盘与读屏的等价入口是右栏区域列表，两层同时进可及树会让同一段文字被读两遍。
+
+**CSP**：主页面 `style-src 'nonce-…'` **没有** `'unsafe-inline'`，静态规则写在带 nonce 的 `<style>` 里，动态的 `fontSize`/`transform` 一律走 CSSOM（`el.style.xxx`），写 `style="…"` 属性会被整条丢弃。
+
+**亚像素守卫与其副作用（必须知道）**：`boxH` 或 `boxW` ≤ 0.5px 的盒子置 `display:none`——文本仍在 DOM 中（一个字都不丢，层文本拼接仍等于线上载荷），而不是压成一个不可见但可命中的斑点。副作用是这类 span 的 `getBoundingClientRect()` 是**文档原点的零矩形**、computed transform 是 `none`：任何用矩形或矩阵做断言、或往坐标派发指针的自动化脚本都必须显式跳过它们，否则鼠标会打到页面工具条上（实测：派发到 (0,0) 附近得到的是 `DIV.file-meta` / `SPAN.meta-text`）。
+
+**复制语义（五种出口各自得到什么）**：
+
+| 出口 | 得到 | 为什么 |
+| --- | --- | --- |
+| 图上拖选 + Ctrl+C | 该行的**字符文本**；跨行/跨区域时按 `regions[]` 顺序拼接 | DOM 顺序就是线上 words 顺序（CDP 第 6 条逐字钉住），浏览器原生 Selection/Clipboard，无需 JS 参与 |
+| 「复制全文」 | 文本区 `.text` ＋ 表格区 `markdown` ＋ 公式区 LaTeX，被表格消费的文本行**跳过** | 公式/表格的 `.text` 不等于用户眼睛看到的普通文本；服务端 `plain_text` 只含文本通道，直接用会丢公式 |
+| 双击公式行 | 该条 **LaTeX**（读 `data-latex`，渲染后 `textContent` 是空的） | 默认复制机器可续用的形式；"视觉 Unicode 形式"本批**未做**，见下方未消除项 |
+| 展开后的渲染表格 | 原生选中的**单元格文本** | 表格按单元格复制，而不是把整张 markdown 当透明文本铺在图上 |
+| `words=off`（缺省） | 不建文本层，页面行为与改动前逐字相同 | 默认档不为每个请求承担响应体膨胀与后处理开销 |
+
+**公式与表格为什么不进透明层**：把 `\int ...` 铺在用户看到的是积分号的图像上，拖选得到的是"眼睛看到 ∫、剪贴板拿到 `\int`"的错物。因此 `renderTextLayer()` 只对 `kind === "text"` 的区域建 span，而 CDP 第 6 条要求层文本**严格等于**文本通道 words 的拼接——多一个字符都过不了，这条排他性是被断言钉住的，不是靠注释声明的。
+
+**契约钉住（四条腿各管一层）**：
+- `src/bin/serve/tests.rs::the_served_char_boxes_satisfy_the_optional_page_contract`：线上 `polygon.points` 必为四点，且 `words` 是**可选路径**（`off` 档缺失合法，请求了却没给要走 toast＋诊断面板，不许静默"少一层文字"）；
+- `src/bin/serve/tests.rs::the_web_demo_text_layer_uses_the_shared_mode_vocabulary_and_an_affine_box`：页面用的是 Step 1 那一份词表（`off|words|chars`），且盒由 polygon 求矩阵，不是 `left/top/width/height` 那种轴对齐写法；
+- `tools/check-page-result-contract.mjs`：页面读的 result 路径集合（含 `regions[].recognition.words`）；
+- `tools/check-page-flow-cdp.mjs` 第 5–9 条：只能在真实浏览器里测的那五条（层可见且带 `char` 标签、层文本与 `/result` 逐字同序、每个 span 的矩阵落在自己的 p0 与两条列方向上、真实鼠标拖选出连续片段、缩放后还是同一份层）。
+
+**实测（本机 `rapidstruct serve` + headless Chrome，medium 模型，3200×2000 测试图）**：
+
+| 指标 | `01基础多位置文本.png` | `03旋转与倾斜.png`（`-AssertTilt`） |
+| --- | --- | --- |
+| 渲染区域 / 文本层 span | 41 / 892 | 13 / 218 |
+| `data-kind` | 全 `char` | 全 `char` |
+| 非轴对齐 span（`|b|+|c|>0.05`） | 21 | **152** |
+| 被亚像素守卫隐藏的 span | 0 | 0 |
+| computed 样式 | `user-select:text`、`color:rgba(0,0,0,0)`、span `pointer-events:auto`、层 `none` | 同左 |
+| `<img>` 自然尺寸 vs `image.original_size` | 3200×2000 一致 | 同左 |
+| 真实鼠标拖选 | 区域 1「多位置文本定位实验」，9 字可命中连续段，选出 `位置文本定` | 区域 1「旋转与倾斜文本」，7 字可命中段，选出 `转与倾斜` |
+| 识别耗时 | 23.49 s | 12.06 s |
+| 页面异常 | 0 | 0 |
+
+**本批未消除**：① 公式的"视觉 Unicode 形式"复制没做，只有 LaTeX 一条出口；② 字符框本身仍是 CTC 后处理估计（列索引当字符中心 + 整行平均字宽），本节的实测只证明**层与框一致、可拖选**，不证明字符边界精度——那是 Step 3/4；③ 守卫隐藏的比例随显示尺度变化，两条图在本机窗口尺度下为 0，更小的窗口或更大的图仍会出现（那时这些字符在 DOM 里但不可命中，拖选会绕过它们）。
+
 ---
 
 ## 10. 性能与资源规则

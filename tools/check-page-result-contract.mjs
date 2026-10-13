@@ -20,6 +20,10 @@
  * 3. Runs mutation cases — one required field renamed/removed/truncated at a time — and requires
  *    the parser to reject each one **and to name the offending path**. A check that cannot fail
  *    is not a check.
+ * 4. Runs the **optional** `recognition.words` path separately (Step 2): the captured body is an
+ *    `off` mode response, so a missing / null `words` must parse cleanly, while a *present* but
+ *    malformed array must be rejected with its path. Required and optional are different rules —
+ *    folding `words` into the required list would make every default-mode response fail.
  *
  * usage: node tools/check-page-result-contract.mjs [--quiet]
  */
@@ -43,7 +47,9 @@ const PARSER_FUNCTIONS = [
   'pget',
   'checkFinite',
   'isInputRegion',
+  'parseQuad',
   'parsePolygon',
+  'parseWords',
   'parseRecognition',
   'parseFormula',
   'normalizeResult',
@@ -187,6 +193,12 @@ if (real.parsed) {
   check(typeof first.conf === 'number', `the first region must carry a numeric score: ${first.conf}`);
   check(Array.isArray(first.polygon) && first.polygon.length === 4, 'the first region must carry four corners');
   check(first.kind === 'text', `the first region must be a text region: ${first.kind}`);
+  // `off` 档的线上形状：这一份捕获体没开逐词/逐字框，`words` 缺席必须是 `null`（而不是报错、
+  // 也不是空数组 —— 两者在宿主侧含义不同）。
+  check(
+    first.words === null,
+    `a default-mode body must parse to \`words: null\`, got ${JSON.stringify(first.words)}`,
+  );
   check(
     typeof real.parsed.plain === 'string' && real.parsed.plain.includes('\n'),
     'the copy-all text must come from `plain_text`',
@@ -289,10 +301,140 @@ for (const testCase of mutations) {
   if (!QUIET) console.log(`  ${named && outcome.parsed === null ? 'ok  ' : 'FAIL'} ${testCase.label} -> ${JSON.stringify(outcome.diag)}`);
 }
 
+/* ---------------- 可选路径：`recognition.words`（Step 2 的逐词/逐字框）----------------
+   与必需字段同一份判据（四边形恰好四点、kind 只能 `token`/`char`、score 必须是有限数），
+   但**触发条件不同**：只有载荷里真的出现了 `words` 才适用。上面的真实捕获体是 `off` 档，
+   所以“缺席必须仍能通过”本身就是这一节的一条判据（否则每个默认请求都会假失败）。 */
+section('the optional words path: absent parses, present must be well-formed');
+
+/** 一份合法的 char 数组（几何在这里无关紧要，解析器只看形状）。 */
+function charBoxes(text) {
+  return [...text].map((ch) => ({
+    text: ch,
+    score: 0.913,
+    kind: 'char',
+    polygon: { points: [[0, 0], [4, 0], [4, 8], [0, 8]] },
+  }));
+}
+
+/** 在真实捕获体上叠加合法的逐字框（其余字节不动），返回新的 JSON 文本。 */
+function withWords() {
+  const copy = JSON.parse(raw.toString('utf8'));
+  copy.regions.forEach((region) => {
+    if (region.kind !== 'text' || !region.recognition) return;
+    region.recognition.words = charBoxes(region.recognition.text);
+  });
+  return JSON.stringify(copy);
+}
+
+const wordsSource = withWords();
+const withWordsParsed = parser.normalizeResult(JSON.parse(wordsSource));
+check(
+  withWordsParsed.parsed !== null,
+  `a well-formed words array must parse: ${JSON.stringify(withWordsParsed.diag)}`,
+);
+check(
+  withWordsParsed.diag.length === 0,
+  `a well-formed words array must not report anything: ${JSON.stringify(withWordsParsed.diag)}`,
+);
+const parsedWords = withWordsParsed.parsed && withWordsParsed.parsed.regions[0].words;
+check(
+  Array.isArray(parsedWords) && parsedWords.length === [...JSON.parse(raw.toString('utf8')).regions[0].recognition.text].length,
+  `every word box must survive parsing, got ${parsedWords && parsedWords.length}`,
+);
+check(
+  parsedWords && parsedWords.every((w) => w.kind === 'char' && Array.isArray(w.polygon) && w.polygon.length === 4),
+  `parsed word boxes must keep text/score/kind/polygon: ${JSON.stringify(parsedWords && parsedWords[0])}`,
+);
+
+/* 显式 `null`（serve 把 `Option::None` 序列化成 null）与缺席在线上等价：两者都必须通过。 */
+const nullSource = (() => {
+  const copy = JSON.parse(raw.toString('utf8'));
+  copy.regions.forEach((region) => {
+    if (region.kind === 'text' && region.recognition) region.recognition.words = null;
+  });
+  return copy;
+})();
+const nullParsed = parser.normalizeResult(nullSource);
+check(
+  nullParsed.parsed !== null && nullParsed.diag.length === 0,
+  `an explicit \`words: null\` must parse as the off mode: ${JSON.stringify(nullParsed.diag)}`,
+);
+check(
+  nullParsed.parsed && nullParsed.parsed.regions[0].words === null,
+  'an explicit null must not become an empty array',
+);
+
+/** 每一例都先叠加合法词框再破坏一处：必须拒渲染 + 点名完整响应路径 + 恰好一次 toast。 */
+const wordMutations = [
+  {
+    label: 'word kind renamed to char -> letter',
+    path: 'regions[0].recognition.words[0].kind',
+    mutate: (copy) => {
+      copy.regions[0].recognition.words[0].kind = 'letter';
+    },
+  },
+  {
+    label: 'word polygon truncated to three corners',
+    path: 'regions[0].recognition.words[0].polygon.points',
+    mutate: (copy) => {
+      copy.regions[0].recognition.words[0].polygon.points = copy.regions[0].recognition.words[0].polygon.points.slice(0, 3);
+    },
+  },
+  {
+    label: 'word text renamed to value',
+    path: 'regions[0].recognition.words[0].text',
+    mutate: (copy) => {
+      copy.regions[0].recognition.words[0].value = copy.regions[0].recognition.words[0].text;
+      delete copy.regions[0].recognition.words[0].text;
+    },
+  },
+  {
+    label: 'word score is not a number',
+    path: 'regions[0].recognition.words[1].score',
+    mutate: (copy) => {
+      copy.regions[0].recognition.words[1].score = 'high';
+    },
+  },
+  {
+    label: 'word polygon missing (a region box cannot stand in for it)',
+    path: 'regions[0].recognition.words[0].polygon',
+    mutate: (copy) => {
+      delete copy.regions[0].recognition.words[0].polygon;
+    },
+  },
+  {
+    label: 'words is an object instead of an array',
+    path: 'regions[0].recognition.words',
+    mutate: (copy) => {
+      copy.regions[0].recognition.words = {};
+    },
+  },
+];
+
+for (const testCase of wordMutations) {
+  const copy = JSON.parse(wordsSource);
+  testCase.mutate(copy);
+  const outcome = parser.normalizeResult(copy);
+  check(outcome.parsed === null, `${testCase.label}: the parser must refuse to render`);
+  const named = outcome.diag.some((line) => line.includes(testCase.path));
+  check(
+    named,
+    `${testCase.label}: the parser must name \`${testCase.path}\`, got ${JSON.stringify(outcome.diag)}`,
+  );
+  check(
+    outcome.toasts.length === 1,
+    `${testCase.label}: a contract failure must also be visible as exactly one toast, got ${outcome.toasts.length}`,
+  );
+  if (!QUIET) console.log(`  ${named && outcome.parsed === null ? 'ok  ' : 'FAIL'} ${testCase.label} -> ${JSON.stringify(outcome.diag)}`);
+}
+
 section('result');
 if (failures.length) {
   for (const failure of failures) console.error(`FAIL ${failure}`);
   console.error(`\npage/result contract check FAILED (${failures.length} problem(s))`);
   process.exit(1);
 }
-console.log('page/result contract check PASSED: the page parses the real captured body, and every required field rename is reported with its path');
+console.log(
+  'page/result contract check PASSED: the page parses the real captured body, every required field rename is reported with its path, and the optional words path accepts absent/null while refusing a malformed array',
+);

@@ -7910,6 +7910,97 @@ const PAGE_RESULT_CONTRACT: [(&str, &str); 11] = [
     ("timing_ledger", "r.timing_ledger"),
 ];
 
+/// 页面在**可选路径** `recognition.words` 上读的那些名字（Step 2 的透明文本层）。
+///
+/// 单独成表、不并进 [`PAGE_RESULT_CONTRACT`]：那份清单是“缺了就必须可见地失败”的**必需**路径，
+/// 而 `words` 在线上的缺省档（`off`）就是缺席或 `null` —— 把它当成必需字段会让那份被
+/// SHA-256 钉住的真实捕获体（off 档、42 区域）假失败，也会让每个默认请求都背上一份载荷。
+///
+/// 这里钉的是“页面读的就是这四个名字”（与 [`assert_optional_word_boxes`] 是同一证据的两面），
+/// 以及“**缺席合法**”那条判据在页面里真的存在 —— 少了后者，下一个人会把它改回必需字段，
+/// 而那种改动在 off 档的请求上只会表现为“网页突然解析失败”，不会有人想起是这里改错了。
+const PAGE_WORDS_CONTRACT: [(&str, &str); 5] = [
+    ("recognition.words", r#"pget(rec, "words")"#),
+    ("words[k].text", r#"pget(w, "text")"#),
+    ("words[k].kind", r#"pget(w, "kind")"#),
+    ("words[k].polygon.points", r#"pget(w.polygon, "points")"#),
+    (
+        "缺席合法：`off` 档不得报错",
+        "words === undefined || words === null",
+    ),
+];
+
+/// 一份 `Polygon` 的形状判据：`points` 恰好四点、每点恰好两个有限数。
+///
+/// 区域框与逐词/逐字框共用这一份（Rust 侧本来就是同一个 `Polygon` 类型），路径由调用方传入，
+/// 因此点名的仍是完整的响应路径。与页面侧的 `parseQuad`（`src/bin/web/index.html`）同一规则。
+fn assert_quad_points(polygon: &Value, path: &str) {
+    let points = polygon["points"].as_array().unwrap_or_else(|| {
+        panic!("{path}.points must be an array (exactly four pairs): {polygon}")
+    });
+    assert_eq!(
+        points.len(),
+        4,
+        "{path}.points must be exactly four points, got {}",
+        points.len()
+    );
+    for (corner, point) in points.iter().enumerate() {
+        let pair = point
+            .as_array()
+            .unwrap_or_else(|| panic!("{path}.points[{corner}] must be a pair: {point}"));
+        assert_eq!(pair.len(), 2, "{path}.points[{corner}] must be [x, y]");
+        for (axis, raw) in pair.iter().enumerate() {
+            assert!(
+                raw.as_f64().is_some_and(f64::is_finite),
+                "{path}.points[{corner}][{axis}] must be a finite number, got {raw}"
+            );
+        }
+    }
+}
+
+/// 逐词/逐字框的**可选**形状检查（Step 2 的透明文本层）。
+///
+/// 两档语义必须分清楚：
+/// - 键缺席或 `null` → 本次请求是 `off` 档（`Option::None` 序列化成 `null`），完全合法，直接返回；
+/// - 一旦在场 → 就必须是 [`super::super::api::OcrWord`] 的形状（`text` / `score` / `kind` /
+///   `polygon.points`），因为页面的文本层就是按这份形状建 span 的。线上悄悄改名不会让
+///   识别失败，只会让图上“少一层可选中的文字”——那是一类静默的回归，必须在这里钉住。
+fn assert_optional_word_boxes(region: &Value, index: usize) {
+    let words = &region["recognition"]["words"];
+    if words.is_null() {
+        return;
+    }
+    let items = words.as_array().unwrap_or_else(|| {
+        panic!(
+            "regions[{index}].recognition.words must be null (the `off` mode) or an array of \
+             OcrWord, got {words}"
+        )
+    });
+    for (word_index, word) in items.iter().enumerate() {
+        let path = format!("regions[{index}].recognition.words[{word_index}]");
+        assert!(
+            word["text"].is_string(),
+            "{path}.text must be a string: {word}"
+        );
+        assert!(
+            word["score"].as_f64().is_some_and(f64::is_finite),
+            "{path}.score must be a finite number: {word}"
+        );
+        // `WordKind` 的线上拼写是 `snake_case`（`token` / `char`）；文本层靠它区分“能整词
+        // 复制”与“能逐字定位”，拼写漂移会让页面把字级框当词级框渲染。
+        assert!(
+            matches!(word["kind"].as_str(), Some("token") | Some("char")),
+            "{path}.kind must be `token` or `char`, got {word}"
+        );
+        assert!(
+            !word["polygon"].is_null(),
+            "{path}.polygon must exist: a word box cannot be substituted by the row box, \
+             which covers the whole line: {word}"
+        );
+        assert_quad_points(&word["polygon"], &path);
+    }
+}
+
 /// 断言一份 `/result` 响应体满足页面契约；返回区域数。
 ///
 /// 这里检查的是**嵌套形状**，与页面逐字相同：`polygon.points` 恰好四点、每点恰好两个
@@ -7930,32 +8021,7 @@ fn assert_result_satisfies_page_contract(value: &Value) -> usize {
             matches!(kind, "text" | "formula" | "table"),
             "regions[{index}].kind must be `text`, `formula` or `table`, got {kind}"
         );
-        let points = region["polygon"]["points"].as_array().unwrap_or_else(|| {
-            panic!("regions[{index}].polygon.points must be an array (exactly four pairs)")
-        });
-        assert_eq!(
-            points.len(),
-            4,
-            "regions[{index}].polygon.points must be exactly four points, got {}",
-            points.len()
-        );
-        for (corner, point) in points.iter().enumerate() {
-            let pair = point.as_array().unwrap_or_else(|| {
-                panic!("regions[{index}].polygon.points[{corner}] must be a pair: {point}")
-            });
-            assert_eq!(
-                pair.len(),
-                2,
-                "regions[{index}].polygon.points[{corner}] must be [x, y]"
-            );
-            for (axis, raw) in pair.iter().enumerate() {
-                assert!(
-                    raw.as_f64().is_some_and(f64::is_finite),
-                    "regions[{index}].polygon.points[{corner}][{axis}] must be a finite number, \
-                     got {raw}"
-                );
-            }
-        }
+        assert_quad_points(&region["polygon"], &format!("regions[{index}]"));
         if kind == "text" {
             assert!(
                 region["recognition"]["text"].is_string(),
@@ -7967,6 +8033,8 @@ fn assert_result_satisfies_page_contract(value: &Value) -> usize {
                     .is_some_and(f64::is_finite),
                 "regions[{index}].recognition.score must be a finite number: {region}"
             );
+            // 可选档（Step 2）：off 档没有这个词框数组也完全合法；开了就必须是 `OcrWord` 的形状。
+            assert_optional_word_boxes(region, index);
         } else if kind == "formula" {
             assert!(
                 region["formula"]["latex"].is_string(),
@@ -8040,6 +8108,110 @@ fn the_served_result_carries_every_path_the_page_reads() {
     );
 }
 
+/// **契约钉住（端到端 · 开了档位）**：`?words=chars` 走完整链路后，页面文本层读的可选路径也在线上。
+///
+/// 与 [`the_served_result_carries_every_path_the_page_reads`] 成对：那一条证明 **off 档**（缺省，
+/// 没有 `words`）也能被页面解析；这一条证明开了档位后 `recognition.words` 满足文本层所依赖的
+/// 形状。两者共用 [`assert_result_satisfies_page_contract`]，所以“网页上的透明文本层能不能
+/// 建起来”不再是目测结论。
+///
+/// 这里仍然**不声明字符框准不准**：几何是脚本化合成的（[`SCRIPT_ROW`] 那条行带等宽切片），
+/// 本条只钉透传；定位精度属于 Step 4 的字符定位基准（IoU / 左右边界误差）。
+#[test]
+fn the_served_char_boxes_satisfy_the_optional_page_contract() {
+    let dir = complete_model_dir("contract-words-chars");
+    let scripted = Scripted::fast();
+    let server = TestServer::start(TestOptions::new(dir, scripted.clone()));
+
+    let value = submit_words_query(
+        &server,
+        &scripted,
+        "?words=chars",
+        "page words contract",
+        WordOutputMode::Chars,
+    );
+    let regions = assert_result_satisfies_page_contract(&value);
+    assert_eq!(regions, 3, "three scripted text regions: {value}");
+    // 形状已在那函数里逐字验过；这里额外要求“档位真的开了”——空数组不算开了。
+    for (index, region) in text_regions(&value).into_iter().enumerate() {
+        let words = region["recognition"]["words"]
+            .as_array()
+            .unwrap_or_else(|| panic!("text region {index} must carry word boxes: {region}"));
+        assert!(
+            !words.is_empty(),
+            "text region {index} got an empty word array; `chars` must give one box per char: {region}"
+        );
+        assert!(
+            words
+                .iter()
+                .all(|word| word["kind"].as_str() == Some("char")),
+            "text region {index} must be char-granular: {region}"
+        );
+    }
+}
+
+/// **网页 Demo 的文本层（Step 2）：档位词表与仿射几何都在页面里钉住。**
+///
+/// 这一条把“宿主呈现层”那边的三个关键决定变成可重跑的证据，而不是目测：
+/// ① 三档的名字逐字来自 [`WordOutputMode::as_str`]（服务端、CLI、网页只能共用一份词表）；
+/// ② `off` 不发参数（缺省零开销），非 `off` 的线上表达只有一处；
+/// ③ span 确实可选中，而且叠在图上的是**仿射盒**而不是轴对齐外接矩形。
+#[test]
+fn the_web_demo_text_layer_uses_the_shared_mode_vocabulary_and_an_affine_box() {
+    let page = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/bin/web/index.html"),
+    )
+    .expect("the inlined page must be readable");
+
+    // ① 词表：三个档位名逐个从服务端词表里取，页面少一个就失败。
+    for mode in WordOutputMode::ALL {
+        assert!(
+            page.contains(&format!("id: \"{}\"", mode.as_str())),
+            "the demo must offer the `{}` tier verbatim: src/api.rs holds the only word list",
+            mode.as_str()
+        );
+    }
+    // ② 线上表达：只有一处拼查询串，而且 `off` 必须**不发**参数。
+    assert!(
+        page.contains(r#"state.words === "off" ? "" : "&words=" + state.words"#),
+        "the demo must express the tier as `&words=` + the mode name, and omit it entirely for `off`"
+    );
+    // ③ 选区能力：没有 `user-select: text` 就拖不出选区，层只是另一张看不见的图。
+    assert!(
+        page.contains("user-select: text"),
+        "the text layer must opt back into selection: `user-select: text`"
+    );
+    assert!(
+        page.contains(r#"class="text-layer" id="textLayer""#),
+        "the stage must carry the transparent text layer element"
+    );
+
+    // ④ 仿射：矩阵的两列分别是 p0→p1 与 p0→p3 两条边（除以量出来的自然宽度）。
+    assert!(
+        page.contains("[ux / boxW, uy / boxW, dx / boxH, dy / boxH, x0, y0]"),
+        "the layer must map the span with an affine built from the word quad's two edges"
+    );
+    // ⑤ 布局函数里不允许出现外接矩形：把倾斜四边形换成轴对齐盒子是用户**明确禁止**的退化
+    //    （它会丢掉旋转，选中区域也会跟叠框不重合）。取函数体本身，所以后面的代码不受管。
+    let at = page
+        .find("function layoutTextLayer() {")
+        .expect("the page must keep `layoutTextLayer`");
+    let end = page[at..]
+        .find("\n        }")
+        .map(|offset| at + offset)
+        .expect("`layoutTextLayer` must have a closing brace");
+    let body = &page[at..end];
+    assert!(
+        body.contains("s.transform"),
+        "the extracted `layoutTextLayer` body must be the one that writes the transform"
+    );
+    assert!(
+        !body.contains("Math.min(") && !body.contains("Math.max("),
+        "the text layer must not fall back to an axis-aligned bounding box: position the span \
+         on the word quad's own edges instead"
+    );
+}
+
 /// **契约钉住（页面一侧）**：页面读的就是上面清单里的那些名字。
 ///
 /// 这一条与上一条合起来才是"两侧都钉住"：上一条保证服务端改名会失败，这一条保证页面
@@ -8058,6 +8230,15 @@ fn the_page_reads_exactly_the_pinned_result_paths() {
             page.contains(accessor),
             "the page must keep reading `{path}` as `{accessor}`: the result contract is pinned \
              to these exact names (rename it here **and** in src/api.rs, never add an alias)"
+        );
+    }
+    // 可选路径（Step 2 的透明文本层）：单独一份清单，因为 `off` 档下它就是缺席。
+    for (path, accessor) in PAGE_WORDS_CONTRACT {
+        assert!(
+            page.contains(accessor),
+            "the page must keep reading the optional `{path}` as `{accessor}`: the word boxes \
+             are a **tier**, not a required field — absent/null is the `off` mode and must \
+             parse, while a present array must have exactly this shape"
         );
     }
     // `plain_text`（复制全文）与 `timings`（逐阶段耗时表）同样在页面里。

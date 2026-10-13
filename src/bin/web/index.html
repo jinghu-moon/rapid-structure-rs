@@ -1007,6 +1007,64 @@
         inset: 0;
         cursor: crosshair;
       }
+      /* 透明文本层（Step 2）。职责划分：**DOM 层负责「选中并复制」，Canvas 继续负责视觉框与高亮**。
+   库只给出文本 + 坐标，浏览器里的选择交互属于宿主呈现层，因此这一层只存在于自带的网页 Demo 里。
+   · 层本身 `pointer-events:none`，只有 span 可交互 → 空白处仍然点得到叠框；
+   · span 的定位完全由 `transform: matrix()` 给出，矩阵由 word polygon 的两条边（p0→p1、p0→p3）
+     求出，所以倾斜/旋转的行**不会**被替换成轴对齐外接矩形（那是丢旋转，不是近似）；
+   · 字形透明（`color:transparent`）→ 不遮挡图像，选中时由 ::selection 给出可见高亮；
+   · 静态规则写在本 `<style>`（带 nonce）里，动态的 fontSize/transform 走 CSSOM ——
+     主页面的 CSP 是 `style-src 'nonce-…'`，**没有** `'unsafe-inline'`，内联 `style=` 属性会被拒绝。 */
+      .text-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+      .text-layer[hidden] {
+        display: none;
+      }
+      .tl-line {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      /* 探测元素与 span 必须**逐字**同一套字体口径，否则量出来的推进宽与实际渲染不符，
+         仿射的第一列就会算错（宽度是按「推进宽 ÷ 字号」的比值换算的）。 */
+      .tl-word,
+      .tl-probe {
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        font-weight: 400;
+        letter-spacing: 0;
+        white-space: pre;
+      }
+      .tl-word {
+        position: absolute;
+        left: 0;
+        top: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        line-height: 1;
+        transform-origin: 0 0;
+        color: transparent;
+        cursor: text;
+        pointer-events: auto;
+        user-select: text;
+        -webkit-user-select: text;
+      }
+      .tl-word::selection {
+        background: color-mix(in srgb, var(--fg) 34%, transparent);
+      }
+      .tl-probe {
+        position: absolute;
+        left: 0;
+        top: 0;
+        font-size: 100px;
+        line-height: 1;
+        visibility: hidden;
+        pointer-events: none;
+      }
       .scanline {
         position: absolute;
         left: 0;
@@ -2097,6 +2155,10 @@
             <div class="stage" id="stage">
               <img id="view" alt="待识别图像预览" />
               <canvas id="overlay" aria-hidden="true"></canvas>
+              <!-- 透明文本层：词/字级 span 由 JS 用 createElement + CSSOM 生成（见 renderTextLayer）。
+                   aria-hidden：这层是**给鼠标用的**辅助层，键盘/读屏用户的等价入口是右栏的区域列表
+                   （那里有完整的文本与阅读顺序）；两层同时进可及树会让同一段文字被读两次。 -->
+              <div class="text-layer" id="textLayer" hidden aria-hidden="true"></div>
               <div class="scanline"></div>
             </div>
           </div>
@@ -2146,6 +2208,17 @@
           <legend class="mode-legend">识别模式</legend>
           <div class="mode-opts" id="modeOpts" role="radiogroup" aria-describedby="modeCap"></div>
           <span class="mode-cap" id="modeCap" aria-live="polite"></span>
+        </fieldset>
+
+        <!-- 框粒度选择器（Step 2）。三档就是 `WordOutputMode` 的**全部**取值（src/api.rs 的
+         `as_str`/`from_name`/`ALL` 是唯一词表来源），缺省 off：不请求逐词/逐字框时，响应体与
+         后处理开销都不增加。放在识别模式**之后**、提交按钮之前，理由与模式选择器相同——
+         用户先看到会发出去什么，再按提交。#wordsCap 点名每档的实际含义，包括
+         「字级框是 CTC 后处理估计」这条不能省略的口径。 -->
+        <fieldset class="mode-row" id="wordsRow" hidden>
+          <legend class="mode-legend">框粒度</legend>
+          <div class="mode-opts" id="wordsOpts" role="radiogroup" aria-describedby="wordsCap"></div>
+          <span class="mode-cap" id="wordsCap" aria-live="polite"></span>
         </fieldset>
 
         <div class="actions">
@@ -2390,6 +2463,9 @@
      **正交**的第二维（`queue` × `table`），布尔量装不下四种组合。默认 'text'，
      与旧版"公式路由默认关闭"的行为逐字相同（§10.8）。 */
           mode: "text",
+          /* 框粒度（Step 2）：'off' | 'words' | 'chars'，与服务端的 `WordOutputMode`（src/api.rs）
+     同一词表、同一缺省。off 时请求里**不带** `words=`，因此缺省路径的响应体与本页早期版本一致。 */
+          words: "off",
           diag: [] /* 协议/契约错误记录（渲染进诊断面板；同时 toast 一次） */,
           verifying: false /* "重新校验"进行中（按钮禁用，避免重复提交） */,
           verifyOut:
@@ -2655,6 +2731,47 @@
        function modeById(id) {
          return MODES.find((m) => m.id === id) || MODES[0];
        }
+       /* 框粒度的三档（Step 2）。词表必须与服务端 `WordOutputMode::ALL` 逐字一致：`as_str` /
+  `from_name` 是线上**唯一**词表（那边的注释写明「入口各写一套取值」必须在测试里当场暴露），
+  所以 CLI、serve 查询串、这一页三者只能出现 `off` / `words` / `chars` 三个名字。
+  `hint` 是给用户看的实话：字级框来自 CTC 后处理（一个字符占一列 + 整行平均字宽），
+  不是字符检测模型给出的像素级边界，因此不能宣称精确字符定位。 */
+       const WORDS_MODES = [
+         {
+           id: "off",
+           name: "仅行框",
+           desc: "不发 words 参数",
+           hint: "不请求逐词/逐字框：响应体与后处理开销都不增加，图上也不能拖选文本。",
+         },
+         {
+           id: "words",
+           name: "逐词框",
+           desc: "words=words",
+           hint: "请求 kind=token 的词级框，文本层用词级 span。切词会丢弃空白字符，因此跨 token 拖选可能少掉空格。",
+         },
+         {
+           id: "chars",
+           name: "逐字框",
+           desc: "words=chars",
+           hint: "请求 kind=char 的字级框，文本层用字符级 span。坐标是 CTC 后处理估计（一字符一列 + 平均字宽），不是字符检测模型的像素级边界。",
+         },
+       ];
+       const WORDS_KEY = "rrocr-words-mode"; /* 与 rrocr-fx-mode 同一存法 */
+       function wordsModeById(id) {
+         return WORDS_MODES.find((m) => m.id === id) || WORDS_MODES[0];
+       }
+       /* 查询串：**只有非 off 才发** `&words=`。serve 的 `parse_words` 在参数缺席时按 Off 处理，
+  因此不发参数与显式 `words=off` 在线上等价，而流动日志里"页面到底发了什么"仍然一眼可见。 */
+       function wordsQuery() {
+         return state.words === "off" ? "" : "&words=" + state.words;
+       }
+       /* 状态初始化：从 localStorage 恢复框粒度（默认 'off'，行为与未接入本档时逐字相同） */
+       (function initWordsMode() {
+         try {
+           const m = localStorage.getItem(WORDS_KEY);
+           if (m === "off" || m === "words" || m === "chars") state.words = m;
+         } catch {}
+       })();
        /* 一项模式的可用性：它需要的**每一条**路由都必须就绪。
   返回 {ok, why}；`why` 是给用户看的文字（点名缺哪个角色 / 哪条路由没开）。 */
        function modeAvailability(mode) {
@@ -2979,6 +3096,28 @@
             return Object.prototype.hasOwnProperty.call(src, "Input");
           return false;
         }
+        /* 一个四点多边形（`Polygon` = `[[f32;2]; 4]`）的**唯一**判据：恰好四点、每点恰好两个有限数。
+   区域框与逐词/逐字框共用这一份判据（`points` 的来源不同、规则完全相同），所以路径由调用方
+   传入：报错点名的仍是各自的完整响应路径，而不会把所有多边形错误都说成 `regions[k].polygon`。 */
+        function parseQuad(pts, path, errors) {
+          if (!Array.isArray(pts) || pts.length !== 4) {
+            errors.push(`${path}.points`);
+            return null;
+          }
+          const out = [];
+          for (let k = 0; k < 4; k++) {
+            const p = pts[k];
+            if (!Array.isArray(p) || p.length !== 2) {
+              errors.push(`${path}.points[${k}]`);
+              return null;
+            }
+            const x = checkFinite(p[0], `${path}.points[${k}][0]`, errors);
+            const y = checkFinite(p[1], `${path}.points[${k}][1]`, errors);
+            if (x === null || y === null) return null;
+            out.push([x, y]);
+          }
+          return out;
+        }
         function parsePolygon(r, i, errors) {
           if (r == null || r.polygon === undefined || r.polygon === null) {
             /* Polygon 在 Rust 里是 Option：Input 区域允许没有多边形（调用方显式声明的区域就是多边形本身）；
@@ -2988,30 +3127,55 @@
             return null;
           }
           const pts = pget(r.polygon, "points");
-          if (!Array.isArray(pts) || pts.length !== 4) {
-            /* [[f32;2]; 4] —— 恰好四点 */
-            errors.push(`regions[${i}].polygon.points`);
+          return parseQuad(pts, `regions[${i}].polygon`, errors);
+        }
+        /* 逐词/逐字框（Step 1 的 `recognition.words`，档位由请求里的 `words=` 决定）。
+   这是**可选路径**，与上面的必需字段不同一档，理由就在线上的缺省档是 `off`：
+   · `words` **缺席或 null** = 本次请求没开这一档 → 合法，文本层自然不出现。不能报错，
+     否则被 SHA-256 钉住的那份 off 档真实响应体（42 区域）会假失败；
+   · `words` **在场但形状非法** = 服务端与本页对线上形状的理解已经分叉 → 必须**可见地**
+     失败并点名路径，绝不允许“少画几个 span”地静默降级（与必需字段同一判据）。
+   只接受 `text` / `score` / `polygon.points` / `kind` 四个名字（`OcrWord`，src/api.rs）；
+   `kind` 的线上拼写只有 `token` / `char`（`WordKind` 的 `rename_all = "snake_case"`，
+   与 `RegionKind`、`TableCellMatch` 同一口径）。 */
+        function parseWords(rec, i, errors) {
+          const words = pget(rec, "words");
+          if (words === undefined || words === null) return null;
+          if (!Array.isArray(words)) {
+            errors.push(`regions[${i}].recognition.words`);
             return null;
           }
           const out = [];
-          for (let k = 0; k < 4; k++) {
-            const p = pts[k];
-            if (!Array.isArray(p) || p.length !== 2) {
-              errors.push(`regions[${i}].polygon.points[${k}]`);
-              return null;
+          for (let k = 0; k < words.length; k++) {
+            const w = words[k];
+            const path = `regions[${i}].recognition.words[${k}]`;
+            if (w === null || typeof w !== "object" || Array.isArray(w)) {
+              errors.push(path);
+              continue;
             }
-            const x = checkFinite(
-              p[0],
-              `regions[${i}].polygon.points[${k}][0]`,
+            const text = pget(w, "text");
+            if (typeof text !== "string") errors.push(`${path}.text`);
+            const kind = pget(w, "kind");
+            if (kind !== "token" && kind !== "char") errors.push(`${path}.kind`);
+            const score = checkFinite(
+              pget(w, "score"),
+              `${path}.score`,
               errors,
             );
-            const y = checkFinite(
-              p[1],
-              `regions[${i}].polygon.points[${k}][1]`,
+            if (w.polygon === undefined || w.polygon === null) {
+              /* word 没有自己的框就没有任何几何可用（拿区域框顶替会说谎：它盖住的是一整行），
+           而缺失不是合法档位 —— `OcrWord.polygon` 在 Rust 里不是 Option。 */
+              errors.push(`${path}.polygon`);
+              continue;
+            }
+            const quad = parseQuad(
+              pget(w.polygon, "points"),
+              `${path}.polygon`,
               errors,
             );
-            if (x === null || y === null) return null;
-            out.push([x, y]);
+            if (typeof text !== "string" || score === null || quad === null)
+              continue;
+            out.push({ text, score, kind, polygon: quad });
           }
           return out;
         }
@@ -3029,8 +3193,14 @@
             `regions[${i}].recognition.score`,
             errors,
           );
+          /* 可选档：off 时得到 null（合法缺失），开了才得到数组。它不能影响必需字段已经
+           成立的区域是否可渲染，因此只在必需字段都合法时才读。 */
+          const words =
+            typeof text === "string" && score !== null
+              ? parseWords(rec, i, errors)
+              : null;
           if (typeof text !== "string" || score === null) return null;
-          return { text, score };
+          return { text, score, words };
         }
         function parseFormula(r, i, errors) {
           const f = r && r.formula;
@@ -3184,6 +3354,7 @@
               const polygon = parsePolygon(x, i, errors);
               let text = "",
                 conf = null,
+                words = null,
                 formula = null,
                 table = null;
               if (kind === "formula") {
@@ -3200,10 +3371,11 @@
                 if (rec) {
                   text = rec.text;
                   conf = rec.score;
+                  words = rec.words;
                 }
               }
               return kind === "text" || kind === "formula" || kind === "table"
-                ? { text, conf, polygon, kind, formula, table, order: i + 1 }
+                ? { text, conf, words, polygon, kind, formula, table, order: i + 1 }
                 : null;
             })
             .filter(Boolean);
@@ -3485,6 +3657,7 @@
         function clearResult(resetList) {
           state.result = null;
           state.selected = -1;
+          clearTextLayer(); /* 旧结果的文本层不能留在新图上：坐标与文本都属于上一张图 */
           drawOverlays();
           ["copyAllBtn", "expJson", "expMd", "expHtml"].forEach(
             (id) => ($(id).disabled = true),
@@ -3538,6 +3711,8 @@
           canvas.style.height = h + "px";
           ctx.setTransform(canvas.width / w, 0, 0, canvas.height / h, 0, 0);
           drawOverlays();
+          /* 文本层与叠框共用这一个布局时机：两者都只依赖 stage 的显示尺寸，分开排就会有一帧错位。 */
+          layoutTextLayer();
         }
         function fgRGBA(a) {
           const c = getComputedStyle(document.documentElement)
@@ -3627,6 +3802,166 @@
           drawOverlays();
           if (i >= 0 && items[i])
             items[i].scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+
+        /* ================= 透明文本层（Step 2：DOM 层负责选中与复制）=================
+   职责划分：库只提供**文本 + 几何**，浏览器里的选择/复制属于宿主呈现层——所以这一层只存在于
+   自带的网页 Demo，crate 本身不依赖 DOM/剪贴板。Canvas 继续画叠框与高亮（它无法被选中），
+   DOM 文本层只负责“拖得动、复制得出来”，两者共用同一套坐标换算，所以不会互相错位。
+
+   几何口径必须与 `drawOverlays()` **逐字相同**：`sx = stage.clientWidth / 原图宽`、
+   `sy = stage.clientHeight / 原图高`（两轴分别换算，与 `<img>` 的显示框严格一致）。
+   在此基础上，每个 span 摆到自己的 word 四边形上：
+   · 第一列 = p0→p1（字形的右方向，与产出方 `word_boxes.rs` 把这条边当作 crop 宽度的约定同一）；
+   · 第二列 = p0→p3（字形的下方向）；平移量 = p0。
+   **这是仿射，不是轴对齐外接矩形**：倾斜的行会被剪切着跟随叠框，而不是被扶正成大盒子。
+   局限也要说清：竖排文本按**直立字形**处理——产出方的 `order_points` 已按 y、x 重排过角点，
+   角点身份（哪一个是裁剪图的左上）在线上已经没了，因此无法从四边形还原 90° 旋转。这是
+   CTC 后处理框本身的局限，不是这里新增的近似（字符定位精度属于 Step 4 的基准）。 */
+        const textLayer = $("textLayer");
+        const TL_PROBE_EM = 100; /* 探测字号（px）：推进宽按比值换算，缩放时不必重新测量 */
+        let tlProbe = null;
+        const tlAdvance = new Map(); /* text -> 推进宽 ÷ 字号 */
+        /* 每项记住 **原图坐标**的四边形：显示尺寸变了只重算 transform，不重建 DOM、不重新测量。 */
+        let tlItems = [];
+
+        function tlProbeEl() {
+          if (!tlProbe) {
+            tlProbe = document.createElement("span");
+            tlProbe.className = "tl-probe";
+            tlProbe.setAttribute("aria-hidden", "true");
+            stage.appendChild(tlProbe); /* 绝对定位 + visibility:hidden → 不参与布局 */
+          }
+          return tlProbe;
+        }
+        /* 一次测量、长期复用：推进宽 ÷ 字号是字体的线性属性，因此任何缩放都只用比值。
+           `white-space:pre` 下纯空白的 textContent 仍然有宽度（本层不依赖它：真实切词丢空白）。 */
+        function tlAdvanceRatio(text) {
+          const hit = tlAdvance.get(text);
+          if (hit !== undefined) return hit;
+          const p = tlProbeEl();
+          p.textContent = text;
+          const w = p.getBoundingClientRect().width;
+          const ratio = w > 0 ? w / TL_PROBE_EM : 0;
+          tlAdvance.set(text, ratio);
+          return ratio;
+        }
+        function clearTextLayer() {
+          tlItems = [];
+          textLayer.textContent = "";
+          textLayer.hidden = true;
+        }
+        /* 结果到达后建一次 DOM。元素全部用 createElement + textContent 生成：
+           识别文本是**模型产物**，绝不进 innerHTML（与表格 HTML 同一口径，门禁 G8）。 */
+        function renderTextLayer() {
+          clearTextLayer();
+          const res = state.result;
+          if (!res || !state.image || !state.image.w || !state.image.h) return;
+          const frag = document.createDocumentFragment();
+          res.regions.forEach((r, ri) => {
+            if (
+              !r ||
+              r.kind !== "text" ||
+              !Array.isArray(r.words) ||
+              r.words.length === 0
+            )
+              return;
+            const line = document.createElement("div");
+            line.className = "tl-line";
+            line.setAttribute("data-ri", String(ri));
+            let made = 0;
+            r.words.forEach((w) => {
+              if (
+                !w ||
+                typeof w.text !== "string" ||
+                w.text === "" ||
+                !Array.isArray(w.polygon) ||
+                w.polygon.length !== 4
+              )
+                return;
+              const span = document.createElement("span");
+              span.className = "tl-word";
+              span.setAttribute("data-ri", String(ri));
+              /* 档位以**载荷**为准（`kind` 是服务端给的 token/char），不靠页面自己的选择推断：
+           两边不一致时用户看到的应该是真实形状，而不是你以为的那一档。 */
+              span.setAttribute("data-kind", w.kind === "char" ? "char" : "token");
+              span.textContent = w.text;
+              line.appendChild(span);
+              tlItems.push({ span, quad: w.polygon });
+              made += 1;
+            });
+            if (made) frag.appendChild(line);
+          });
+          /* 没有任何 word 框（off 档 / 本图无文本区域）→ 层保持隐藏，页面行为与改动前逐字相同。 */
+          if (tlItems.length === 0) return;
+          textLayer.appendChild(frag);
+          textLayer.hidden = false;
+          layoutTextLayer();
+        }
+        /* 只重算几何（`layoutCanvas()` 与叠框同一时机被叫到）：缩放/换图/窗口变化都走这里。 */
+        function layoutTextLayer() {
+          if (textLayer.hidden || !state.image || !state.image.w || !state.image.h)
+            return;
+          const w = stage.clientWidth,
+            h = stage.clientHeight;
+          if (!w || !h) return;
+          const sx = w / state.image.w,
+            sy = h / state.image.h;
+          for (const item of tlItems) {
+            const q = item.quad;
+            const x0 = q[0][0] * sx,
+              y0 = q[0][1] * sy;
+            const ux = q[1][0] * sx - x0,
+              uy = q[1][1] * sy - y0; /* 字形右方向（p0→p1） */
+            const dx = q[3][0] * sx - x0,
+              dy = q[3][1] * sy - y0; /* 字形下方向（p0→p3） */
+            const boxH = Math.hypot(dx, dy);
+            const boxW = tlAdvanceRatio(item.span.textContent) * boxH;
+            const s = item.span.style;
+            /* 低于半个像素的盒子无法承载可选中的字形（小字号 + 适应窗口的组合下会出现）：
+           直接不显示，而不是把一个字符压成看不见的斑点——那会让选区多出一个无宽度的空项。 */
+            if (!(boxH > 0.5) || !(boxW > 0.5)) {
+              s.display = "none";
+              continue;
+            }
+            s.display = "";
+            s.fontSize = boxH.toFixed(2) + "px"; /* CSSOM：内联 style 属性会被 CSP 拒绝 */
+            s.transform =
+              "matrix(" +
+              [ux / boxW, uy / boxW, dx / boxH, dy / boxH, x0, y0]
+                .map((v) => v.toFixed(5))
+                .join(",") +
+              ")";
+          }
+        }
+        /* span 点击 → 反向定位到区域（与叠框点击、右栏列表点击同一个入口 selectRegion）。
+           拖选结束时浏览器也会派发一次 click，所以**有选区时不抢选中态**：用户正在选文字，
+           不该顺手被改成“选中这个区域”（那会同时触发列表项 scrollIntoView，选区看起来在漂）。 */
+        textLayer.addEventListener("click", (e) => {
+          const el = e.target.closest("[data-ri]");
+          if (!el) return;
+          const sel = document.getSelection && document.getSelection();
+          if (sel && !sel.isCollapsed) return;
+          const i = Number(el.getAttribute("data-ri"));
+          if (!Number.isInteger(i) || i < 0) return;
+          selectRegion(i);
+        });
+        /* 请求了逐词/逐字框但载荷里没有 → **必须可见**。静默“少一层文字”会让人以为功能坏了
+           却又说不清哪一段。档位是在提交那一刻固定的，所以这里能确定地知道本次开了哪一档。
+           它**不是**契约校验的一部分（`words` 是可选路径，off 档缺失完全合法），因此走 toast +
+           诊断面板，而不是 contractFail 那条“响应字段缺失”的口径。 */
+        function checkWordsDelivery() {
+          if (DEMO || state.words === "off" || !state.result) return;
+          const got = state.result.regions.some(
+            (r) => r && r.kind === "text" && Array.isArray(r.words) && r.words.length,
+          );
+          if (got) return;
+          const msg =
+            "请求了 words=" +
+            state.words +
+            "，但响应里没有任何 recognition.words（本图没有文本区域，或识别阶段未产出词框）";
+          diagPush(msg);
+          toast(msg, "err", "alert");
         }
 
         /* ================= 输入事件（拖放 / 选择 / 粘贴 / 键盘，§9.4） ================= */
@@ -4629,7 +4964,51 @@
           cap.textContent = av.ok
             ? `${cur.name}：请求 ${cur.desc}。公式与表格区域各自独立处理，正文文本 OCR 不受影响。`
             : `不可选：${av.why}。可在上方模型清单里按集合下载，或由服务端加 --formula-detector / --table-model 启用。`;
+          /* 两个请求面选择器一起刷新：它们都只依赖 `state` + 模型状态，调用点已经很多
+     （启动 / 模型轮询 / 下载完成 / 失败），分头调用更容易漏。 */
+          renderWordsRow();
         }
+        /* 框粒度选择器（Step 2）。与识别模式复用同一套样式与渲染口径，但**可用性判定不同**：
+   三档都不依赖额外模型（逐词/逐字框是识别阶段的后处理，recognize 开着就能给），所以没有
+   禁用态，只有“这一档实际意味着什么”——包括“字级框是 CTC 估计”这条不能省略的口径。
+   切换档位**不会**重跑已完成的识别：`?words=` 在提交那一刻就被固定（serve 侧的
+   `RetainedOcr.params`），所以必须提示用户“重新识别才生效”。 */
+        function renderWordsRow() {
+          const row = $("wordsRow"),
+            opts = $("wordsOpts"),
+            cap = $("wordsCap");
+          row.hidden = false;
+          /* 存的值不在词表里（例如用户手改了 localStorage）→ 回落 off，
+     绝不带着服务端会以 400 拒绝的档位去提交。 */
+          if (!WORDS_MODES.some((m) => m.id === state.words)) state.words = "off";
+          opts.innerHTML = WORDS_MODES.map((m) => {
+            const on = m.id === state.words;
+            return `<button type="button" class="mode-opt" role="radio" data-words="${m.id}" aria-checked="${on}" title="${esc(m.hint)}"><span class="mo-dot" aria-hidden="true"></span><span class="mo-body"><span class="mo-name">${esc(m.name)}</span><span class="mo-desc">${esc(m.desc)}</span></span></button>`;
+          }).join("");
+          const cur = wordsModeById(state.words);
+          cap.textContent =
+            cur.id === "off"
+              ? "仅行框：不发 words 参数，响应体里没有逐词/逐字框，图上也没有可选中的文本层（叠框与右栏列表照旧）。"
+              : `${cur.name}：请求 ${cur.desc}。${cur.hint} 切换档位后需重新识别才会生效。`;
+        }
+        $("wordsOpts").addEventListener("click", (e) => {
+          const btn = e.target.closest("[data-words]");
+          if (!btn) return;
+          const m = wordsModeById(btn.getAttribute("data-words"));
+          if (state.words === m.id) return;
+          state.words = m.id;
+          try {
+            localStorage.setItem(WORDS_KEY, m.id);
+          } catch {}
+          renderWordsRow();
+          toast(
+            m.id === "off"
+              ? "框粒度：仅行框（重新识别后文本层会消失）"
+              : `框粒度：${m.name}（${m.desc}）· 重新识别后生效`,
+            "ok",
+            "check",
+          );
+        });
         $("modeOpts").addEventListener("click", (e) => {
           const btn = e.target.closest("[data-mode]");
           if (!btn) return;
@@ -4702,7 +5081,10 @@
      到底发了什么"在流动日志里一眼可见，不靠默认值推断。 */
           const mode = modeById(state.mode);
           const queue = mode.queue;
-          const url = "/api/ocr?queue=" + queue + (mode.table ? "&table=1" : "");
+          /* 第三个正交参数：`words=`（框粒度，Step 2）。off 时**不带**参数，因此缺省路径的
+     请求串与响应体都与接入本档之前一致；非 off 时它直接拼成 `&words=words|chars`，
+     与 CLI 的 `--words` / `--chars` 同一个词表（`WordOutputMode::as_str`）。 */
+          const url = "/api/ocr?queue=" + queue + (mode.table ? "&table=1" : "") + wordsQuery();
           xhrSend("POST", url, state.image.file, {
             octet: true,
             onProgress: setUpProgress,
@@ -4875,6 +5257,7 @@
         function finishJob() {
           renderJob();
           renderRegions();
+          checkWordsDelivery(); /* 先记诊断，再渲染诊断面板，否则本次的提示进不了面板 */
           renderDiag();
           renderMeta();
           renderButton();
@@ -4883,6 +5266,7 @@
           );
           $("annotatedBtn").hidden = false;
           layoutCanvas();
+          renderTextLayer();
           const t = state.result.timings;
           const total =
             t.total_ms != null ? t.total_ms : t.total != null ? t.total : null;
@@ -6229,13 +6613,51 @@
               [x0, y1],
             ];
           };
-          const regions = rows.map((r, i) => ({
-            text: r[0],
-            conf: r[1],
-            kind: r[2] || "text",
-            order: i + 1,
-            polygon: box(i),
-          }));
+          /* 离线预览也要覆盖文本层（Step 2）。这里的字级框**刻意复刻真实管线的两个特征**：
+           ① 切词丢弃空白（`decode.rs` 的 `get_word_info` 不把空白放进 word_content），所以
+              “服务费 1,200.00” 里那个空格**没有**对应 span，拖选跨过去不会带出空格；
+           ② 一字符一列、按整行平均宽度铺（`word_boxes.rs` 的 CTC 后处理），不是字形的真实宽度。
+           演示数据只证明“层能建起来、能拖选”，**不是**字符定位精度的证据（那属于 Step 4 的基准）。 */
+          const wordsOf = (text, quad, score) => {
+            const xs = quad.map((p) => p[0]);
+            const ys = quad.map((p) => p[1]);
+            const x0 = Math.min(...xs),
+              x1 = Math.max(...xs);
+            const y0 = Math.min(...ys),
+              y1 = Math.max(...ys);
+            const chars = [...text];
+            const col = (x1 - x0) / Math.max(1, chars.length);
+            const out = [];
+            chars.forEach((ch, k) => {
+              if (ch.trim() === "") return; /* 与真实切词一致：空白不产出 span，位置留成空隙 */
+              const left = x0 + k * col;
+              out.push({
+                text: ch,
+                score,
+                kind: "char",
+                polygon: [
+                  [left, y0],
+                  [left + col, y0],
+                  [left + col, y1],
+                  [left, y1],
+                ],
+              });
+            });
+            return out;
+          };
+          const regions = rows.map((r, i) => {
+            const quad = box(i);
+            const kind = r[2] || "text";
+            return {
+              text: r[0],
+              conf: r[1],
+              /* 公式区域**不携带** CTC 结果，因此也没有词框（与线上同一语义） */
+              words: kind === "text" ? wordsOf(r[0], quad, r[1]) : null,
+              kind,
+              order: i + 1,
+              polygon: quad,
+            };
+          });
           const firstTableLine = rows.length - tableLines.length;
           const lastTableLine = rows.length - 1;
           const tableHtml =

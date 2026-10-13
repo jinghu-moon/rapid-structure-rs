@@ -778,6 +778,74 @@ SHA-256，是 P1-8 审计漏登记的第四处生产拷贝。它已如实登记�
   网页 Demo 也还没有透明文本层，因此 `chars` 档目前只有 API 侧的可达性，没有可复制的选区体验。
   这两件分别属于 Step 2 与 Step 4，按既定顺序另批处理，不混入本批。
 
+## 网页 Demo 的透明文本层：图上拖选与复制（Step 2，未发布）
+
+Step 1 打通了出口，本批接通**使用面**。职责定案：**"在图片上拖拽选中文字并复制"是宿主呈现层的功能**，
+库不依赖浏览器、DOM、剪贴板；库只负责把文本与几何给足，自带网页 Demo 负责把它变成可选中的 DOM。
+因此本批**只改页面与门禁，不改任何识别行为、不改线契约、不加模型**。
+
+- 图片仍作底层显示，上方新增 `#textLayer`（`.tl-line[data-ri] > .tl-word[data-ri][data-kind]`）：
+  `words` 档一个词一个 span、`chars` 档一个字符一个 span，`user-select:text` + 原生 Selection/Clipboard
+  （Ctrl+C 无需 JS 参与）；span 文本用 `createElement` + `textContent` 写入，识别产物绝不进
+  `innerHTML`（门禁 G8 同一口径）。`words=off`（缺省）不建层，页面行为与改动前逐字相同。
+- **Canvas 继续负责视觉框与高亮，DOM 层只负责选择与复制**，两者共用同一个布局时机
+  （`layoutCanvas()` 尾部调 `layoutTextLayer()`），不会框与字错位。层的 `pointer-events:none` +
+  span 的 `auto` 保证空白处仍点得到叠框；`aria-hidden` 不让同一段文字被读屏读两遍。
+- **每个 span 按 polygon 做仿射，没有退化成轴对齐外接矩形**：`fontSize = |p0→p3|`，矩阵两列
+  分别是 p0→p1、p0→p3，原点是 p0；字形推进宽由 `.tl-probe` 按同一套字体口径量出后换算，
+  所以 `i/W` 与比例字体不被当成等宽。倾斜行因此能选出与视觉一致的区域：实测
+  `03旋转与倾斜.png` 218 个 span 中 **152 个可测出非轴对齐**（`|b|+|c| > 0.05`）。
+- 动态样式全走 CSSOM：主页面 CSP 是 `style-src 'nonce-…'`、**没有** `'unsafe-inline'`，
+  写 `style="…"` 属性会被整条丢弃。
+- 公式与表格**不进**透明层（本批最重要的一个否定设计）：`formula.latex` 与 `table.markdown` 都不等于
+  用户眼睛看到的普通文本，把它们铺在图上会让拖选得到"看到 ∫、复制到 `\int`"的错物。复制语义因此
+  分五条出口并在 `docs/05` §9.8 成表：图上拖选=字符文本（跨区域按 `regions[]` 顺序，DOM 顺序即线上
+  顺序）；`复制全文`=文本 `.text` + 表格 markdown + 公式 LaTeX（被表格消费的文本行跳过，避免同一段
+  文字出现两次）；双击公式行=LaTeX；展开后的渲染表格=按单元格原生选中；`off`=无层。
+- 页面只读一份词表：`?words=` 选项直接复用 Step 1 的 `WordOutputMode::ALL` 名字，`data-kind` 以
+  **载荷**为准（服务端给 `token`/`char`），不由页面自己的选择推断——两边不一致时用户看到的应该是
+  真实形状。请求了档位而载荷里没有词框时**必须可见**（toast + 诊断面板），而不是静默"少一层文字"；
+  但它**不进** `contractFail` 口径，因为 `words` 是可选路径、`off` 档缺失完全合法。
+- 亚像素守卫：盒子退化到半个显示像素以下时置 `display:none`（文本仍在 DOM、一个字都不丢），
+  而不是留一个零面积但可命中的斑点。本批**未改**这一点，但把它的影响写进了文档与检查：
+  这类 span 的 `getBoundingClientRect()` 是文档原点的零矩形、computed transform 是 `none`。
+- 新增钉住：`src/bin/serve/tests.rs` 两条（`the_served_char_boxes_satisfy_the_optional_page_contract`：
+  线上 `polygon.points` 必为四点、`words` 是可选路径；`the_web_demo_text_layer_uses_the_shared_mode_vocabulary_and_an_affine_box`：
+  页面用同一份词表且盒由 polygon 求矩阵）；`tools/check-page-result-contract.mjs` 补页面读取路径集
+  （含 `regions[].recognition.words`）。
+- **`tools/check-page-flow-cdp.mjs` 从 4 条不变量扩到 9 条**，新增的 5–9 只能在真实浏览器里测：
+  ⑤ 选了 `chars` 后层可见且 span 带 `char` 标签、computed `user-select:text`、字形透明、层
+  `pointer-events:none`；⑥ span 拼接与**本次拉到的那份 `/result`** 逐字相等（含顺序）；⑦ 每个 span 的
+  computed 矩阵落在自己的 p0 与两条列方向上（±1°、字号 ±2%）；⑧ 真实鼠标拖选得到非空选区且是该行
+  识别文本的连续片段；⑨ 缩放后仍是同一份层（span 数与文本不变、隐藏不再变多、页面自己的缩放读数变化、
+  已放置的 span 仍全部在显示图像内）。`tools\run-page-flow-cdp.ps1` 新增 `-AssertTilt`（只对倾斜图使用，
+  否则相当于对一张没有倾斜的页面宣布"倾斜已验证"）。
+- 三次失败都改到了真因，登记下未被满足的假设（否则下次又当"测试写错了"绕过）：
+  ① 第二次识别要重新跑一整张图（本机 medium 对 3200×2000 单次 23.49 s），固定节拍会探到**第一个**
+  job 的结果 → 改成等新的 `/result` 出现；② 矩阵口径把视口偏移算了两遍（`stage.left/top` 不该加）；
+  ③ headless 窗口高度不够时，`.drop{flex:1;min-height:0}` 会被工具条/文件行/作业行/诊断面板挤到
+  **0px**（实测 `685x0`），fit 因此算不合理的百分比、拖选目标落在页面工具条上 → 先
+  `Browser.setWindowBounds` 再 `Emulation.setDeviceMetricsOverride`；拖选目标改为先用页面自己的滚动
+  容器 `scrollIntoView`、再在同一个 evaluate 里做 `elementFromPoint` 回命，避开"测坐标与派发坐标之间
+  布局漂了"。
+- 门禁九项（`docs/12` §8.1 清单，含先 `-SelfTest` 再正式扫描的两个守卫）本批提交前全套实跑，
+  **退出码均为 0**：`fmt --check`、`clippy --all-targets --features serve -D warnings`、
+  `test --all-targets --features serve`（lib **757 passed + 2 ignored**、rapidstruct bin **300**）、
+  serve 串行 `--test-threads=1`（**300 passed**，345.38s）、`serve_startup` 串行（2 passed）、
+  `check-page-result-contract.mjs`（新增的 `words` 可选路径：absent/null 合法、形状不对就按路径点名）、
+  `generate-table-whitelist.mjs --check`（fingerprint `32cf61e1…` 与上批一致）、守卫 selftest + 正式扫描
+  （扫描 220 个文本文件 / 15 条越界短语 / 6 份必须句，PASS）。
+  基线对比：lib 757 不变（本批无 lib 用例）、bin 298 → **300**（+2）。
+- 实跑（真实服务 + headless Chrome，capture JSON 存档）：`01基础多位置文本.png` 41 区域 / 892 span /
+  全 `char` / 21 个非轴对齐 / 亚像素隐藏 0 / 拖选区域 1「多位置文本定位实验」选出 `位置文本定`；
+  `03旋转与倾斜.png` 13 区域 / 218 span / 152 个非轴对齐 / 拖选「旋转与倾斜文本」选出 `转与倾斜`；
+  两次都 `POST ?queue=text` 202 → `GET /api/jobs/{id}` 轮询 → 两个 `/result` 全 200，页面异常 0。
+- **本批未消除**：① 公式的"视觉 Unicode 形式"复制没做，只有 LaTeX 一条出口；② **字符框仍为 CTC 后处理
+  估计**（一字符一列 + 整行平均字宽），本批只证明"层与框一致且能拖选"，不证明字符边界精度，且对
+  重复字符（`ll`/`mm`/`1122`）、粘连、小字号的预期偏差仍在 → Step 3/4；③ `rec-only`（`stages.detect=false`）
+  分支仍不产词框（Step 1 已登记），本批的层在那条分支上依旧为空；④ 竖排区域的角点身份在 `order_points`
+  重排后丢失，层的列方向对竖排仍取 p0→p1（可能与阅读方向不一致），需 Step 3 与基准一并处理。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、
