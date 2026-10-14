@@ -90,7 +90,9 @@ pub use crate::ocr::pipeline::{
     config::{EngineConfig, GlobalConfig},
     rapid_structure::{PipelineProviderResolutions, RapidOcr, RapidOcrEngine},
 };
-pub use crate::ocr::types::{LineResult, RecognizeOutput, WordBox, WordInfo, WordType};
+pub use crate::ocr::types::{
+    AlignStatus, LineResult, RecognizeOutput, WordBox, WordInfo, WordType,
+};
 pub use crate::output::html::sanitize_table_html;
 pub use crate::output::html::{
     ReportMode, relative_image_name, render_output_report, render_report,

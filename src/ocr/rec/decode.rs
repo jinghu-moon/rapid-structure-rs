@@ -10,7 +10,10 @@ use ndarray::{ArrayView2, ArrayView3, Axis, s};
 
 use crate::{
     error::{RapidOcrError, Result},
-    ocr::types::{WordInfo, WordType},
+    ocr::{
+        rec::align::char_column_ranges,
+        types::{AlignStatus, WordInfo, WordType},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -114,6 +117,9 @@ impl CtcLabelDecoder {
             }
 
             let mut text = String::new();
+            // 选中的 token id（按文本顺序）。它就是对齐的目标标签序列：blank 已被
+            // `selection` 排除，所以序列里不会出现 0 号位。
+            let mut selected_ids: Vec<usize> = Vec::with_capacity(token_indices.len());
             for (token, keep) in token_indices.iter().zip(selection.iter()) {
                 if !*keep {
                     continue;
@@ -126,6 +132,7 @@ impl CtcLabelDecoder {
                     ))
                 })?;
                 text.push_str(ch);
+                selected_ids.push(*token);
             }
 
             // Keep parity near text_score threshold by aggregating in f64 before round-to-5.
@@ -133,7 +140,17 @@ impl CtcLabelDecoder {
             let mean_conf = round5_f64(sum_conf / conf_list.len() as f64);
 
             if return_word_box {
-                let mut info = get_word_info(&text, &selection);
+                // 逐字符 forced alignment：直接用**完整的 T×C 概率面**（不是 argmax 后的
+                // 序列）在 2L+1 状态图上取 Viterbi 路径，于是重复字符能各自拿到区间。
+                // 目标序列就是上面选中的 token；若字符表里存在多字符条目，文本长度与
+                // token 数就会不一致，此时下游按字符编号的映射全部失效，直接记账退回。
+                let alignable = text.chars().count() == selected_ids.len();
+                let ranges = if alignable {
+                    char_column_ranges(probs, &selected_ids)
+                } else {
+                    None
+                };
+                let mut info = get_word_info(&text, &selection, ranges.as_deref());
                 let wh_ratio = *wh_ratio_list.get(batch_idx).unwrap_or(&1.0_f32);
                 info.line_txt_len = token_indices.len() as f32 * wh_ratio / max_wh_ratio;
                 info.confs = conf_list;
@@ -199,13 +216,20 @@ fn read_character_file(path: &Path) -> Result<Vec<String>> {
     Ok(out)
 }
 
-fn get_word_info(text: &str, selection: &[bool]) -> WordInfo {
+/// 把文本与选中列切成词，并（在对齐可用时）把逐字符列区间按同样的分组带出来。
+///
+/// `ranges` 的下标是**文本字符序号**（含空白），与 `valid_col` 同轴；空白字符本身
+/// 不进入 `words`，所以也不进入 `char_cols`。返回的 `char_cols` 与 `words`
+/// 逐层等长，下游可以直接 zip，不需要重建下标映射。
+fn get_word_info(text: &str, selection: &[bool], ranges: Option<&[[usize; 2]]>) -> WordInfo {
     let mut word_list: Vec<Vec<String>> = Vec::new();
     let mut word_col_list: Vec<Vec<usize>> = Vec::new();
+    let mut word_range_list: Vec<Vec<[usize; 2]>> = Vec::new();
     let mut state_list: Vec<WordType> = Vec::new();
 
     let mut word_content: Vec<String> = Vec::new();
     let mut word_col_content: Vec<usize> = Vec::new();
+    let mut word_range_content: Vec<[usize; 2]> = Vec::new();
 
     let valid_col: Vec<usize> = selection
         .iter()
@@ -222,6 +246,10 @@ fn get_word_info(text: &str, selection: &[bool]) -> WordInfo {
         return WordInfo::default();
     }
 
+    // 只有长度对得上才接受这张区间表；对不上就当对齐没发生，避免把区间贴到错误的字上。
+    let ranges: Option<&[[usize; 2]]> = ranges.filter(|r| r.len() == chars.len());
+    let mut range_shape_ok = ranges.is_some();
+
     let mut col_width = vec![0_usize; valid_col.len()];
     for i in 1..valid_col.len() {
         col_width[i] = valid_col[i] - valid_col[i - 1];
@@ -235,9 +263,11 @@ fn get_word_info(text: &str, selection: &[bool]) -> WordInfo {
             if !word_content.is_empty() {
                 word_list.push(word_content.clone());
                 word_col_list.push(word_col_content.clone());
+                word_range_list.push(word_range_content.clone());
                 state_list.push(state.unwrap_or(WordType::EnNum));
                 word_content.clear();
                 word_col_content.clear();
+                word_range_content.clear();
             }
             continue;
         }
@@ -256,9 +286,11 @@ fn get_word_info(text: &str, selection: &[bool]) -> WordInfo {
             if !word_content.is_empty() {
                 word_list.push(word_content.clone());
                 word_col_list.push(word_col_content.clone());
+                word_range_list.push(word_range_content.clone());
                 state_list.push(state.unwrap_or(WordType::EnNum));
                 word_content.clear();
                 word_col_content.clear();
+                word_range_content.clear();
             }
             state = Some(c_state);
         }
@@ -267,18 +299,43 @@ fn get_word_info(text: &str, selection: &[bool]) -> WordInfo {
         if let Some(col) = valid_col.get(c_i) {
             word_col_content.push(*col);
         }
+        if let Some(range) = ranges.and_then(|r| r.get(c_i)) {
+            word_range_content.push(*range);
+        } else {
+            range_shape_ok = false;
+        }
     }
 
     if !word_content.is_empty() {
         word_list.push(word_content);
         word_col_list.push(word_col_content);
+        word_range_list.push(word_range_content);
         state_list.push(state.unwrap_or(WordType::EnNum));
     }
+
+    let aligned = range_shape_ok
+        && ranges.is_some()
+        && word_range_list
+            .iter()
+            .zip(word_list.iter())
+            .all(|(spans, words)| spans.len() == words.len());
 
     WordInfo {
         words: word_list,
         word_cols: word_col_list,
         word_types: state_list,
+        char_cols: if aligned {
+            word_range_list
+        } else {
+            // 退回旧估计法：清空区间表，并把降级记在账上，不留下一框"看起来像对齐结果"
+            // 但没有对齐来源的几何。
+            Vec::new()
+        },
+        align_status: if aligned {
+            AlignStatus::Aligned
+        } else {
+            AlignStatus::Fallback
+        },
         ..WordInfo::default()
     }
 }
@@ -302,22 +359,36 @@ mod tests {
     use ndarray::Array3;
 
     use super::CtcLabelDecoder;
+    use crate::ocr::types::AlignStatus;
+
+    /// 字符表 `["a", "b"]` 装好后的完整类别：`[blank, a, b, " "]`（下标 0/1/2/3）。
+    const CLASSES: usize = 4;
+    const BLANK: usize = 0;
+    const A: usize = 1;
+    const B: usize = 2;
+    const SPACE: usize = 3;
+
+    fn decoder() -> CtcLabelDecoder {
+        CtcLabelDecoder::new(Some(vec!["a".into(), "b".into()]), None)
+            .expect("decoder init should pass")
+    }
+
+    /// 每帧一个 argmax 类别，其余类别均分剩余概率。
+    fn peaked(frames: &[usize]) -> Array3<f32> {
+        let peak = 0.9_f32;
+        let off = (1.0 - peak) / (CLASSES - 1) as f32;
+        let data: Vec<f32> = frames
+            .iter()
+            .flat_map(|&id| (0..CLASSES).map(move |c| if c == id { peak } else { off }))
+            .collect();
+        Array3::from_shape_vec((1, frames.len(), CLASSES), data).expect("shape matches")
+    }
 
     #[test]
     fn decode_basic_ctc() {
-        let decoder = CtcLabelDecoder::new(Some(vec!["a".into(), "b".into()]), None)
-            .expect("decoder init should pass");
+        let decoder = decoder();
         // character list after init: [blank, a, b, " "]
-        let preds = Array3::from_shape_vec(
-            (1, 4, 4),
-            vec![
-                0.9, 0.1, 0.0, 0.0, // blank
-                0.1, 0.8, 0.1, 0.0, // a
-                0.1, 0.8, 0.1, 0.0, // a duplicate (removed)
-                0.1, 0.1, 0.8, 0.0, // b
-            ],
-        )
-        .expect("shape should match");
+        let preds = peaked(&[BLANK, A, A, B]);
 
         let (lines, words) = decoder
             .decode(&preds, true, &[1.0], 1.0)
@@ -326,18 +397,121 @@ mod tests {
         assert_eq!(words.len(), 1);
     }
 
+    /// 对齐可用的基本盘：`char_cols` 与 `words` 逐层等长，区间有序且互不重叠。
+    #[test]
+    fn decode_emits_one_disjoint_column_range_per_character() {
+        let decoder = decoder();
+        let preds = peaked(&[BLANK, A, A, A, BLANK, B, B, BLANK]);
+
+        let (_, words) = decoder
+            .decode(&preds, true, &[1.0], 1.0)
+            .expect("decode should pass");
+        let info = &words[0];
+        assert_eq!(info.align_status, AlignStatus::Aligned);
+        assert_eq!(info.words.len(), info.char_cols.len());
+        assert!(
+            info.char_cols
+                .iter()
+                .zip(info.words.iter())
+                .all(|(spans, ws)| spans.len() == ws.len()),
+            "char_cols 必须与 words 逐层等长"
+        );
+
+        let flat: Vec<[usize; 2]> = info.char_cols.iter().flatten().copied().collect();
+        assert_eq!(flat.len(), 2, "a 与 b 各一项");
+        let mut previous_end = 0;
+        for range in &flat {
+            assert!(range[0] < range[1], "零宽区间: {range:?}");
+            assert!(range[0] >= previous_end, "区间重叠或倒退: {flat:?}");
+            assert!(range[1] <= preds.dim().1, "区间越出帧数: {flat:?}");
+            previous_end = range[1];
+        }
+    }
+
+    /// 重复字符专项：collapse 后的两个 `a` 在 argmax 路径上共用同一段峰，但对齐必须
+    /// 把它们分到两个不相交的区间（这正是“连续非 blank argmax”做不到的）。
+    #[test]
+    fn decode_repeated_characters_get_disjoint_ranges() {
+        let decoder = decoder();
+        // argmax: blank, a, a, blank, a, a  -> collapse 后文本 "aa"
+        let preds = peaked(&[BLANK, A, A, BLANK, A, A]);
+
+        let (lines, words) = decoder
+            .decode(&preds, true, &[1.0], 1.0)
+            .expect("decode should pass");
+        assert_eq!(lines[0].0, "aa");
+        let info = &words[0];
+        assert_eq!(info.align_status, AlignStatus::Aligned);
+        let spans = &info.char_cols[0];
+        assert_eq!(spans.len(), 2, "两个 a 必须各自拿到区间");
+        assert!(spans[0][1] <= spans[1][0], "重复字符的区间相交: {spans:?}");
+    }
+
+    /// blank 与空格：空格字符本身不进门词表，但它的区间必须把两个词推开，
+    /// 下游铺格才能把字缝分给两侧而不是抹平。
+    #[test]
+    fn decode_space_splits_words_but_keeps_its_own_range_out_of_char_cols() {
+        let decoder = decoder();
+        let preds = peaked(&[BLANK, A, A, SPACE, SPACE, B, B, BLANK]);
+
+        let (lines, words) = decoder
+            .decode(&preds, true, &[1.0], 1.0)
+            .expect("decode should pass");
+        assert_eq!(lines[0].0, "a b");
+        let info = &words[0];
+        assert_eq!(
+            info.words,
+            vec![vec!["a".to_string()], vec!["b".to_string()]]
+        );
+        assert_eq!(info.align_status, AlignStatus::Aligned);
+        assert_eq!(info.char_cols.len(), 2);
+        assert!(
+            info.char_cols.iter().all(|spans| spans.len() == 1),
+            "空格不该把自己的区间交给任何一个字: {:?}",
+            info.char_cols
+        );
+        assert!(
+            info.char_cols[0][0][1] < info.char_cols[1][0][0],
+            "被空格隔开的两个字区间相接: {:?}",
+            info.char_cols
+        );
+    }
+
+    /// 对齐不可行时的记账：真实情形下 argmax 路径本身就是一条合法对齐路径，
+    /// 因此能在解码入口上触发退回的是“字符表条目不是单个字符”——它把
+    /// “一个字符 = 一个 token”这个下标约定打破，下游按字符编号的映射全部失效。
+    /// 此时必须记为 `Fallback`，`char_cols` 不得留残留。
+    #[test]
+    fn decode_records_fallback_when_a_dict_entry_is_not_a_single_char() {
+        // 字符表里只有 "ab" 这个双字条目：文本得到 2 个字符，但只有 1 个 token。
+        let decoder =
+            CtcLabelDecoder::new(Some(vec!["ab".into()]), None).expect("decoder init should pass");
+        // character: [blank, "ab", " "]
+        let preds = {
+            let frames = [BLANK, A, A, BLANK];
+            let peak = 0.9_f32;
+            let off = (1.0 - peak) / 2.0;
+            let data: Vec<f32> = frames
+                .iter()
+                .flat_map(|&id| (0..3).map(move |c| if c == id { peak } else { off }))
+                .collect();
+            Array3::from_shape_vec((1, frames.len(), 3), data).expect("shape matches")
+        };
+
+        let (lines, words) = decoder
+            .decode(&preds, true, &[1.0], 1.0)
+            .expect("decode should pass");
+        assert_eq!(lines[0].0, "ab", "双字条目照旧拼进文本");
+        let info = &words[0];
+        assert_eq!(info.align_status, AlignStatus::Fallback);
+        assert!(info.char_cols.is_empty(), "退回时不得留下来源不明的区间");
+        assert!(!info.words.is_empty(), "退回不影响切词与文本");
+    }
+
     #[test]
     fn decode_rejects_wh_ratio_len_mismatch_when_word_box_enabled() {
-        let decoder = CtcLabelDecoder::new(Some(vec!["a".into(), "b".into()]), None)
-            .expect("decoder init should pass");
-        let preds = Array3::from_shape_vec(
-            (1, 2, 4),
-            vec![
-                0.9, 0.1, 0.0, 0.0, //
-                0.1, 0.8, 0.1, 0.0, //
-            ],
-        )
-        .expect("shape should match");
+        let decoder = decoder();
+        let preds = peaked(&[BLANK, A]);
 
         let err = decoder
             .decode(&preds, true, &[], 1.0)

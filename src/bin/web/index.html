@@ -2734,8 +2734,8 @@
        /* 框粒度的三档（Step 2）。词表必须与服务端 `WordOutputMode::ALL` 逐字一致：`as_str` /
   `from_name` 是线上**唯一**词表（那边的注释写明「入口各写一套取值」必须在测试里当场暴露），
   所以 CLI、serve 查询串、这一页三者只能出现 `off` / `words` / `chars` 三个名字。
-  `hint` 是给用户看的实话：字级框来自 CTC 后处理（一个字符占一列 + 整行平均字宽），
-  不是字符检测模型给出的像素级边界，因此不能宣称精确字符定位。 */
+  `hint` 是给用户看的实话：字级框来自 CTC 后处理（Step 3 起是 forced alignment 的帧区间铺格，
+  帧数不够时退回整行平均字宽并记账），不是字符检测模型给出的像素级边界，因此不能宣称精确字符定位。 */
        const WORDS_MODES = [
          {
            id: "off",
@@ -2753,7 +2753,7 @@
            id: "chars",
            name: "逐字框",
            desc: "words=chars",
-           hint: "请求 kind=char 的字级框，文本层用字符级 span。坐标是 CTC 后处理估计（一字符一列 + 平均字宽），不是字符检测模型的像素级边界。",
+           hint: "请求 kind=char 的字级框，文本层用字符级 span。坐标由 CTC forced alignment 的帧区间铺格得出（比例字体下每字宽度不同），仍不是字符检测模型的像素级边界；对齐装不下时退回整行平均字宽估计。",
          },
        ];
        const WORDS_KEY = "rrocr-words-mode"; /* 与 rrocr-fx-mode 同一存法 */
@@ -6613,10 +6613,12 @@
               [x0, y1],
             ];
           };
-          /* 离线预览也要覆盖文本层（Step 2）。这里的字级框**刻意复刻真实管线的两个特征**：
-           ① 切词丢弃空白（`decode.rs` 的 `get_word_info` 不把空白放进 word_content），所以
-              “服务费 1,200.00” 里那个空格**没有**对应 span，拖选跨过去不会带出空格；
-           ② 一字符一列、按整行平均宽度铺（`word_boxes.rs` 的 CTC 后处理），不是字形的真实宽度。
+          /* 离线预览也要覆盖文本层（Step 2）。这里的字级框**刻意复刻真实管线的一个特征**：
+           切词丢弃空白（`decode.rs` 的 `get_word_info` 不把空白放进 word_content），所以
+           “服务费 1,200.00” 里那个空格**没有**对应 span，拖选跨过去不会带出空格。
+           几何上则**不复刻**：真实管线从 Step 3 起用 CTC forced alignment 给每个字符一段
+           自己的帧区间（`align.rs` + `word_boxes.rs` 的铺格），比例字体下宽度不等；而离线
+           预览手里只有文本与区域四边形，没有任何逐步概率，因此只能按等宽铺。
            演示数据只证明“层能建起来、能拖选”，**不是**字符定位精度的证据（那属于 Step 4 的基准）。 */
           const wordsOf = (text, quad, score) => {
             const xs = quad.map((p) => p[0]);

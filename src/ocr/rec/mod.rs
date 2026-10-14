@@ -1,3 +1,4 @@
+pub mod align;
 pub mod bidi;
 pub mod decode;
 pub mod preprocess;

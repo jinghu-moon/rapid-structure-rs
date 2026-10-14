@@ -62,14 +62,21 @@ before redistributing a complete application or model bundle.
   stage timings. Word- and character-level boxes are intentionally optional
   (`recognition.words`, three modes `off` / `words` / `chars`, default `off`);
   the CLI takes `--words` / `--chars` and `serve` takes `POST /api/ocr?words=...`,
-  all three mapped onto the same `WordOutputMode` vocabulary. The boxes
-  are CTC post-processing estimates (one CTC column per character, one average
-  character width per line), not a character-detection model, so they must not
-  be presented as pixel-accurate character boundaries. How far off they are is
-  measured rather than asserted: `docs/13-charbox-benchmark.md` holds the charbox
-  baseline (pixel-ink ground truth, per-character IoU, signed boundary error,
-  selection precision/recall and the cost of each `words=` mode) together with
-  the criteria a future alignment change has to clear.
+  all three mapped onto the same `WordOutputMode` vocabulary. The boxes come from
+  CTC post-processing, not from a character-detection model: every character is
+  aligned on the full per-step CTC probability surface by a Viterbi forced
+  alignment over a 2L+1 state graph (`src/ocr/rec/align.rs`), its frame range is
+  tiled into column boundaries, and mapped back onto the page through the
+  detection quad's homography. A line whose frame budget cannot hold its text
+  falls back to the older average-character-width estimate and says so
+  (`WordInfo::align_status`), so a downgrade is never silent. Either way the boxes
+  must not be presented as pixel-accurate character boundaries: the cross-axis
+  extent (line height) is still inherited from the whole line, because CTC never
+  predicts it. How far off they are is measured rather than asserted:
+  `docs/13-charbox-benchmark.md` holds the pre-alignment `ctc` baseline and the
+  post-alignment run side by side (pixel-ink ground truth, per-character IoU,
+  signed boundary error, selection precision/recall and the cost of each `words=`
+  mode) together with the criteria an alignment change has to clear.
 - Turning those boxes into "drag across the image and copy the text" is a host
   presentation-layer responsibility, not a library one: this crate never depends
   on a browser, DOM or clipboard. The bundled web demo shows one complete way to

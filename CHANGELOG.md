@@ -1029,6 +1029,115 @@ Step 1 打通了出口，Step 2 接通了使用面，两边都留了同一句"�
   （需要模型 + 11 分钟），它靠"提交前实跑一次并登记数字"约束，仓库里没有机器判据会拦住
   忘了跑的人——这一点如实登记，不伪装成自动化。
 
+## 字符框改走 CTC forced alignment（Step 3，未发布）
+
+Step 3 把 `decode.rs` 的中间数据从"只保留 argmax 选中列"扩展为"交出完整 T×C 概率面 +
+逐字符帧区间表"，在 `src/ocr/rec/align.rs`（新增，283 行）里用 2L+1 状态图 Viterbi 做
+forced alignment，再由 `word_boxes.rs` 的 `tile_column_spans` 铺成像素边界。
+目标是替掉"字符中心 = CTC 列索引 + 字符宽度 = 整行平均字宽"那条旧估计法。
+
+### 对齐模块 (`src/ocr/rec/align.rs`)
+
+- 状态图：`(blank, c₁, blank, c₂, …, blank, c_L, blank)`，转移 `{stay, +1, +2}`。
+  `+2`（跳过中间 blank 状态）仅当相邻 label **不同**；重复字符必须走 blank，否则
+  collapse 会把它们并成一个。
+- 可行性下限 `T ≥ L`；帧数不够时返回 `None`，调用方据此记账退回。
+- 概率下限 `MIN_PROB = 1e-30`，防止下溢帧 `ln(0) = -inf` 使整条路径失去可比性。
+- `[实测]` 三个真实词典（medium/small 18,707 条、tiny 6,903 条）的全部条目都是
+  单字符 ⇒ 真实模型上 `Fallback` 只可能由 `T < L` 触发。
+
+### 解码层改动 (`src/ocr/rec/decode.rs`)
+
+- `decode_view` 在 `return_word_box=true` 分支把当前行的 `probs: ArrayView2<f32>` 交给
+  `char_column_ranges(probs, &selected_ids)`，拿到每字符 `[t_start, t_end)`。
+- 新增 `alignable` 守卫：`text.chars().count() == selected_ids.len()`。不等（双字条目）
+  时跳过对齐、标记 `Fallback`。
+- `get_word_info` 多收一个 `ranges: Option<&[[usize; 2]]>` 参数，对齐成功时填
+  `WordInfo.char_cols`，退回时清空并设 `AlignStatus::Fallback`。
+
+### 铺格层改动 (`src/ocr/rec/word_boxes.rs`)
+
+- 新增 `aligned_segments`：读 `WordInfo.char_cols`（按 `AlignStatus` 分流），将帧区间
+  经 `avg_col_width` 换算为列坐标。`aligned_word_mode_box_spans_the_whole_word` 钉住
+  词档下整词只占自己的帧范围而非全行。
+- `tile_column_spans` 外边界从旧的"与内容右端取中点"改为
+  `median_positive_gap(spans) / 2.0`（相邻区间之间 blank 的中位宽度之半）。
+  没有字缝可统计时返回 0（单字符行、连续不空白行）。假说是"行尾留白被吹进末框"，
+  `[实测]` **已被数据推翻**：`width_ratio.max` 一像素没动（5.4258）。修改被保留，
+  理由改为"词档单框不再吞留白 + 内外规则一致"，不声称指标改善。
+- `fallback_status_keeps_the_average_width_estimator` 断言退回分支的几何逐位等于旧算式。
+- 新增竖排 `aligned_char_boxes_land_on_the_original_image_for_vertical_lines`、
+  倾斜 `aligned_char_boxes_keep_the_tilt_of_the_detection_quad`、比例宽度
+  `aligned_char_boxes_follow_proportional_frame_widths`、
+  首尾相接 `aligned_char_boxes_tile_the_line_without_gaps` 等测试。
+
+### 类型与导出
+
+- `AlignStatus { Empty, Aligned, Fallback }`（`src/ocr/types.rs`）。
+  不进任何输出 JSON，仅作内部记账与单测判据。
+- `WordInfo` 多两个字段：`char_cols: Vec<Vec<[usize; 2]>>`、`align_status: AlignStatus`。
+- `src/exports.rs` 再导出 `AlignStatus`（`mod ocr` 私有，新公共类型必须经此路径）。
+
+### 新增测试（19 条）
+
+| 文件 | 条数 | 要点 |
+| --- | --- | --- |
+| `align.rs` | 8 | 重复字符不相交、帧预算刚好用完、T&lt;L 拒绝、不同/相同相邻 label、空格隔开、宽字多于窄字 |
+| `decode.rs` | 4 | 区间不重叠且有序、重复字符各有区间、空格不入 char_cols、双字条目 → Fallback |
+| `word_boxes.rs` | 7 | 铺格首尾相接、比例宽度、旧算式逐位一致、词档只覆盖自身、行尾留白不给末字、竖排、倾斜 |
+
+### 复算基线与判据（docs/13 §5.4）
+
+产物 `tests/baseline/windows-baseline/charbox-aligned-baseline.json`。
+六条前提全过、基线数字可与 §4 并读。
+
+**结论（原话）：§5.2 的 12 条主判据只过了 2 条（selection.precision、neighbour_overlap.max），
+本轮不得叙述为"字符框精度已改进"。** 买到的是结构能力（重复字符各有区间、
+比例宽度、系统性前偏从 +1.542 降到 +0.418）与一条被推翻的假说。瓶颈是约定差
+（CTC 占优区 vs 墨迹 GT）而不是算法差。按 §5.3 第 2 条自锁规则，`iou_band` = 0.6417 &lt; 0.70
+⇒ **不得**在此引入 CRAFT 或其他字符检测模型。
+
+`rec_postprocess_ms` 配对差 `off→chars` 从 +0.025 → +0.118 ms/页，仍 &lt; 3%，
+只允许说"不改变量级"。
+
+### 文案更新
+
+- `docs/05` §4.2.3：精度口径段改为 forced alignment 表述。
+- `docs/05` §9.8 末尾"本批未消除"第 ② 条改写为"对齐已落地但判据未达标，
+  选区 recall 从 0.9850 退到 0.9781，不证明拖选更准"。
+- `docs/13` §0.1 第 3 条、§0.2 表行、§6 第 7–10 条。
+- `index.html` `chars` 档 hint。
+- `README.md`：能力条目改为 forced alignment + Fallback 记账 + 两份报告并读。
+
+### 门禁（本批提交前在**最终树**上实跑，九项退出码均为 0）
+
+`cargo build --release --bin rapidstruct`=0；`fmt --check`=0；
+`clippy --all-targets --features serve -D warnings`=0；
+`cargo test --lib charbox::`=0（**16 passed**，778 filtered）；
+`cargo test --all-targets --features serve`=0
+（lib **792 passed + 0 failed + 2 ignored** 53.23s、bench_warm_e2e 5、
+charbox_eval 0、formula_bench 4、formula_eval 15、rapidstruct **301** 32.09s、
+table_eval 0、exports_dead_code_guard 1、serve_startup 2、session_open_surface_guard 4、text_min_multiset 1）；
+serve 串行 `--test-threads=1`=0（**301 passed**，264.35s）；
+`serve_startup` 串行=0（2 passed）；
+`check-page-result-contract.mjs`=0；`generate-table-whitelist.mjs --check`=0
+（fingerprint `32cf61e1…` 与上批一致）；`node --check tools\check-page-flow-cdp.mjs`=0；
+守卫 `-SelfTest`=0；守卫正式扫描=0。
+基线对比：lib 773→**792**（+19 对齐相关单测）、rapidstruct 301 不变。
+中途返工一次：clippy `needless_range_loop` 拦下 `align.rs` 第 95 行的 `for j in 2..states { delta[j] = neg_inf; }`，
+改用 `delta[2..].fill(neg_inf)`，修完后整轮重跑。
+
+### 本批未消除，也不叙述为已解决
+
+- **§5.2 判据 12 条只过 2 条**，`iou_tight` 反从 0.4445 退到 0.4324；
+  `selection.recall` 从 0.9850 退到 0.9781。
+- **逐字 `score` 在含空格的行上错位**：`WordInfo.confs` 按 token（含空格）产出，
+  而 `word_contents` 丢空格 ⇒ 下标不再对齐，本批未修（属评分不属几何）。
+- **`Fallback` 的真实发生率 `[未测]`**：词典全单字符 ⇒ 只可能由 `T &lt; L` 触发，
+  但仓库里没有统计过这个比率。
+- 下一步是 §5.3 第 4 条"像素墨迹投影"，但它会让框不再首尾相接（呈现层字缝）——
+  必须先量拖选连续性代价再采纳。
+
 ## 已知限制
 
 见 README 的 *Known limitations* 一节（检测器误检、抹白导致的文本重新分割、
