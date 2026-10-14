@@ -1,8 +1,9 @@
 //! 共享评测框架。
 //!
 //! 按领域拆分：`evaluation::ocr` 承载普通 OCR 文本/检测指标；
-//! `evaluation::formula` 承载公式识别指标；`evaluation::table` 承载表格识别指标。
-//! 三类指标不得混合成一个默认汇总。
+//! `evaluation::formula` 承载公式识别指标；`evaluation::table` 承载表格识别指标；
+//! `evaluation::charbox` 承载字符定位（逐字框几何）指标。
+//! 这四类指标不得混合成一个默认汇总。
 //!
 //! `evaluation::runtime_report` 是唯一**跨域共享**的一层：它只管报告里那四个与域无关的
 //! 运行时字段（峰值工作集、内存口径、ORT 指纹与版本）。共享它不违反上面那条规则 ——
@@ -10,6 +11,7 @@
 //!
 //! `evaluation::digest` 是评测域内字节摘要的单点（P1-8）：三处同形实现已合并到这里。
 
+pub mod charbox;
 pub mod digest;
 pub mod formula;
 pub mod ocr;
