@@ -68,6 +68,10 @@ pub struct RapidOcr {
     classifier: Option<Classifier>,
     recognizer: Recognizer,
     loader: LoadImage,
+    /// 性能剖析时激活的阶段级内存采样开关。
+    mem_probe_enabled: bool,
+    /// 每次 run() 期间采集的分阶段内存记录；调用前由 take_stage_mem_records() 取出。
+    stage_mem_records: Vec<crate::runtime::memory::StageMemRecord>,
 }
 
 impl RapidOcr {
@@ -90,12 +94,24 @@ impl RapidOcr {
             classifier: cls,
             recognizer: rec,
             loader: LoadImage::default(),
+            mem_probe_enabled: false,
+            stage_mem_records: Vec::new(),
         })
     }
 
     /// 引擎唯一的运行时档案：基准报告与公式会话都从这里取设置。
     pub fn runtime_profile(&self) -> &RuntimeProfile {
         &self.profile
+    }
+
+    /// 激活阶段级内存采样（profiling 专用）。
+    pub fn enable_mem_probe(&mut self) {
+        self.mem_probe_enabled = true;
+    }
+
+    /// 取出并清空累计的阶段内存记录。
+    pub fn take_stage_mem_records(&mut self) -> Vec<crate::runtime::memory::StageMemRecord> {
+        std::mem::take(&mut self.stage_mem_records)
     }
 
     pub(crate) fn run(
@@ -106,6 +122,10 @@ impl RapidOcr {
         let e2e_start = Instant::now();
         let mut output = ExecutionOutput::default();
         let switches = self.resolve_run_switches(&opts);
+        if self.mem_probe_enabled {
+            crate::runtime::memory::tl_probe_begin();
+        }
+        crate::runtime::memory::tl_probe("input");
         let mut prepared = self.prepare_image(input)?;
         output.decode_ms = Some(prepared.decode_ms);
         output.resize_ms = Some(prepared.resize_ms);
@@ -114,20 +134,37 @@ impl RapidOcr {
             prepared.proc_img.height() as u32,
         ));
         let mut buffers = RunBuffers::default();
+        crate::runtime::memory::tl_probe("input_end");
 
+        crate::runtime::memory::tl_probe("detect_pre");
         if !self.run_detection_stage(&opts, switches, &mut prepared, &mut buffers, &mut output)? {
             output.e2e_ms = Some(e2e_start.elapsed().as_secs_f32() * 1000.0);
+            crate::runtime::memory::tl_probe("output_end");
+            if self.mem_probe_enabled {
+                self.stage_mem_records
+                    .extend(crate::runtime::memory::tl_probe_end());
+            }
             return Ok(output);
         }
 
+        crate::runtime::memory::tl_probe("classifier");
         self.run_classification_stage(switches, &mut buffers, &mut output)?;
+
+        crate::runtime::memory::tl_probe("rec_pre");
         self.run_recognition_stage(switches, &mut buffers, &mut output)?;
+
+        crate::runtime::memory::tl_probe("page_post");
         let postprocess_start = Instant::now();
         self.finalize_detection_outputs(switches, &prepared, &mut buffers, &mut output)?;
         self.finalize_recognition_outputs(switches, &buffers.lines, &mut output);
         output.postprocess_ms = Some(postprocess_start.elapsed().as_secs_f32() * 1000.0);
 
         output.e2e_ms = Some(e2e_start.elapsed().as_secs_f32() * 1000.0);
+        crate::runtime::memory::tl_probe("output_end");
+        if self.mem_probe_enabled {
+            self.stage_mem_records
+                .extend(crate::runtime::memory::tl_probe_end());
+        }
         Ok(output)
     }
 
@@ -724,6 +761,18 @@ impl crate::api::OcrEngine for RapidOcrEngine {
         // 校验与路由一次完成，产物交给调度器；调度器不再看策略字段。
         let planned = crate::api::ValidatedRequest::plan(request)?;
         self.recognize_page(planned)
+    }
+}
+
+impl RapidOcrEngine {
+    /// 激活内部管线的阶段级内存采样。
+    pub fn enable_mem_probe(&mut self) {
+        self.inner.enable_mem_probe();
+    }
+
+    /// 取出并清空累计的阶段内存记录。
+    pub fn take_stage_mem_records(&mut self) -> Vec<crate::runtime::memory::StageMemRecord> {
+        self.inner.take_stage_mem_records()
     }
 }
 

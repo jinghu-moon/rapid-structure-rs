@@ -102,7 +102,9 @@ pub use crate::output::markdown::to_output_markdown;
 pub use crate::output::visualize::draw_output;
 pub use crate::runtime::contracts::{ModelIoProbe, TensorSpec};
 pub use crate::runtime::memory::{
-    PEAK_MEMORY_SOURCE, peak_memory_failure_reason, peak_memory_source, peak_working_set_bytes,
+    MemorySample, PEAK_MEMORY_SOURCE, StageMemRecord, peak_memory_failure_reason,
+    peak_memory_source, peak_working_set_bytes, probe_stage, sample_memory, tl_probe,
+    tl_probe_begin, tl_probe_end,
 };
 pub use crate::runtime::ort_runtime::{
     LoadedModule, OrtRuntimeFingerprint, PROVIDER_DLL_NAMES, ProviderDll, is_sha256_hex,

@@ -195,6 +195,7 @@ impl Recognizer {
                 RapidOcrError::InvalidInput(format!("invalid rec batch tensor shape: {e}"))
             })?;
             let decoder = &self.decoder;
+            crate::runtime::memory::tl_probe("rec_infer");
             let infer_start = Instant::now();
             let mut decode_ms = 0.0_f32;
             let (line_results, word_results) =
@@ -212,6 +213,7 @@ impl Recognizer {
             let infer_total = infer_start.elapsed().as_secs_f32() * 1000.0;
             infer_ms += (infer_total - decode_ms).max(0.0);
             postprocess_ms += decode_ms;
+            crate::runtime::memory::tl_probe("rec_post");
 
             for (rno, (text, score)) in line_results.into_iter().enumerate() {
                 let word_info = if options.return_word_box {

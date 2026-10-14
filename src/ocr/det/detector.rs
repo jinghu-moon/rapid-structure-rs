@@ -171,6 +171,7 @@ impl Detector {
         )
         .map_err(|e| RapidOcrError::InvalidInput(format!("invalid det batch shape: {e}")))?;
         let post = &self.post;
+        crate::runtime::memory::tl_probe("detect_infer");
         let infer_start = Instant::now();
         let mut postprocess_ms = 0.0_f32;
         let (boxes, scores) = self.session.run_array4_view_with(batch_view, |preds| {
@@ -185,6 +186,7 @@ impl Detector {
         })?;
         let infer_total_ms = infer_start.elapsed().as_secs_f32() * 1000.0;
         let infer_ms = (infer_total_ms - postprocess_ms).max(0.0);
+        crate::runtime::memory::tl_probe("detect_post");
 
         Ok(DetOutput {
             boxes,
