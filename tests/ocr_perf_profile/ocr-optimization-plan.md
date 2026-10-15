@@ -6,6 +6,10 @@
 
 ## 实验顺序
 
+### 已完成阶段：Provider/EP 真实性验证
+
+DirectML 在严格模式下通过 OCR CER 回归，并将 mean 延迟从 21,728.9 ms 降至 669.4 ms，已作为显式加速配置采纳。CUDA 的 selected EP 虽为 Cuda，但 mean 延迟仍为 20,951.2 ms，暂不采纳，详见 ocr-stage-provider-results-2026-10-15.md。
+
 ### 1. Provider/EP 实验
 
 先验证加速后端是否真实工作：cpu、directml、cuda。
