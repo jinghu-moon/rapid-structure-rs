@@ -24,6 +24,8 @@ Recognizer 当前平均耗时约 14.5 秒，是最高收益点。比较 medium�
 
 验收条件：现有 OCR 准确率测试通过；中英文、RTL、竖排、数字公式、密集文本样例无回归；记录 p50/p90；输出文本和区域顺序保持正确。
 
+本阶段已在 DirectML 上完成 medium/small/tiny 对比。small 的 OCR mean 为 339.1 ms、mean CER 为 0.4476513565；tiny 为 224.0 ms、mean CER 为 0.4703094065；medium 对照为 375.4 ms、mean CER 为 0.4320880473。small/tiny 虽然更快且峰值工作集更低，但 CER 均回归，特别是旋转、RTL、竖排和密集文本样例，因此两者均否决，不修改默认模型。完整证据见 `ocr-stage-recognizer-model-results-2026-10-15.md`。
+
 ### 3. Detector 分辨率实验
 
 扫描 max_side_len = 736、960、1280、1600、2000。优先关注 1280 和 1600。
