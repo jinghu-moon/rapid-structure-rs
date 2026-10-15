@@ -225,4 +225,8 @@ impl Classifier {
     pub fn provider_resolution(&self) -> ProviderResolution {
         self.session.provider_resolution()
     }
+
+    pub fn model_path(&self) -> &std::path::Path {
+        self.session.model_path()
+    }
 }

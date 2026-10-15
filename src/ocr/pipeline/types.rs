@@ -1,6 +1,7 @@
 use crate::{
     Quad,
     ocr::det::detector::DetTimingBreakdown,
+    ocr::rec::recognizer::BatchRecord,
     ocr::types::{LineResult, WordBox},
 };
 
@@ -17,6 +18,7 @@ pub(crate) struct ExecutionOutput {
     pub elapsed_ms: [Option<f32>; 3],
     pub e2e_ms: Option<f32>,
     pub det_breakdown_ms: Option<DetTimingBreakdown>,
+    pub det_input_size: Option<(u32, u32)>,
     pub postprocess_ms: Option<f32>,
     pub decode_ms: Option<f32>,
     pub resize_ms: Option<f32>,
@@ -24,6 +26,7 @@ pub(crate) struct ExecutionOutput {
     pub cls_breakdown_ms: Option<[f32; 3]>,
     pub rec_breakdown_ms: Option<[f32; 3]>,
     pub processed_size: Option<(u32, u32)>,
+    pub rec_batch_records: Vec<BatchRecord>,
 }
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ExecutionOptions {

@@ -5,6 +5,7 @@
 
 use ndarray::{ArrayView2, ArrayView3, ArrayView4};
 use ort::value::TensorElementType;
+use std::path::Path;
 
 use crate::{
     config::RuntimeConfig,
@@ -41,6 +42,11 @@ pub struct OcrSession {
 }
 
 impl OcrSession {
+    /// Returns the model path used for this session, including resolved download paths.
+    pub fn model_path(&self) -> &Path {
+        self.inner.model_path()
+    }
+
     pub fn new(
         model: &VerifiedModel,
         runtime_cfg: &RuntimeConfig,

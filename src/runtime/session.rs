@@ -198,6 +198,10 @@ fn ort_error<E: std::fmt::Display>(error: E) -> RapidOcrError {
 }
 
 impl OrtSession {
+    pub fn model_path(&self) -> &Path {
+        Path::new(&self.model_path)
+    }
+
     /// 不经凭证的会话构造入口 —— **只给测试与探针用**（复审 P1-2）。
     ///
     /// 可见性与存在性一起收窄：`pub(crate)` + `#[cfg(test)]`。生产构建里这个函数**不存在**，

@@ -12,11 +12,16 @@ use clap::Parser;
 use rapid_structure_rs::evaluation::stats::percentile;
 use rapid_structure_rs::{
     ClassifierPlan, ClassifierPolicy, DetectionPolicy, EngineConfig, ImageInput, OcrEngine,
-    OcrRequest, OutputPolicy, PreprocessPolicy, RapidOcrEngine, RecognitionPolicy, StagePlan,
-    TimingLedger, WordOutputMode,
+    OcrRequest, OutputPolicy, PreprocessPolicy, ProviderPreference, RapidOcrEngine,
+    RecognitionPolicy, StagePlan, TimingLedger, WordOutputMode,
 };
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -42,6 +47,8 @@ struct Cli {
     intra_threads: Option<usize>,
     #[arg(long)]
     mem_probe: bool,
+    #[arg(long, value_parser = ["cpu", "directml", "cuda"])]
+    provider: Option<String>,
 }
 
 fn main() {
@@ -105,6 +112,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         cfg.runtime.inter_threads = Some(1);
         cfg.runtime.auto_tune_threads = false;
     }
+    if let Some(provider) = cli.provider.as_deref() {
+        cfg.runtime.provider_preference = match provider {
+            "directml" => ProviderPreference::DirectMl { device_id: 0 },
+            "cuda" => ProviderPreference::Cuda { device_id: 0 },
+            _ => ProviderPreference::Cpu,
+        };
+    }
     let effective_max_side = cfg.global.max_side_len as u32;
     let config_fingerprint = serde_json::to_string(&cfg)?;
 
@@ -113,11 +127,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = RapidOcrEngine::new(cfg)?;
     let init_ms = engine_start.elapsed().as_secs_f64() * 1000.0;
     let model_id = engine.model_id().to_string();
+    let provider_resolution = serde_json::to_value(engine.provider())?;
+    let thread_plan = serde_json::to_value(&engine.runtime_profile().threads)?;
+    let ort_runtime = rapid_structure_rs::ort_runtime_fingerprint();
+    let model_paths = engine.model_paths();
+    let models = json!({
+        "det": model_fingerprint(model_paths.0),
+        "cls": model_fingerprint(model_paths.1),
+        "rec": model_fingerprint(model_paths.2),
+    });
     // init working set after model loading
     let init_mem = rapid_structure_rs::sample_memory().unwrap_or_default();
 
     // Enable memory probe always (this IS the profiler tool)
     engine.enable_mem_probe();
+    engine.enable_rec_batch_probe();
 
     // --- ORT version ---
     let ort_version = rapid_structure_rs::ort_runtime_version();
@@ -196,23 +220,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let ledger_json = serde_json::to_value(ledger)?;
 
             let mem_records = engine.take_stage_mem_records();
+            let batch_records = engine.take_rec_batch_records();
+            let rec_batches = batch_records_json(&batch_records);
             let mem_json: Vec<Value> = {
                 let mut prev_ws: Option<u64> = None;
                 mem_records
                     .iter()
                     .map(|rec| {
-                        let delta = if let Some(p) = prev_ws {
-                            rec.sample.working_set_kb.saturating_sub(p)
-                        } else {
-                            0
-                        };
+                        let delta = prev_ws.map(|p| rec.sample.working_set_kb as i64 - p as i64);
                         prev_ws = Some(rec.sample.working_set_kb);
                         json!({
                             "name": rec.stage,
                             "working_set_kb": rec.sample.working_set_kb,
                             "peak_working_set_kb": rec.sample.peak_working_set_kb,
                             "private_bytes_kb": rec.sample.private_bytes_kb,
-                            "delta_from_prev_kb": delta,
+                            "working_set_delta_kb": delta,
                         })
                     })
                     .collect()
@@ -223,6 +245,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 timings: timings_json,
                 ledger: ledger_json,
                 regions: result.regions.len(),
+                det_input: engine.last_detector_input_size().unwrap_or((
+                    result.image.processed_size.width,
+                    result.image.processed_size.height,
+                )),
+                rec_batches,
                 mem_records: mem_json,
             });
         }
@@ -337,24 +364,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let stage_memory_summary: Value = {
         let mut obj = serde_json::Map::new();
         for stage in &stage_order {
-            let deltas: Vec<u64> = image_data
+            let deltas: Vec<i64> = image_data
                 .iter()
                 .flat_map(|img| img.rounds.iter())
                 .flat_map(|r| r.mem_records.iter())
                 .filter(|rec| rec.get("name").and_then(Value::as_str) == Some(stage))
-                .filter_map(|rec| rec.get("delta_from_prev_kb").and_then(Value::as_u64))
+                .filter_map(|rec| rec.get("working_set_delta_kb").and_then(Value::as_i64))
                 .collect();
             if deltas.is_empty() {
                 continue;
             }
-            let mean_delta = deltas.iter().sum::<u64>() as f64 / deltas.len() as f64;
-            let peak_delta = *deltas.iter().max().unwrap_or(&0);
+            let mean_delta = deltas.iter().sum::<i64>() as f64 / deltas.len() as f64;
+            let peak_cumulative = image_data
+                .iter()
+                .flat_map(|img| img.rounds.iter())
+                .flat_map(|round| round.mem_records.iter())
+                .filter(|rec| rec.get("name").and_then(Value::as_str) == Some(stage))
+                .filter_map(|rec| rec.get("peak_working_set_kb").and_then(Value::as_u64))
+                .max()
+                .unwrap_or(0);
             obj.insert(
                 (*stage).to_string(),
                 json!({
                     "samples": deltas.len(),
-                    "mean_delta_kb": mean_delta as u64,
-                    "peak_delta_kb": peak_delta,
+                    "mean_working_set_delta_kb": mean_delta,
+                    "peak_growth_cumulative_kb": peak_cumulative,
                 }),
             );
         }
@@ -398,6 +432,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         "ledger": r.ledger,
                         "memory": { "stages": r.mem_records },
                         "regions": r.regions,
+                        "region_count": r.regions,
+                        "det_input": { "width": r.det_input.0, "height": r.det_input.1 },
+                        "rec_batches": r.rec_batches,
                     })
                 })
                 .collect();
@@ -416,6 +453,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "build_profile": if cfg!(debug_assertions) { "debug" } else { "release" },
             "config_fingerprint": config_fingerprint,
             "ort_version": ort_version,
+            "ort_runtime_version": ort_version,
+            "ort_runtime": ort_runtime,
+            "provider_resolution": provider_resolution,
+            "thread_plan": thread_plan,
+            "models": models,
             "model_id": model_id,
             "images_dir": cli.images_dir.display().to_string(),
             "image_count": images.len(),
@@ -444,6 +486,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             },
             "stage_timing": stage_timing_summary,
             "stage_memory": stage_memory_summary,
+            "memory_note": "peak_working_set is process-cumulative; working_set_delta is the per-stage net change",
+            "region_count": numeric_stats(&image_data.iter().flat_map(|img| img.rounds.iter().map(|r| r.regions as f64)).collect::<Vec<_>>()),
             "top_bottlenecks": top_bottlenecks,
         },
     });
@@ -526,14 +570,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Value::Object(map) = &stage_memory_summary {
         for (stage, stats) in map {
             println!(
-                "  {:<16} delta={}  peak_delta={}",
+                "  {:<16} delta={}  peak_cumulative={}",
                 stage,
                 stats
-                    .get("mean_delta_kb")
-                    .and_then(Value::as_u64)
+                    .get("mean_working_set_delta_kb")
+                    .and_then(Value::as_i64)
                     .unwrap_or(0),
                 stats
-                    .get("peak_delta_kb")
+                    .get("peak_growth_cumulative_kb")
                     .and_then(Value::as_u64)
                     .unwrap_or(0),
             );
@@ -555,7 +599,63 @@ struct RoundData {
     timings: Value,
     ledger: Value,
     regions: usize,
+    det_input: (u32, u32),
+    rec_batches: Value,
     mem_records: Vec<Value>,
+}
+
+fn model_fingerprint(path: Option<&Path>) -> Value {
+    let Some(path) = path else {
+        return Value::Null;
+    };
+    match fs::metadata(path) {
+        Ok(metadata) => json!({
+            "path": path.display().to_string(),
+            "size_bytes": metadata.len(),
+            "sha256": rapid_structure_rs::sha256_file(path).ok(),
+        }),
+        Err(error) => json!({
+            "path": path.display().to_string(),
+            "size_bytes": null,
+            "sha256": null,
+            "error": error.to_string(),
+        }),
+    }
+}
+
+fn batch_records_json(records: &[rapid_structure_rs::BatchRecord]) -> Value {
+    let padded: usize = records.iter().map(|r| r.padded_pixels).sum();
+    let useful: usize = records.iter().map(|r| r.useful_pixels).sum();
+    json!({
+        "count": records.len(),
+        "total_padded_pixels": padded,
+        "total_useful_pixels": useful,
+        "padding_ratio": if padded == 0 { 0.0 } else { 1.0 - useful as f64 / padded as f64 },
+        "batches": records.iter().map(|r| json!({
+            "index": r.batch_idx,
+            "size": r.batch_size,
+            "width": r.dst_width,
+            "height": r.img_height,
+            "padded_px": r.padded_pixels,
+            "useful_px": r.useful_pixels,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn numeric_stats(values: &[f64]) -> Value {
+    if values.is_empty() {
+        return json!({"count": 0, "min": 0.0, "max": 0.0, "mean": 0.0, "p50": 0.0, "p90": 0.0});
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    json!({
+        "count": values.len(),
+        "min": sorted[0],
+        "max": sorted[sorted.len() - 1],
+        "mean": values.iter().sum::<f64>() / values.len() as f64,
+        "p50": percentile(&sorted, 0.50),
+        "p90": percentile(&sorted, 0.90),
+    })
 }
 
 fn stage_mean(data: &[ImageProfile], key: &str) -> f64 {
@@ -597,4 +697,72 @@ fn image_dimensions(bytes: &[u8]) -> (u32, u32) {
         }
     }
     (0, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{batch_records_json, model_fingerprint, numeric_stats};
+    use rapid_structure_rs::BatchRecord;
+    use serde_json::Value;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn batch_report_calculates_padding_from_useful_pixels() {
+        let records = vec![BatchRecord {
+            batch_idx: 0,
+            batch_size: 2,
+            max_wh_ratio: 4.0,
+            dst_width: 8,
+            img_height: 4,
+            padded_pixels: 192,
+            useful_pixels: 120,
+        }];
+        let report = batch_records_json(&records);
+        assert_eq!(report["count"], 1);
+        assert_eq!(report["total_padded_pixels"], 192);
+        assert_eq!(report["total_useful_pixels"], 120);
+        assert!((report["padding_ratio"].as_f64().unwrap() - 0.375).abs() < 1e-12);
+    }
+
+    #[test]
+    fn batch_report_handles_no_batches() {
+        let report = batch_records_json(&[]);
+        assert_eq!(report["count"], 0);
+        assert_eq!(report["total_padded_pixels"], 0);
+        assert_eq!(report["total_useful_pixels"], 0);
+        assert_eq!(report["padding_ratio"], 0.0);
+        assert_eq!(report["batches"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn region_stats_include_ordered_percentiles() {
+        let stats = numeric_stats(&[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(stats["count"], 4);
+        assert_eq!(stats["min"], 1.0);
+        assert_eq!(stats["max"], 4.0);
+        assert_eq!(stats["mean"], 2.5);
+        assert_eq!(stats["p50"], 2.5);
+        assert_eq!(stats["p90"], 3.7);
+    }
+
+    #[test]
+    fn missing_model_fingerprint_is_reported_without_panic() {
+        let name = format!(
+            "rapid-ocr-missing-model-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(name);
+        let fingerprint = model_fingerprint(Some(&path));
+        assert_eq!(fingerprint["path"], path.display().to_string());
+        assert!(fingerprint["error"].is_string());
+        assert!(fingerprint["sha256"].is_null());
+        let _ = fs::remove_file(path);
+        assert!(matches!(fingerprint, Value::Object(_)));
+    }
 }

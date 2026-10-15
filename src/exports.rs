@@ -90,6 +90,7 @@ pub use crate::ocr::pipeline::{
     config::{EngineConfig, GlobalConfig},
     rapid_structure::{PipelineProviderResolutions, RapidOcr, RapidOcrEngine},
 };
+pub use crate::ocr::rec::recognizer::BatchRecord;
 pub use crate::ocr::types::{
     AlignStatus, LineResult, RecognizeOutput, WordBox, WordInfo, WordType,
 };

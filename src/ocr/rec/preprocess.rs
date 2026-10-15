@@ -258,7 +258,7 @@ fn validate_common(
     Ok((img_channel, img_height, dst_width))
 }
 
-fn calc_resized_width(img: &RecImage, img_height: usize, dst_width: usize) -> usize {
+pub(crate) fn calc_resized_width(img: &RecImage, img_height: usize, dst_width: usize) -> usize {
     let ratio = img.width() as f64 / img.height() as f64;
     let estimate = ((img_height as f64) * ratio).ceil() as usize;
     estimate.min(dst_width)

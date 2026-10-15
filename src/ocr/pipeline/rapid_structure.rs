@@ -72,6 +72,9 @@ pub struct RapidOcr {
     mem_probe_enabled: bool,
     /// 每次 run() 期间采集的分阶段内存记录；调用前由 take_stage_mem_records() 取出。
     stage_mem_records: Vec<crate::runtime::memory::StageMemRecord>,
+    rec_batch_records: Vec<crate::ocr::rec::recognizer::BatchRecord>,
+    rec_batch_probe_enabled: bool,
+    last_det_input_size: Option<(u32, u32)>,
 }
 
 impl RapidOcr {
@@ -96,6 +99,9 @@ impl RapidOcr {
             loader: LoadImage::default(),
             mem_probe_enabled: false,
             stage_mem_records: Vec::new(),
+            rec_batch_records: Vec::new(),
+            rec_batch_probe_enabled: false,
+            last_det_input_size: None,
         })
     }
 
@@ -121,6 +127,8 @@ impl RapidOcr {
     ) -> Result<ExecutionOutput> {
         let e2e_start = Instant::now();
         let mut output = ExecutionOutput::default();
+        self.rec_batch_records.clear();
+        self.last_det_input_size = None;
         let switches = self.resolve_run_switches(&opts);
         if self.mem_probe_enabled {
             crate::runtime::memory::tl_probe_begin();
@@ -144,6 +152,7 @@ impl RapidOcr {
                 self.stage_mem_records
                     .extend(crate::runtime::memory::tl_probe_end());
             }
+            self.last_det_input_size = output.det_input_size;
             return Ok(output);
         }
 
@@ -165,6 +174,8 @@ impl RapidOcr {
             self.stage_mem_records
                 .extend(crate::runtime::memory::tl_probe_end());
         }
+        self.rec_batch_records = output.rec_batch_records.clone();
+        self.last_det_input_size = output.det_input_size;
         Ok(output)
     }
 
@@ -234,6 +245,7 @@ impl RapidOcr {
             self.detector
                 .update_postprocess(opts.box_thresh, opts.unclip_ratio);
             let det_out = self.detector.detect(&prepared.proc_img)?;
+            output.det_input_size = Some(det_out.input_size);
             if det_out.boxes.is_empty() {
                 return Ok(false);
             }
@@ -290,6 +302,9 @@ impl RapidOcr {
             return Ok(());
         }
 
+        if self.rec_batch_probe_enabled {
+            self.recognizer.batch_log = Some(Vec::new());
+        }
         let rec = self.recognizer.recognize(
             &buffers.stage_images,
             RecognizeOptions {
@@ -297,6 +312,7 @@ impl RapidOcr {
                 return_single_char_box: switches.return_single_char_box,
             },
         )?;
+        output.rec_batch_records = self.recognizer.batch_log.take().unwrap_or_default();
         output.elapsed_ms[2] = Some(rec.elapsed.as_secs_f32() * 1000.0);
         output.rec_breakdown_ms = Some([rec.preprocess_ms, rec.infer_ms, rec.postprocess_ms]);
         buffers.lines = rec.lines;
@@ -394,6 +410,32 @@ impl RapidOcr {
                 .map(Classifier::provider_resolution),
             rec: self.recognizer.provider_resolution(),
         }
+    }
+
+    pub fn model_paths(
+        &self,
+    ) -> (
+        Option<&std::path::Path>,
+        Option<&std::path::Path>,
+        Option<&std::path::Path>,
+    ) {
+        (
+            Some(self.detector.model_path()),
+            self.classifier.as_ref().map(Classifier::model_path),
+            Some(self.recognizer.model_path()),
+        )
+    }
+
+    pub fn take_rec_batch_records(&mut self) -> Vec<crate::ocr::rec::recognizer::BatchRecord> {
+        std::mem::take(&mut self.rec_batch_records)
+    }
+
+    pub fn enable_rec_batch_probe(&mut self) {
+        self.rec_batch_probe_enabled = true;
+    }
+
+    pub fn last_detector_input_size(&self) -> Option<(u32, u32)> {
+        self.last_det_input_size
     }
 
     pub fn set_max_side_len(&mut self, max_side_len: u32) {
@@ -773,6 +815,28 @@ impl RapidOcrEngine {
     /// 取出并清空累计的阶段内存记录。
     pub fn take_stage_mem_records(&mut self) -> Vec<crate::runtime::memory::StageMemRecord> {
         self.inner.take_stage_mem_records()
+    }
+
+    pub fn model_paths(
+        &self,
+    ) -> (
+        Option<&std::path::Path>,
+        Option<&std::path::Path>,
+        Option<&std::path::Path>,
+    ) {
+        self.inner.model_paths()
+    }
+
+    pub fn take_rec_batch_records(&mut self) -> Vec<crate::ocr::rec::recognizer::BatchRecord> {
+        self.inner.take_rec_batch_records()
+    }
+
+    pub fn enable_rec_batch_probe(&mut self) {
+        self.inner.enable_rec_batch_probe();
+    }
+
+    pub fn last_detector_input_size(&self) -> Option<(u32, u32)> {
+        self.inner.last_detector_input_size()
     }
 }
 

@@ -45,6 +45,9 @@ pub struct StageMemRecord {
     pub sample: MemorySample,
 }
 
+// `sample.peak_working_set_kb` is the process-cumulative peak reported by Windows and is
+// monotonic during the process lifetime. It is not an allocation delta for this stage.
+
 // --- Thread-local 探测缓冲区（供子模块内部使用） ---
 thread_local! {
     static TL_PROBE_BUFFER: std::cell::RefCell<Vec<StageMemRecord>> =

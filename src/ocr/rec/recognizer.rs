@@ -5,6 +5,7 @@ use std::{
 
 use ndarray::ArrayView4;
 use rayon::prelude::*;
+use serde::Serialize;
 
 use crate::{
     config::{LangRec, RecImage, RuntimeConfig},
@@ -19,7 +20,9 @@ use crate::{
     ocr::rec::{
         bidi::reorder_bidi_for_display,
         decode::CtcLabelDecoder,
-        preprocess::{batch_shape_for, write_resize_norm_img_into_slice_with_scratch},
+        preprocess::{
+            batch_shape_for, calc_resized_width, write_resize_norm_img_into_slice_with_scratch,
+        },
     },
     ocr::session::{OcrSession, OcrSessionKind},
     ocr::types::{LineResult, RecognizeOutput},
@@ -33,6 +36,20 @@ pub struct Recognizer {
     session: OcrSession,
     decoder: CtcLabelDecoder,
     batch_scratch: Vec<f32>,
+    /// Optional profiler-only batch diagnostics. This is deliberately opt-in so normal OCR
+    /// requests do not allocate or retain profiling records.
+    pub(crate) batch_log: Option<Vec<BatchRecord>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchRecord {
+    pub batch_idx: usize,
+    pub batch_size: usize,
+    pub max_wh_ratio: f64,
+    pub dst_width: usize,
+    pub img_height: usize,
+    pub padded_pixels: usize,
+    pub useful_pixels: usize,
 }
 
 impl Recognizer {
@@ -82,6 +99,7 @@ impl Recognizer {
             session,
             decoder,
             batch_scratch: Vec::new(),
+            batch_log: None,
         })
     }
 
@@ -112,7 +130,10 @@ impl Recognizer {
         let mut infer_ms = 0.0_f32;
         let mut postprocess_ms = 0.0_f32;
 
-        for beg in (0..images.len()).step_by(self.config.rec_batch_num) {
+        for (batch_idx, beg) in (0..images.len())
+            .step_by(self.config.rec_batch_num)
+            .enumerate()
+        {
             let end = (beg + self.config.rec_batch_num).min(images.len());
             let batch_indices = &indices[beg..end];
 
@@ -141,6 +162,22 @@ impl Recognizer {
                 RapidOcrError::InvalidInput("rec batch size overflow".to_string())
             })?;
             self.batch_scratch.resize(total_len, 0.0);
+
+            if let Some(log) = self.batch_log.as_mut() {
+                let useful_width: usize = batch_indices
+                    .iter()
+                    .map(|image_idx| calc_resized_width(&images[*image_idx], img_height, dst_width))
+                    .sum();
+                log.push(BatchRecord {
+                    batch_idx,
+                    batch_size,
+                    max_wh_ratio,
+                    dst_width,
+                    img_height,
+                    padded_pixels: batch_size * img_channel * img_height * dst_width,
+                    useful_pixels: useful_width * img_channel * img_height,
+                });
+            }
 
             let preprocess_start = Instant::now();
             if batch_size > 1 {
@@ -253,6 +290,10 @@ impl Recognizer {
 
     pub fn provider_resolution(&self) -> ProviderResolution {
         self.session.provider_resolution()
+    }
+
+    pub fn model_path(&self) -> &std::path::Path {
+        self.session.model_path()
     }
 }
 

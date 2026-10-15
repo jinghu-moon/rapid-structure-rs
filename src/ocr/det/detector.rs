@@ -72,6 +72,8 @@ pub struct DetOutput {
     pub scores: Vec<f32>,
     pub elapsed_ms: f32,
     pub breakdown: Option<DetTimingBreakdown>,
+    /// Actual spatial shape (width, height) submitted to the detector ORT session.
+    pub input_size: (u32, u32),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -197,6 +199,7 @@ impl Detector {
                 infer_ms,
                 postprocess_ms,
             }),
+            input_size: (resized_w as u32, resized_h as u32),
         })
     }
 
@@ -211,6 +214,10 @@ impl Detector {
 
     pub fn provider_resolution(&self) -> ProviderResolution {
         self.session.provider_resolution()
+    }
+
+    pub fn model_path(&self) -> &std::path::Path {
+        self.session.model_path()
     }
 }
 
