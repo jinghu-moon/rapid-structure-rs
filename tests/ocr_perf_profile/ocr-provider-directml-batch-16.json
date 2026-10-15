@@ -1,0 +1,4984 @@
+{
+  "images": [
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "01基础多位置文本.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.567996978759766,
+            "detector_postprocess_ms": 2.6654999256134033,
+            "detector_preprocess_ms": 1.3496999740600586,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.3137999773025513,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 6.2591000131797045,
+            "input_other_ms": 50.23509783227928,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 56.494197845458984,
+            "input_resize_ms": 4.944900035858154,
+            "page_postprocess_ms": 0.021700000390410423,
+            "recognizer_infer_ms": 199.1201171875,
+            "recognizer_postprocess_ms": 60.353797912597656,
+            "recognizer_preprocess_ms": 2.601099967956543,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 385.8609619140625,
+            "unattributed_ms": 7.686852121725678
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1059264
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1047768
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047768
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047768
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047768
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1047772
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047772
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1047776
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047776
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047776
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1047768
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047768
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047768
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047768
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047768
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1287936,
+                "size": 16,
+                "useful_px": 766080,
+                "width": 559
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1612800,
+                "size": 16,
+                "useful_px": 1519920,
+                "width": 700
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1727568,
+                "size": 9,
+                "useful_px": 1251936,
+                "width": 1333
+              }
+            ],
+            "count": 3,
+            "padding_ratio": 0.2355869450234902,
+            "total_padded_pixels": 4628304,
+            "total_useful_pixels": 3537936
+          },
+          "region_count": 41,
+          "regions": 41,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.3137999773025513,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 59.588199615478516,
+            "detector_infer_ms": 55.567996978759766,
+            "detector_postprocess_ms": 2.6654999256134033,
+            "detector_preprocess_ms": 1.3496999740600586,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.021700000390410423,
+            "preprocess_ms": 56.494197845458984,
+            "recognize_ms": 262.2016906738281,
+            "recognizer_infer_ms": 199.1201171875,
+            "recognizer_postprocess_ms": 60.353797912597656,
+            "recognizer_preprocess_ms": 2.601099967956543,
+            "resize_ms": 4.944900035858154,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 385.8609619140625
+          },
+          "wall_ms": "386.155"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.173702239990234,
+            "detector_postprocess_ms": 3.125200033187866,
+            "detector_preprocess_ms": 1.3722000122070312,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.3353999853134155,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 6.893400006694719,
+            "input_other_ms": 49.515600390033796,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 56.409000396728516,
+            "input_resize_ms": 5.557600021362305,
+            "page_postprocess_ms": 0.02329999953508377,
+            "recognizer_infer_ms": 199.24981689453125,
+            "recognizer_postprocess_ms": 60.67689895629883,
+            "recognizer_preprocess_ms": 2.7112998962402344,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 386.9164733886719,
+            "unattributed_ms": 8.175054959952831
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1059276
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1047780
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047780
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047780
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047780
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047780
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047780
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1047780
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -5872,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1287936,
+                "size": 16,
+                "useful_px": 766080,
+                "width": 559
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1612800,
+                "size": 16,
+                "useful_px": 1519920,
+                "width": 700
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1727568,
+                "size": 9,
+                "useful_px": 1251936,
+                "width": 1333
+              }
+            ],
+            "count": 3,
+            "padding_ratio": 0.2355869450234902,
+            "total_padded_pixels": 4628304,
+            "total_useful_pixels": 3537936
+          },
+          "region_count": 41,
+          "regions": 41,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.3353999853134155,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 59.67720031738281,
+            "detector_infer_ms": 55.173702239990234,
+            "detector_postprocess_ms": 3.125200033187866,
+            "detector_preprocess_ms": 1.3722000122070312,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.02329999953508377,
+            "preprocess_ms": 56.409000396728516,
+            "recognize_ms": 262.7402038574219,
+            "recognizer_infer_ms": 199.24981689453125,
+            "recognizer_postprocess_ms": 60.67689895629883,
+            "recognizer_preprocess_ms": 2.7112998962402344,
+            "resize_ms": 5.557600021362305,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 386.9164733886719
+          },
+          "wall_ms": "387.311"
+        }
+      ],
+      "size_bytes": 653618
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "02多语言与RTL混排.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.68539810180664,
+            "detector_postprocess_ms": 2.680799961090088,
+            "detector_preprocess_ms": 1.5434999465942383,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.4110000133514404,
+            "input_decode_ms": 0.00020000000949949026,
+            "input_named_within_ms": 6.226200070581399,
+            "input_other_ms": 48.8623009059811,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.0885009765625,
+            "input_resize_ms": 4.815000057220459,
+            "page_postprocess_ms": 0.01600000075995922,
+            "recognizer_infer_ms": 148.68270874023438,
+            "recognizer_postprocess_ms": 40.3213996887207,
+            "recognizer_preprocess_ms": 1.9278998374938965,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 312.49359130859375,
+            "unattributed_ms": 7.547384055331349
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053400
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1172736,
+                "size": 16,
+                "useful_px": 813168,
+                "width": 509
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1861632,
+                "size": 8,
+                "useful_px": 1023552,
+                "width": 1616
+              }
+            ],
+            "count": 2,
+            "padding_ratio": 0.3946943811693242,
+            "total_padded_pixels": 3034368,
+            "total_useful_pixels": 1836720
+          },
+          "region_count": 22,
+          "regions": 22,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.4110000133514404,
+            "decode_ms": 0.00020000000949949026,
+            "detect_ms": 58.914798736572266,
+            "detector_infer_ms": 54.68539810180664,
+            "detector_postprocess_ms": 2.680799961090088,
+            "detector_preprocess_ms": 1.5434999465942383,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.01600000075995922,
+            "preprocess_ms": 55.0885009765625,
+            "recognize_ms": 191.07720947265625,
+            "recognizer_infer_ms": 148.68270874023438,
+            "recognizer_postprocess_ms": 40.3213996887207,
+            "recognizer_preprocess_ms": 1.9278998374938965,
+            "resize_ms": 4.815000057220459,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 312.49359130859375
+          },
+          "wall_ms": "312.752"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.69519805908203,
+            "detector_postprocess_ms": 2.4000000953674316,
+            "detector_preprocess_ms": 1.3451999425888062,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.4897000789642334,
+            "input_decode_ms": 0.0006000000284984708,
+            "input_named_within_ms": 6.474200149183162,
+            "input_other_ms": 49.99530134617817,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 56.46950149536133,
+            "input_resize_ms": 4.98390007019043,
+            "page_postprocess_ms": 0.016100000590085983,
+            "recognizer_infer_ms": 148.04249572753906,
+            "recognizer_postprocess_ms": 41.40089797973633,
+            "recognizer_preprocess_ms": 2.0588998794555664,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 314.4682312011719,
+            "unattributed_ms": 8.039938021451235
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053396
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041892
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041892
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041892
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1172736,
+                "size": 16,
+                "useful_px": 813168,
+                "width": 509
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1861632,
+                "size": 8,
+                "useful_px": 1023552,
+                "width": 1616
+              }
+            ],
+            "count": 2,
+            "padding_ratio": 0.3946943811693242,
+            "total_padded_pixels": 3034368,
+            "total_useful_pixels": 1836720
+          },
+          "region_count": 22,
+          "regions": 22,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.4897000789642334,
+            "decode_ms": 0.0006000000284984708,
+            "detect_ms": 58.44580078125,
+            "detector_infer_ms": 54.69519805908203,
+            "detector_postprocess_ms": 2.4000000953674316,
+            "detector_preprocess_ms": 1.3451999425888062,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.016100000590085983,
+            "preprocess_ms": 56.46950149536133,
+            "recognize_ms": 191.6427001953125,
+            "recognizer_infer_ms": 148.04249572753906,
+            "recognizer_postprocess_ms": 41.40089797973633,
+            "recognizer_preprocess_ms": 2.0588998794555664,
+            "resize_ms": 4.98390007019043,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 314.4682312011719
+          },
+          "wall_ms": "314.737"
+        }
+      ],
+      "size_bytes": 380238
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "03旋转与倾斜.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 56.305999755859375,
+            "detector_postprocess_ms": 2.596400022506714,
+            "detector_preprocess_ms": 1.5465999841690063,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.9861000776290894,
+            "input_decode_ms": 0.0010000000474974513,
+            "input_named_within_ms": 6.163599921273999,
+            "input_other_ms": 51.15519814391155,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 57.31879806518555,
+            "input_resize_ms": 5.176499843597412,
+            "page_postprocess_ms": 0.01249999925494194,
+            "recognizer_infer_ms": 112.66899871826172,
+            "recognizer_postprocess_ms": 35.65129852294922,
+            "recognizer_preprocess_ms": 0.9348000288009644,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 274.57208251953125,
+            "unattributed_ms": 7.536687422543764
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053392
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041896
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 2675088,
+                "size": 13,
+                "useful_px": 932544,
+                "width": 1429
+              }
+            ],
+            "count": 1,
+            "padding_ratio": 0.65139688862572,
+            "total_padded_pixels": 2675088,
+            "total_useful_pixels": 932544
+          },
+          "region_count": 13,
+          "regions": 13,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.9861000776290894,
+            "decode_ms": 0.0010000000474974513,
+            "detect_ms": 60.45499801635742,
+            "detector_infer_ms": 56.305999755859375,
+            "detector_postprocess_ms": 2.596400022506714,
+            "detector_preprocess_ms": 1.5465999841690063,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.01249999925494194,
+            "preprocess_ms": 57.31879806518555,
+            "recognize_ms": 149.39759826660156,
+            "recognizer_infer_ms": 112.66899871826172,
+            "recognizer_postprocess_ms": 35.65129852294922,
+            "recognizer_preprocess_ms": 0.9348000288009644,
+            "resize_ms": 5.176499843597412,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 274.57208251953125
+          },
+          "wall_ms": "274.831"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.124698638916016,
+            "detector_postprocess_ms": 2.5297999382019043,
+            "detector_preprocess_ms": 1.3873000144958496,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.2294000387191772,
+            "input_decode_ms": 0.0005000000237487257,
+            "input_named_within_ms": 6.097099936509039,
+            "input_other_ms": 49.78520139405737,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.882301330566406,
+            "input_resize_ms": 4.867199897766113,
+            "page_postprocess_ms": 0.010699999518692493,
+            "recognizer_infer_ms": 116.1536865234375,
+            "recognizer_postprocess_ms": 35.308101654052734,
+            "recognizer_preprocess_ms": 0.9096999764442444,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 274.6958923339844,
+            "unattributed_ms": 7.389604258351028
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053396
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041900
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 2675088,
+                "size": 13,
+                "useful_px": 932544,
+                "width": 1429
+              }
+            ],
+            "count": 1,
+            "padding_ratio": 0.65139688862572,
+            "total_padded_pixels": 2675088,
+            "total_useful_pixels": 932544
+          },
+          "region_count": 13,
+          "regions": 13,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.2294000387191772,
+            "decode_ms": 0.0005000000237487257,
+            "detect_ms": 59.04710006713867,
+            "detector_infer_ms": 55.124698638916016,
+            "detector_postprocess_ms": 2.5297999382019043,
+            "detector_preprocess_ms": 1.3873000144958496,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.010699999518692493,
+            "preprocess_ms": 55.882301330566406,
+            "recognize_ms": 152.38221740722656,
+            "recognizer_infer_ms": 116.1536865234375,
+            "recognizer_postprocess_ms": 35.308101654052734,
+            "recognizer_preprocess_ms": 0.9096999764442444,
+            "resize_ms": 4.867199897766113,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 274.6958923339844
+          },
+          "wall_ms": "274.970"
+        }
+      ],
+      "size_bytes": 573714
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "04表格与键值对.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.81850051879883,
+            "detector_postprocess_ms": 2.7528998851776123,
+            "detector_preprocess_ms": 1.2965999841690063,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.48069998621940613,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 5.5461997024249285,
+            "input_other_ms": 49.41019830782898,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 54.956398010253906,
+            "input_resize_ms": 5.065099716186523,
+            "page_postprocess_ms": 0.020900001749396324,
+            "recognizer_infer_ms": 286.4624938964844,
+            "recognizer_postprocess_ms": 80.30889892578125,
+            "recognizer_preprocess_ms": 2.005000114440918,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 490.9660949707031,
+            "unattributed_ms": 7.344403633847833
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053408
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 189360,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 342288,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 491904,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 3,
+                "padded_px": 3739392,
+                "size": 12,
+                "useful_px": 998208,
+                "width": 2164
+              }
+            ],
+            "count": 4,
+            "padding_ratio": 0.6602787456445993,
+            "total_padded_pixels": 5951232,
+            "total_useful_pixels": 2021760
+          },
+          "region_count": 60,
+          "regions": 60,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.48069998621940613,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 59.87310028076172,
+            "detector_infer_ms": 55.81850051879883,
+            "detector_postprocess_ms": 2.7528998851776123,
+            "detector_preprocess_ms": 1.2965999841690063,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.020900001749396324,
+            "preprocess_ms": 54.956398010253906,
+            "recognize_ms": 369.3555908203125,
+            "recognizer_infer_ms": 286.4624938964844,
+            "recognizer_postprocess_ms": 80.30889892578125,
+            "recognizer_preprocess_ms": 2.005000114440918,
+            "resize_ms": 5.065099716186523,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 490.9660949707031
+          },
+          "wall_ms": "491.226"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.043399810791016,
+            "detector_postprocess_ms": 2.716099977493286,
+            "detector_preprocess_ms": 1.4205999374389648,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.46050000190734863,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 5.59230011026375,
+            "input_other_ms": 49.65900070150383,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.25130081176758,
+            "input_resize_ms": 5.131400108337402,
+            "page_postprocess_ms": 0.022099999710917473,
+            "recognizer_infer_ms": 281.1167297363281,
+            "recognizer_postprocess_ms": 78.77529907226562,
+            "recognizer_preprocess_ms": 2.1069998741149902,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 482.99951171875,
+            "unattributed_ms": 7.546982498839498
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053412
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 189360,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 342288,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 491904,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 3,
+                "padded_px": 3739392,
+                "size": 12,
+                "useful_px": 998208,
+                "width": 2164
+              }
+            ],
+            "count": 4,
+            "padding_ratio": 0.6602787456445993,
+            "total_padded_pixels": 5951232,
+            "total_useful_pixels": 2021760
+          },
+          "region_count": 60,
+          "regions": 60,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.46050000190734863,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 58.18439865112305,
+            "detector_infer_ms": 54.043399810791016,
+            "detector_postprocess_ms": 2.716099977493286,
+            "detector_preprocess_ms": 1.4205999374389648,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.022099999710917473,
+            "preprocess_ms": 55.25130081176758,
+            "recognize_ms": 362.7400207519531,
+            "recognizer_infer_ms": 281.1167297363281,
+            "recognizer_postprocess_ms": 78.77529907226562,
+            "recognizer_preprocess_ms": 2.1069998741149902,
+            "resize_ms": 5.131400108337402,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 482.99951171875
+          },
+          "wall_ms": "483.270"
+        }
+      ],
+      "size_bytes": 417157
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "05代码与等宽字体.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.251502990722656,
+            "detector_postprocess_ms": 2.6452999114990234,
+            "detector_preprocess_ms": 1.8243000507354736,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.1328999996185303,
+            "input_decode_ms": 0.0005000000237487257,
+            "input_named_within_ms": 6.454599893593695,
+            "input_other_ms": 49.269399129843805,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.7239990234375,
+            "input_resize_ms": 5.321199893951416,
+            "page_postprocess_ms": 0.019899999722838402,
+            "recognizer_infer_ms": 209.41250610351562,
+            "recognizer_postprocess_ms": 58.95929718017578,
+            "recognizer_preprocess_ms": 2.2918999195098877,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 394.0885009765625,
+            "unattributed_ms": 7.959795797243714
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053408
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041904
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041904
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1202688,
+                "size": 16,
+                "useful_px": 434448,
+                "width": 522
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1746432,
+                "size": 16,
+                "useful_px": 1522944,
+                "width": 758
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1435968,
+                "size": 9,
+                "useful_px": 1240560,
+                "width": 1108
+              }
+            ],
+            "count": 3,
+            "padding_ratio": 0.2707211349008275,
+            "total_padded_pixels": 4385088,
+            "total_useful_pixels": 3197952
+          },
+          "region_count": 39,
+          "regions": 39,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.1328999996185303,
+            "decode_ms": 0.0005000000237487257,
+            "detect_ms": 59.72710037231445,
+            "detector_infer_ms": 55.251502990722656,
+            "detector_postprocess_ms": 2.6452999114990234,
+            "detector_preprocess_ms": 1.8243000507354736,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.019899999722838402,
+            "preprocess_ms": 55.7239990234375,
+            "recognize_ms": 270.7917175292969,
+            "recognizer_infer_ms": 209.41250610351562,
+            "recognizer_postprocess_ms": 58.95929718017578,
+            "recognizer_preprocess_ms": 2.2918999195098877,
+            "resize_ms": 5.321199893951416,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 394.0885009765625
+          },
+          "wall_ms": "394.349"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.9391975402832,
+            "detector_postprocess_ms": 2.722099781036377,
+            "detector_preprocess_ms": 1.4175000190734863,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.5241999626159668,
+            "input_decode_ms": 0.0003000000142492354,
+            "input_named_within_ms": 6.48069960862631,
+            "input_other_ms": 48.84589951246744,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.32659912109375,
+            "input_resize_ms": 4.956199645996094,
+            "page_postprocess_ms": 0.026499999687075615,
+            "recognizer_infer_ms": 213.03329467773438,
+            "recognizer_postprocess_ms": 58.37360382080078,
+            "recognizer_preprocess_ms": 2.4969000816345215,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 396.14678955078125,
+            "unattributed_ms": 7.81109450943768
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053408
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041912
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1202688,
+                "size": 16,
+                "useful_px": 434448,
+                "width": 522
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1746432,
+                "size": 16,
+                "useful_px": 1522944,
+                "width": 758
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1435968,
+                "size": 9,
+                "useful_px": 1240560,
+                "width": 1108
+              }
+            ],
+            "count": 3,
+            "padding_ratio": 0.2707211349008275,
+            "total_padded_pixels": 4385088,
+            "total_useful_pixels": 3197952
+          },
+          "region_count": 39,
+          "regions": 39,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.5241999626159668,
+            "decode_ms": 0.0003000000142492354,
+            "detect_ms": 59.08279800415039,
+            "detector_infer_ms": 54.9391975402832,
+            "detector_postprocess_ms": 2.722099781036377,
+            "detector_preprocess_ms": 1.4175000190734863,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.026499999687075615,
+            "preprocess_ms": 55.32659912109375,
+            "recognize_ms": 274.02899169921875,
+            "recognizer_infer_ms": 213.03329467773438,
+            "recognizer_postprocess_ms": 58.37360382080078,
+            "recognizer_preprocess_ms": 2.4969000816345215,
+            "resize_ms": 4.956199645996094,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 396.14678955078125
+          },
+          "wall_ms": "396.421"
+        }
+      ],
+      "size_bytes": 471032
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "06低对比度与深色背景.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.49509811401367,
+            "detector_postprocess_ms": 2.668800115585327,
+            "detector_preprocess_ms": 1.4544999599456787,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.7457999587059021,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 5.721599929733202,
+            "input_other_ms": 51.2414013214875,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 56.9630012512207,
+            "input_resize_ms": 4.975399971008301,
+            "page_postprocess_ms": 0.015200000256299973,
+            "recognizer_infer_ms": 125.53650665283203,
+            "recognizer_postprocess_ms": 33.014198303222656,
+            "recognizer_preprocess_ms": 1.3234999179840088,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 283.4800109863281,
+            "unattributed_ms": 7.009206671267748
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053416
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1161216,
+                "size": 16,
+                "useful_px": 777024,
+                "width": 504
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1303920,
+                "size": 5,
+                "useful_px": 648432,
+                "width": 1811
+              }
+            ],
+            "count": 2,
+            "padding_ratio": 0.42175360710321863,
+            "total_padded_pixels": 2465136,
+            "total_useful_pixels": 1425456
+          },
+          "region_count": 21,
+          "regions": 21,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.7457999587059021,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 59.6234016418457,
+            "detector_infer_ms": 55.49509811401367,
+            "detector_postprocess_ms": 2.668800115585327,
+            "detector_preprocess_ms": 1.4544999599456787,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.015200000256299973,
+            "preprocess_ms": 56.9630012512207,
+            "recognize_ms": 159.9185028076172,
+            "recognizer_infer_ms": 125.53650665283203,
+            "recognizer_postprocess_ms": 33.014198303222656,
+            "recognizer_preprocess_ms": 1.3234999179840088,
+            "resize_ms": 4.975399971008301,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 283.4800109863281
+          },
+          "wall_ms": "283.737"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.31319808959961,
+            "detector_postprocess_ms": 2.8208000659942627,
+            "detector_preprocess_ms": 1.6409000158309937,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.8708000183105469,
+            "input_decode_ms": 0.0003000000142492354,
+            "input_named_within_ms": 6.0275998809956945,
+            "input_other_ms": 51.18119757383829,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 57.208797454833984,
+            "input_resize_ms": 5.156499862670898,
+            "page_postprocess_ms": 0.01600000075995922,
+            "recognizer_infer_ms": 123.68219757080078,
+            "recognizer_postprocess_ms": 32.164398193359375,
+            "recognizer_preprocess_ms": 1.3252999782562256,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 280.4068908691406,
+            "unattributed_ms": 7.235299499705434
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053416
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1161216,
+                "size": 16,
+                "useful_px": 777024,
+                "width": 504
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1303920,
+                "size": 5,
+                "useful_px": 648432,
+                "width": 1811
+              }
+            ],
+            "count": 2,
+            "padding_ratio": 0.42175360710321863,
+            "total_padded_pixels": 2465136,
+            "total_useful_pixels": 1425456
+          },
+          "region_count": 21,
+          "regions": 21,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.8708000183105469,
+            "decode_ms": 0.0003000000142492354,
+            "detect_ms": 58.78090286254883,
+            "detector_infer_ms": 54.31319808959961,
+            "detector_postprocess_ms": 2.8208000659942627,
+            "detector_preprocess_ms": 1.6409000158309937,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.01600000075995922,
+            "preprocess_ms": 57.208797454833984,
+            "recognize_ms": 157.21591186523438,
+            "recognizer_infer_ms": 123.68219757080078,
+            "recognizer_postprocess_ms": 32.164398193359375,
+            "recognizer_preprocess_ms": 1.3252999782562256,
+            "resize_ms": 5.156499862670898,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 280.4068908691406
+          },
+          "wall_ms": "280.676"
+        }
+      ],
+      "size_bytes": 514149
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "07小字号与密集排版.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.983299255371094,
+            "detector_postprocess_ms": 2.8550000190734863,
+            "detector_preprocess_ms": 1.369399905204773,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.759600043296814,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 5.661899857921526,
+            "input_other_ms": 51.550300306873396,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 57.21220016479492,
+            "input_resize_ms": 4.901899814605713,
+            "page_postprocess_ms": 0.01809999905526638,
+            "recognizer_infer_ms": 270.3887023925781,
+            "recognizer_postprocess_ms": 82.62339782714844,
+            "recognizer_preprocess_ms": 3.342600107192993,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 480.1949768066406,
+            "unattributed_ms": 7.402277136221528
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185484,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053412
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173960,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 8,
+                "working_set_kb": 1041916
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041908
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041908
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 797184,
+                "size": 16,
+                "useful_px": 689904,
+                "width": 346
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 3677184,
+                "size": 16,
+                "useful_px": 1477872,
+                "width": 1596
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1794240,
+                "size": 4,
+                "useful_px": 1281600,
+                "width": 3115
+              }
+            ],
+            "count": 3,
+            "padding_ratio": 0.4497381236791326,
+            "total_padded_pixels": 6268608,
+            "total_useful_pixels": 3449376
+          },
+          "region_count": 36,
+          "regions": 36,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.759600043296814,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 59.21370315551758,
+            "detector_infer_ms": 54.983299255371094,
+            "detector_postprocess_ms": 2.8550000190734863,
+            "detector_preprocess_ms": 1.369399905204773,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.01809999905526638,
+            "preprocess_ms": 57.21220016479492,
+            "recognize_ms": 356.92718505859375,
+            "recognizer_infer_ms": 270.3887023925781,
+            "recognizer_postprocess_ms": 82.62339782714844,
+            "recognizer_preprocess_ms": 3.342600107192993,
+            "resize_ms": 4.901899814605713,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 480.1949768066406
+          },
+          "wall_ms": "480.450"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.77180099487305,
+            "detector_postprocess_ms": 2.5051000118255615,
+            "detector_preprocess_ms": 1.4869999885559082,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.7603000402450562,
+            "input_decode_ms": 0.0006000000284984708,
+            "input_named_within_ms": 5.7526998716639355,
+            "input_other_ms": 49.409199694986455,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.16189956665039,
+            "input_resize_ms": 4.991799831390381,
+            "page_postprocess_ms": 0.01889999955892563,
+            "recognizer_infer_ms": 271.0198059082031,
+            "recognizer_postprocess_ms": 83.16850280761719,
+            "recognizer_preprocess_ms": 3.2374000549316406,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 478.97650146484375,
+            "unattributed_ms": 7.606092132627964
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185488,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053408
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173964,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041912
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 12,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 8,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 797184,
+                "size": 16,
+                "useful_px": 689904,
+                "width": 346
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 3677184,
+                "size": 16,
+                "useful_px": 1477872,
+                "width": 1596
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1794240,
+                "size": 4,
+                "useful_px": 1281600,
+                "width": 3115
+              }
+            ],
+            "count": 3,
+            "padding_ratio": 0.4497381236791326,
+            "total_padded_pixels": 6268608,
+            "total_useful_pixels": 3449376
+          },
+          "region_count": 36,
+          "regions": 36,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.7603000402450562,
+            "decode_ms": 0.0006000000284984708,
+            "detect_ms": 58.76850128173828,
+            "detector_infer_ms": 54.77180099487305,
+            "detector_postprocess_ms": 2.5051000118255615,
+            "detector_preprocess_ms": 1.4869999885559082,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.01889999955892563,
+            "preprocess_ms": 55.16189956665039,
+            "recognize_ms": 358.1199951171875,
+            "recognizer_infer_ms": 271.0198059082031,
+            "recognizer_postprocess_ms": 83.16850280761719,
+            "recognizer_preprocess_ms": 3.2374000549316406,
+            "resize_ms": 4.991799831390381,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 478.97650146484375
+          },
+          "wall_ms": "479.248"
+        }
+      ],
+      "size_bytes": 529609
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "08数字公式与符号.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.59029769897461,
+            "detector_postprocess_ms": 3.140199899673462,
+            "detector_preprocess_ms": 1.850600004196167,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.9740000367164612,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 5.781300061149523,
+            "input_other_ms": 48.85190153797157,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 54.633201599121094,
+            "input_resize_ms": 4.8069000244140625,
+            "page_postprocess_ms": 0.018400000408291817,
+            "recognizer_infer_ms": 218.49949645996094,
+            "recognizer_postprocess_ms": 50.86289978027344,
+            "recognizer_preprocess_ms": 1.9947999715805054,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 392.7686767578125,
+            "unattributed_ms": 7.178781343623996
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185492,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053420
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041924
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041920
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 223200,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 496656,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1725696,
+                "size": 16,
+                "useful_px": 1115136,
+                "width": 749
+              },
+              {
+                "height": 48,
+                "index": 3,
+                "padded_px": 696816,
+                "size": 3,
+                "useful_px": 457632,
+                "width": 1613
+              }
+            ],
+            "count": 4,
+            "padding_ratio": 0.4117060192883273,
+            "total_padded_pixels": 3897072,
+            "total_useful_pixels": 2292624
+          },
+          "region_count": 51,
+          "regions": 51,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.9740000367164612,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 59.58679962158203,
+            "detector_infer_ms": 54.59029769897461,
+            "detector_postprocess_ms": 3.140199899673462,
+            "detector_preprocess_ms": 1.850600004196167,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.018400000408291817,
+            "preprocess_ms": 54.633201599121094,
+            "recognize_ms": 271.5747985839844,
+            "recognizer_infer_ms": 218.49949645996094,
+            "recognizer_postprocess_ms": 50.86289978027344,
+            "recognizer_preprocess_ms": 1.9947999715805054,
+            "resize_ms": 4.8069000244140625,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 392.7686767578125
+          },
+          "wall_ms": "393.043"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.13530349731445,
+            "detector_postprocess_ms": 2.517400026321411,
+            "detector_preprocess_ms": 1.715499997138977,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.0017999410629272,
+            "input_decode_ms": 0.00020000000949949026,
+            "input_named_within_ms": 5.848000135621987,
+            "input_other_ms": 49.76750126818661,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.615501403808594,
+            "input_resize_ms": 4.8460001945495605,
+            "page_postprocess_ms": 0.02459999918937683,
+            "recognizer_infer_ms": 224.66281127929688,
+            "recognizer_postprocess_ms": 51.7140007019043,
+            "recognizer_preprocess_ms": 2.164799928665161,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 401.01177978515625,
+            "unattributed_ms": 7.461862951517105
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185492,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053424
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173968,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 223200,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 496656,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1725696,
+                "size": 16,
+                "useful_px": 1115136,
+                "width": 749
+              },
+              {
+                "height": 48,
+                "index": 3,
+                "padded_px": 696816,
+                "size": 3,
+                "useful_px": 457632,
+                "width": 1613
+              }
+            ],
+            "count": 4,
+            "padding_ratio": 0.4117060192883273,
+            "total_padded_pixels": 3897072,
+            "total_useful_pixels": 2292624
+          },
+          "region_count": 51,
+          "regions": 51,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.0017999410629272,
+            "decode_ms": 0.00020000000949949026,
+            "detect_ms": 59.37350082397461,
+            "detector_infer_ms": 55.13530349731445,
+            "detector_postprocess_ms": 2.517400026321411,
+            "detector_preprocess_ms": 1.715499997138977,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.02459999918937683,
+            "preprocess_ms": 55.615501403808594,
+            "recognize_ms": 278.7677001953125,
+            "recognizer_infer_ms": 224.66281127929688,
+            "recognizer_postprocess_ms": 51.7140007019043,
+            "recognizer_preprocess_ms": 2.164799928665161,
+            "resize_ms": 4.8460001945495605,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 401.01177978515625
+          },
+          "wall_ms": "401.306"
+        }
+      ],
+      "size_bytes": 442188
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "09竖排文本.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.19060134887695,
+            "detector_postprocess_ms": 2.4958999156951904,
+            "detector_preprocess_ms": 1.3904999494552612,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.4968999922275543,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 6.03950008074753,
+            "input_other_ms": 48.005601085023955,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 54.045101165771484,
+            "input_resize_ms": 5.542200088500977,
+            "page_postprocess_ms": 0.013300000689923763,
+            "recognizer_infer_ms": 148.79042053222656,
+            "recognizer_postprocess_ms": 50.04069900512695,
+            "recognizer_preprocess_ms": 1.7047998905181885,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 321.73858642578125,
+            "unattributed_ms": 8.067264617420733
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185496,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053436
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": -12,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 3840480,
+                "size": 14,
+                "useful_px": 1695024,
+                "width": 1905
+              }
+            ],
+            "count": 1,
+            "padding_ratio": 0.5586426696662917,
+            "total_padded_pixels": 3840480,
+            "total_useful_pixels": 1695024
+          },
+          "region_count": 14,
+          "regions": 14,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.4968999922275543,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 59.082401275634766,
+            "detector_infer_ms": 55.19060134887695,
+            "detector_postprocess_ms": 2.4958999156951904,
+            "detector_preprocess_ms": 1.3904999494552612,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.013300000689923763,
+            "preprocess_ms": 54.045101165771484,
+            "recognize_ms": 201.2100067138672,
+            "recognizer_infer_ms": 148.79042053222656,
+            "recognizer_postprocess_ms": 50.04069900512695,
+            "recognizer_preprocess_ms": 1.7047998905181885,
+            "resize_ms": 5.542200088500977,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 321.73858642578125
+          },
+          "wall_ms": "322.000"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.7130012512207,
+            "detector_postprocess_ms": 3.203399896621704,
+            "detector_preprocess_ms": 1.3438999652862549,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.5407999753952026,
+            "input_decode_ms": 0.0003000000142492354,
+            "input_named_within_ms": 7.713299701514188,
+            "input_other_ms": 47.82719712465769,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.540496826171875,
+            "input_resize_ms": 7.172199726104736,
+            "page_postprocess_ms": 0.010599999688565731,
+            "recognizer_infer_ms": 153.09519958496094,
+            "recognizer_postprocess_ms": 51.332000732421875,
+            "recognizer_preprocess_ms": 1.606600046157837,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 329.7264709472656,
+            "unattributed_ms": 8.881272644735873
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185496,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053428
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173972,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 8,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -12,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 3840480,
+                "size": 14,
+                "useful_px": 1695024,
+                "width": 1905
+              }
+            ],
+            "count": 1,
+            "padding_ratio": 0.5586426696662917,
+            "total_padded_pixels": 3840480,
+            "total_useful_pixels": 1695024
+          },
+          "region_count": 14,
+          "regions": 14,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.5407999753952026,
+            "decode_ms": 0.0003000000142492354,
+            "detect_ms": 59.26539993286133,
+            "detector_infer_ms": 54.7130012512207,
+            "detector_postprocess_ms": 3.203399896621704,
+            "detector_preprocess_ms": 1.3438999652862549,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.010599999688565731,
+            "preprocess_ms": 55.540496826171875,
+            "recognize_ms": 206.04440307617188,
+            "recognizer_infer_ms": 153.09519958496094,
+            "recognizer_postprocess_ms": 51.332000732421875,
+            "recognizer_preprocess_ms": 1.606600046157837,
+            "resize_ms": 7.172199726104736,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 329.7264709472656
+          },
+          "wall_ms": "329.986"
+        }
+      ],
+      "size_bytes": 394716
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "10长段落与分栏.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.77790069580078,
+            "detector_postprocess_ms": 2.6626999378204346,
+            "detector_preprocess_ms": 1.6606999635696411,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.6409000158309937,
+            "input_decode_ms": 0.0004000000189989805,
+            "input_named_within_ms": 6.180000119609758,
+            "input_other_ms": 49.91870135744102,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 56.09870147705078,
+            "input_resize_ms": 5.538700103759766,
+            "page_postprocess_ms": 0.023500001057982445,
+            "recognizer_infer_ms": 224.47549438476562,
+            "recognizer_postprocess_ms": 63.17499923706055,
+            "recognizer_preprocess_ms": 2.759700059890747,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 413.33306884765625,
+            "unattributed_ms": 7.69937309063971
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185504,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053428
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041928
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1304064,
+                "size": 16,
+                "useful_px": 967680,
+                "width": 566
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 2110464,
+                "size": 16,
+                "useful_px": 1661472,
+                "width": 916
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1366560,
+                "size": 5,
+                "useful_px": 932400,
+                "width": 1898
+              }
+            ],
+            "count": 3,
+            "padding_ratio": 0.2550749954821999,
+            "total_padded_pixels": 4781088,
+            "total_useful_pixels": 3561552
+          },
+          "region_count": 37,
+          "regions": 37,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.6409000158309937,
+            "decode_ms": 0.0004000000189989805,
+            "detect_ms": 59.10709762573242,
+            "detector_infer_ms": 54.77790069580078,
+            "detector_postprocess_ms": 2.6626999378204346,
+            "detector_preprocess_ms": 1.6606999635696411,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.023500001057982445,
+            "preprocess_ms": 56.09870147705078,
+            "recognize_ms": 290.5849914550781,
+            "recognizer_infer_ms": 224.47549438476562,
+            "recognizer_postprocess_ms": 63.17499923706055,
+            "recognizer_preprocess_ms": 2.759700059890747,
+            "resize_ms": 5.538700103759766,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 413.33306884765625
+          },
+          "wall_ms": "413.641"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.53170394897461,
+            "detector_postprocess_ms": 2.756200075149536,
+            "detector_preprocess_ms": 1.4564000368118286,
+            "formula_ms": 0.0,
+            "input_crop_ms": 0.6301000118255615,
+            "input_decode_ms": 0.0003000000142492354,
+            "input_named_within_ms": 5.358000109496061,
+            "input_other_ms": 49.15630119055277,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 54.51430130004883,
+            "input_resize_ms": 4.72760009765625,
+            "page_postprocess_ms": 0.018400000408291817,
+            "recognizer_infer_ms": 223.5430908203125,
+            "recognizer_postprocess_ms": 63.787296295166016,
+            "recognizer_preprocess_ms": 2.684499979019165,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 410.0887145996094,
+            "unattributed_ms": 6.7968221437186
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185504,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053428
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 8,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 1304064,
+                "size": 16,
+                "useful_px": 967680,
+                "width": 566
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 2110464,
+                "size": 16,
+                "useful_px": 1661472,
+                "width": 916
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1366560,
+                "size": 5,
+                "useful_px": 932400,
+                "width": 1898
+              }
+            ],
+            "count": 3,
+            "padding_ratio": 0.2550749954821999,
+            "total_padded_pixels": 4781088,
+            "total_useful_pixels": 3561552
+          },
+          "region_count": 37,
+          "regions": 37,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 0.6301000118255615,
+            "decode_ms": 0.0003000000142492354,
+            "detect_ms": 58.76199722290039,
+            "detector_infer_ms": 54.53170394897461,
+            "detector_postprocess_ms": 2.756200075149536,
+            "detector_preprocess_ms": 1.4564000368118286,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.018400000408291817,
+            "preprocess_ms": 54.51430130004883,
+            "recognize_ms": 290.2143859863281,
+            "recognizer_infer_ms": 223.5430908203125,
+            "recognizer_postprocess_ms": 63.787296295166016,
+            "recognizer_preprocess_ms": 2.684499979019165,
+            "resize_ms": 4.72760009765625,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 410.0887145996094
+          },
+          "wall_ms": "410.385"
+        }
+      ],
+      "size_bytes": 485830
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "11文字样式与特效.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.93109893798828,
+            "detector_postprocess_ms": 2.514400005340576,
+            "detector_preprocess_ms": 1.3662000894546509,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.8305000066757202,
+            "input_decode_ms": 0.0005000000237487257,
+            "input_named_within_ms": 6.785000002884772,
+            "input_other_ms": 48.856098019576166,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.64109802246094,
+            "input_resize_ms": 4.953999996185303,
+            "page_postprocess_ms": 0.017000000923871994,
+            "recognizer_infer_ms": 141.80899047851562,
+            "recognizer_postprocess_ms": 38.27629852294922,
+            "recognizer_preprocess_ms": 1.2710000276565552,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 303.9691162109375,
+            "unattributed_ms": 8.143030125647783
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6185504,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053432
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041936
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041940
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": -8,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6173980,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1041932
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 928512,
+                "size": 16,
+                "useful_px": 698256,
+                "width": 403
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1995264,
+                "size": 8,
+                "useful_px": 942048,
+                "width": 1732
+              }
+            ],
+            "count": 2,
+            "padding_ratio": 0.4389775413711584,
+            "total_padded_pixels": 2923776,
+            "total_useful_pixels": 1640304
+          },
+          "region_count": 24,
+          "regions": 24,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.8305000066757202,
+            "decode_ms": 0.0005000000237487257,
+            "detect_ms": 58.817100524902344,
+            "detector_infer_ms": 54.93109893798828,
+            "detector_postprocess_ms": 2.514400005340576,
+            "detector_preprocess_ms": 1.3662000894546509,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.017000000923871994,
+            "preprocess_ms": 55.64109802246094,
+            "recognize_ms": 181.5883026123047,
+            "recognizer_infer_ms": 141.80899047851562,
+            "recognizer_postprocess_ms": 38.27629852294922,
+            "recognizer_preprocess_ms": 1.2710000276565552,
+            "resize_ms": 4.953999996185303,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 303.9691162109375
+          },
+          "wall_ms": "304.242"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.47739791870117,
+            "detector_postprocess_ms": 3.2195000648498535,
+            "detector_preprocess_ms": 1.3281999826431274,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.791200041770935,
+            "input_decode_ms": 0.0005000000237487257,
+            "input_named_within_ms": 7.2966996793984435,
+            "input_other_ms": 47.958602749800775,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 55.25530242919922,
+            "input_resize_ms": 5.50499963760376,
+            "page_postprocess_ms": 0.01860000006854534,
+            "recognizer_infer_ms": 143.33819580078125,
+            "recognizer_postprocess_ms": 38.816001892089844,
+            "recognizer_preprocess_ms": 1.3720999956130981,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 307.6461181640625,
+            "unattributed_ms": 8.820820080116391
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6186024,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1053952
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1042456
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042456
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042456
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042456
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042456
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042456
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042456
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042456
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 4,
+                "working_set_kb": 1042460
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042460
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042460
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6174500,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1042460
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 928512,
+                "size": 16,
+                "useful_px": 698256,
+                "width": 403
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 1995264,
+                "size": 8,
+                "useful_px": 942048,
+                "width": 1732
+              }
+            ],
+            "count": 2,
+            "padding_ratio": 0.4389775413711584,
+            "total_padded_pixels": 2923776,
+            "total_useful_pixels": 1640304
+          },
+          "region_count": 24,
+          "regions": 24,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.791200041770935,
+            "decode_ms": 0.0005000000237487257,
+            "detect_ms": 60.03059768676758,
+            "detector_infer_ms": 55.47739791870117,
+            "detector_postprocess_ms": 3.2195000648498535,
+            "detector_preprocess_ms": 1.3281999826431274,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.01860000006854534,
+            "preprocess_ms": 55.25530242919922,
+            "recognize_ms": 183.74879455566406,
+            "recognizer_infer_ms": 143.33819580078125,
+            "recognizer_postprocess_ms": 38.816001892089844,
+            "recognizer_preprocess_ms": 1.3720999956130981,
+            "resize_ms": 5.50499963760376,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 307.6461181640625
+          },
+          "wall_ms": "308.052"
+        }
+      ],
+      "size_bytes": 529775
+    },
+    {
+      "dimensions": [
+        3200,
+        2000
+      ],
+      "file": "12综合压力测试.png",
+      "rounds": [
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 55.65599822998047,
+            "detector_postprocess_ms": 3.1298999786376953,
+            "detector_preprocess_ms": 1.5406999588012695,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.3270999193191528,
+            "input_decode_ms": 0.000699999975040555,
+            "input_named_within_ms": 6.493800285505131,
+            "input_other_ms": 49.94340216810815,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 56.43720245361328,
+            "input_resize_ms": 5.1660003662109375,
+            "page_postprocess_ms": 0.020900001749396324,
+            "recognizer_infer_ms": 338.3544006347656,
+            "recognizer_postprocess_ms": 100.52379608154297,
+            "recognizer_preprocess_ms": 3.190999984741211,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 567.4224243164062,
+            "unattributed_ms": 8.568526992574334
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6187252,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1055180
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1043684
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": -4228,
+                "working_set_kb": 1039456
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039456
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039456
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 154224,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 900864,
+                "size": 16,
+                "useful_px": 541584,
+                "width": 391
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1504512,
+                "size": 16,
+                "useful_px": 1109520,
+                "width": 653
+              },
+              {
+                "height": 48,
+                "index": 3,
+                "padded_px": 4420224,
+                "size": 12,
+                "useful_px": 1858176,
+                "width": 2558
+              }
+            ],
+            "count": 4,
+            "padding_ratio": 0.5155940594059406,
+            "total_padded_pixels": 7562880,
+            "total_useful_pixels": 3663504
+          },
+          "region_count": 60,
+          "regions": 60,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.3270999193191528,
+            "decode_ms": 0.000699999975040555,
+            "detect_ms": 60.33039855957031,
+            "detector_infer_ms": 55.65599822998047,
+            "detector_postprocess_ms": 3.1298999786376953,
+            "detector_preprocess_ms": 1.5406999588012695,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.020900001749396324,
+            "preprocess_ms": 56.43720245361328,
+            "recognize_ms": 442.8667907714844,
+            "recognizer_infer_ms": 338.3544006347656,
+            "recognizer_postprocess_ms": 100.52379608154297,
+            "recognizer_preprocess_ms": 3.190999984741211,
+            "resize_ms": 5.1660003662109375,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 567.4224243164062
+          },
+          "wall_ms": "567.938"
+        },
+        {
+          "det_input": {
+            "height": 1248,
+            "width": 1984
+          },
+          "ledger": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "detector_infer_ms": 54.61320114135742,
+            "detector_postprocess_ms": 2.712399959564209,
+            "detector_preprocess_ms": 1.4951000213623047,
+            "formula_ms": 0.0,
+            "input_crop_ms": 1.2276999950408936,
+            "input_decode_ms": 0.0006000000284984708,
+            "input_named_within_ms": 5.97260036051739,
+            "input_other_ms": 51.40199909626972,
+            "input_overflow_ms": 0.0,
+            "input_preprocess_ms": 57.37459945678711,
+            "input_resize_ms": 4.744300365447998,
+            "page_postprocess_ms": 0.0215000007301569,
+            "recognizer_infer_ms": 338.4938049316406,
+            "recognizer_postprocess_ms": 100.64839935302734,
+            "recognizer_preprocess_ms": 3.6982998847961426,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 567.086181640625,
+            "unattributed_ms": 8.028876891359687
+          },
+          "memory": {
+            "stages": [
+              {
+                "name": "input",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6187252,
+                "working_set_delta_kb": null,
+                "working_set_kb": 1050960
+              },
+              {
+                "name": "input_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": -11496,
+                "working_set_kb": 1039464
+              },
+              {
+                "name": "detect_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039464
+              },
+              {
+                "name": "detect_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039464
+              },
+              {
+                "name": "detect_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039464
+              },
+              {
+                "name": "classifier",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039464
+              },
+              {
+                "name": "rec_pre",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039464
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039464
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1039460
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039460
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039460
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039460
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039460
+              },
+              {
+                "name": "rec_infer",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039460
+              },
+              {
+                "name": "rec_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": -4,
+                "working_set_kb": 1039456
+              },
+              {
+                "name": "page_post",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039456
+              },
+              {
+                "name": "output_end",
+                "peak_working_set_kb": 1328416,
+                "private_bytes_kb": 6175728,
+                "working_set_delta_kb": 0,
+                "working_set_kb": 1039456
+              }
+            ]
+          },
+          "rec_batches": {
+            "batches": [
+              {
+                "height": 48,
+                "index": 0,
+                "padded_px": 737280,
+                "size": 16,
+                "useful_px": 154224,
+                "width": 320
+              },
+              {
+                "height": 48,
+                "index": 1,
+                "padded_px": 900864,
+                "size": 16,
+                "useful_px": 541584,
+                "width": 391
+              },
+              {
+                "height": 48,
+                "index": 2,
+                "padded_px": 1504512,
+                "size": 16,
+                "useful_px": 1109520,
+                "width": 653
+              },
+              {
+                "height": 48,
+                "index": 3,
+                "padded_px": 4420224,
+                "size": 12,
+                "useful_px": 1858176,
+                "width": 2558
+              }
+            ],
+            "count": 4,
+            "padding_ratio": 0.5155940594059406,
+            "total_padded_pixels": 7562880,
+            "total_useful_pixels": 3663504
+          },
+          "region_count": 60,
+          "regions": 60,
+          "timings": {
+            "classifier_infer_ms": 0.0,
+            "classifier_postprocess_ms": 0.0,
+            "classifier_preprocess_ms": 0.0,
+            "classify_ms": 0.0,
+            "crop_ms": 1.2276999950408936,
+            "decode_ms": 0.0006000000284984708,
+            "detect_ms": 58.82529830932617,
+            "detector_infer_ms": 54.61320114135742,
+            "detector_postprocess_ms": 2.712399959564209,
+            "detector_preprocess_ms": 1.4951000213623047,
+            "formula_ms": 0.0,
+            "postprocess_ms": 0.0215000007301569,
+            "preprocess_ms": 57.37459945678711,
+            "recognize_ms": 443.6181335449219,
+            "recognizer_infer_ms": 338.4938049316406,
+            "recognizer_postprocess_ms": 100.64839935302734,
+            "recognizer_preprocess_ms": 3.6982998847961426,
+            "resize_ms": 4.744300365447998,
+            "table_backfill_ms": 0.0,
+            "table_detect_ms": 0.0,
+            "table_structure_infer_ms": 0.0,
+            "total_ms": 567.086181640625
+          },
+          "wall_ms": "567.381"
+        }
+      ],
+      "size_bytes": 626409
+    }
+  ],
+  "meta": {
+    "build_profile": "release",
+    "config_fingerprint": "{\"global\":{\"text_score\":0.5,\"use_det\":true,\"use_cls\":false,\"use_rec\":true,\"min_height\":30,\"width_height_ratio\":8.0,\"max_side_len\":2000,\"min_side_len\":30,\"return_word_box\":false,\"return_single_char_box\":false},\"runtime\":{\"intra_threads\":null,\"inter_threads\":null,\"auto_tune_threads\":true,\"rayon_threads\":null,\"enable_cpu_mem_arena\":true,\"fail_if_provider_unavailable\":true,\"provider_preference\":{\"direct_ml\":{\"device_id\":0}},\"formula_batch\":16},\"det\":{\"lang\":\"multi\",\"ocr_version\":\"PP-OCRv6\",\"model_type\":\"medium\",\"model_path\":\"D:/100_Projects/110_Daily/Rapid-OCR-RS/models/text/medium/PP-OCRv6_det_medium.onnx\",\"allow_download\":false,\"limit_side_len\":736,\"limit_type\":\"min\",\"std\":[0.5,0.5,0.5],\"mean\":[0.5,0.5,0.5],\"thresh\":0.3,\"box_thresh\":0.5,\"max_candidates\":1000,\"unclip_ratio\":1.6,\"use_dilation\":true,\"score_mode\":\"fast\",\"model_store_dir\":null},\"cls\":{\"lang\":\"ch\",\"ocr_version\":\"PP-OCRv4\",\"model_type\":\"mobile\",\"model_path\":null,\"allow_download\":true,\"cls_image_shape\":[3,48,192],\"cls_batch_num\":6,\"cls_thresh\":0.9,\"label_list\":[\"0\",\"180\"],\"model_store_dir\":null},\"rec\":{\"model\":{\"lang\":\"ch\",\"ocr_version\":\"PP-OCRv6\",\"model_type\":\"medium\",\"model_path\":\"D:/100_Projects/110_Daily/Rapid-OCR-RS/models/text/medium/PP-OCRv6_rec_medium.onnx\",\"rec_keys_path\":\"D:/100_Projects/110_Daily/Rapid-OCR-RS/models/text/medium/ppocrv6_dict.txt\",\"allow_download\":false},\"rec_batch_num\":16,\"rec_img_shape\":[3,48,320],\"model_store_dir\":null}}",
+    "image_count": 12,
+    "images_dir": "datasets/text",
+    "init_ms": "472.9",
+    "init_working_set_kb": 187008,
+    "mem_source": "windows:GetProcessMemoryInfo",
+    "model_id": "PP-OCRv6-medium-ch",
+    "models": {
+      "cls": null,
+      "det": {
+        "path": "D:/100_Projects/110_Daily/Rapid-OCR-RS/models/text/medium/PP-OCRv6_det_medium.onnx",
+        "sha256": "92078b7355007ccfffcd4c8cd441a3afd4538904d06881b29a155e1e679907c2",
+        "size_bytes": 62119454
+      },
+      "rec": {
+        "path": "D:/100_Projects/110_Daily/Rapid-OCR-RS/models/text/medium/PP-OCRv6_rec_medium.onnx",
+        "sha256": "eef444829dbbe18d7fea59a3f6eb75647518d2b3a9568d27c92e42940204894b",
+        "size_bytes": 76629984
+      }
+    },
+    "ort_runtime": {
+      "api_version": "1.28.0",
+      "link": {
+        "base_dir": "C:\\Users\\seeyuer\\AppData\\Local\\ort.pyke.io\\dfbin\\x86_64-pc-windows-msvc",
+        "file_name": "onnxruntime.lib",
+        "size_bytes": 341152186
+      },
+      "link_reason": null,
+      "provider_dlls": [
+        {
+          "loaded": true,
+          "name": "DirectML.dll",
+          "path": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\target\\release\\DirectML.dll",
+          "size_bytes": 18527776
+        },
+        {
+          "loaded": false,
+          "name": "onnxruntime_providers_cuda.dll",
+          "path": "D:\\100_Projects\\110_Daily\\Rapid-OCR-RS\\target\\release\\onnxruntime_providers_cuda.dll",
+          "size_bytes": 62276096
+        }
+      ],
+      "provider_reason": null,
+      "runtime_module": {
+        "path": "C:\\Users\\seeyuer\\AppData\\Local\\ort.pyke.io\\dfbin\\x86_64-pc-windows-msvc\\f7c654b3729cb9e5ad2a36a0c38e5b48e63bf4eed22968931aed33a0ad0b527d\\onnxruntime.lib",
+        "reason": null,
+        "sha256": "c3f5bb800fd19c05d3bd13614654f0c37ea3db1fbfba4d10963fa678cdb6cdd0",
+        "size_bytes": 341152186
+      },
+      "runtime_source": "static_link"
+    },
+    "ort_runtime_version": "1.28.0",
+    "ort_version": "1.28.0",
+    "provider_resolution": {
+      "classifier": null,
+      "detector": {
+        "fallback_to_cpu": false,
+        "requested": {
+          "DirectMl": {
+            "device_id": 0
+          }
+        },
+        "selected_ep": "DirectMl"
+      },
+      "recognizer": {
+        "fallback_to_cpu": false,
+        "requested": {
+          "DirectMl": {
+            "device_id": 0
+          }
+        },
+        "selected_ep": "DirectMl"
+      }
+    },
+    "rounds": 2,
+    "thread_plan": {
+      "budget": 14,
+      "ort_inter": 1,
+      "ort_intra": 14,
+      "rayon": 3,
+      "sessions": 2,
+      "source": "auto"
+    },
+    "tool": "perf_profile",
+    "total_samples": 24,
+    "warmup_rounds": 1
+  },
+  "summary": {
+    "memory_note": "peak_working_set is process-cumulative; working_set_delta is the per-stage net change",
+    "ocr_total_ms": {
+      "mean": "385.5",
+      "p50": "389.8",
+      "p90": "488.6"
+    },
+    "region_count": {
+      "count": 24,
+      "max": 60.0,
+      "mean": 34.833333333333336,
+      "min": 13.0,
+      "p50": 36.5,
+      "p90": 60.0
+    },
+    "stage_memory": {
+      "classifier": {
+        "mean_working_set_delta_kb": 0.8333333333333334,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 24
+      },
+      "detect_infer": {
+        "mean_working_set_delta_kb": 0.0,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 24
+      },
+      "detect_post": {
+        "mean_working_set_delta_kb": 0.8333333333333334,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 24
+      },
+      "detect_pre": {
+        "mean_working_set_delta_kb": 0.0,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 24
+      },
+      "input_end": {
+        "mean_working_set_delta_kb": -11496.0,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 24
+      },
+      "output_end": {
+        "mean_working_set_delta_kb": 0.16666666666666666,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 24
+      },
+      "page_post": {
+        "mean_working_set_delta_kb": 0.0,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 24
+      },
+      "rec_infer": {
+        "mean_working_set_delta_kb": 1.3125,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 64
+      },
+      "rec_post": {
+        "mean_working_set_delta_kb": -160.9375,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 64
+      },
+      "rec_pre": {
+        "mean_working_set_delta_kb": 0.0,
+        "peak_growth_cumulative_kb": 1328416,
+        "samples": 24
+      }
+    },
+    "stage_timing": {
+      "classifier_infer_ms": {
+        "mean": "0.000",
+        "p50": "0.000",
+        "p90": "0.000"
+      },
+      "classifier_postprocess_ms": {
+        "mean": "0.000",
+        "p50": "0.000",
+        "p90": "0.000"
+      },
+      "classifier_preprocess_ms": {
+        "mean": "0.000",
+        "p50": "0.000",
+        "p90": "0.000"
+      },
+      "crop_ms": {
+        "mean": "1.040",
+        "p50": "0.994",
+        "p90": "1.514"
+      },
+      "decode_ms": {
+        "mean": "0.000",
+        "p50": "0.000",
+        "p90": "0.001"
+      },
+      "detector_infer_ms": {
+        "mean": "55.033",
+        "p50": "54.961",
+        "p90": "55.630"
+      },
+      "detector_postprocess_ms": {
+        "mean": "2.751",
+        "p50": "2.697",
+        "p90": "3.137"
+      },
+      "detector_preprocess_ms": {
+        "mean": "1.483",
+        "p50": "1.438",
+        "p90": "1.699"
+      },
+      "postprocess_ms": {
+        "mean": "0.019",
+        "p50": "0.019",
+        "p90": "0.023"
+      },
+      "recognizer_infer_ms": {
+        "mean": "202.485",
+        "p50": "204.331",
+        "p90": "284.859"
+      },
+      "recognizer_postprocess_ms": {
+        "mean": "57.928",
+        "p50": "55.044",
+        "p90": "83.005"
+      },
+      "recognizer_preprocess_ms": {
+        "mean": "2.155",
+        "p50": "2.083",
+        "p90": "3.223"
+      },
+      "resize_ms": {
+        "mean": "5.160",
+        "p50": "4.988",
+        "p90": "5.541"
+      },
+      "total_ms": {
+        "mean": "385.461",
+        "p50": "389.843",
+        "p90": "488.576"
+      }
+    },
+    "throughput_images_per_sec": "2.59",
+    "top_bottlenecks": [
+      {
+        "mean_ms": "202.485",
+        "stage": "recognizer_infer_ms"
+      },
+      {
+        "mean_ms": "57.928",
+        "stage": "recognizer_postprocess_ms"
+      },
+      {
+        "mean_ms": "55.033",
+        "stage": "detector_infer_ms"
+      },
+      {
+        "mean_ms": "5.160",
+        "stage": "resize_ms"
+      },
+      {
+        "mean_ms": "2.751",
+        "stage": "detector_postprocess_ms"
+      }
+    ],
+    "wall_ms": {
+      "max": "567.9",
+      "mean": "385.8",
+      "min": "274.8",
+      "p50": "390.2",
+      "p90": "488.8",
+      "stddev": "87.2"
+    }
+  }
+}

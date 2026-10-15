@@ -38,6 +38,8 @@ Recognizer 当前平均耗时约 14.5 秒，是最高收益点。比较 medium�
 
 重点指标：recognizer inference、total_padded_pixels、total_useful_pixels、padding_ratio、batch 数、峰值工作集和 OCR 结果一致性。不能因为 padding ratio 降低就直接判定优化成功。
 
+已完成固定批大小扫描。batch 1/2/4 虽降低 padding 或批大小，但端到端 OCR mean 分别为 791.5/519.0/401.2 ms；batch 8/12/16 分别为 384.8/381.9/385.5 ms，均未优于 batch 6 的 379.7 ms。batch 12/16 的 recognizer inference 略低，却产生约 43% padding，batch 12 峰值累计工作集升至 1,410,388 KB，且 CER 从 0.4320880473 变为 0.4332090318。因此保留 `rec_batch_num=6`，否决固定批大小改动。下一步只验证宽度分桶是否能在不增加调用次数的条件下降低 padding，详见 `ocr-stage-recognizer-batch-results-2026-10-15.md`。
+
 ### 5. CPU 线程实验
 
 固定 CPU provider，扫描 ORT intra = 1、2、4、8、14，ORT inter=1。同时记录 Rayon 线程数、总耗时、detector inference、recognizer inference 和内存。
