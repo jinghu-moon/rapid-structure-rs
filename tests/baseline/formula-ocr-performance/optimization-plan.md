@@ -14,6 +14,6 @@ The current PP-FormulaNet+ M profile places nearly all warm latency in ONNX `ses
 
 - Every run uses the same image manifest and records model SHA-256, ORT version, provider actually selected, thread counts, and batch size.
 - Report single-formula latency separately from multi-formula throughput. Include cold load separately from warm inference.
-- Run the complete 501-sample validation set for any model, graph, precision, or decoding change.
+- Use the pinned 64-sample manifest as the screening gate. A candidate that fails its latency or output-equivalence gate is rejected at screening; run the complete 501-sample set only for candidates that pass screening and are being considered for adoption.
 - Compare exact match, normalized match, mean CER, truncation, failures, LaTeX, EOS position, and token IDs through EOS against the pinned baseline.
 - Adopt only when measured end-to-end improvement is repeatable, output quality remains within the agreed gate, and memory use remains acceptable for the target workload. Otherwise remove the candidate and record the rejected evidence.
