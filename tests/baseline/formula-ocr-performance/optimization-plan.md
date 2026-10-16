@@ -8,7 +8,7 @@ The current PP-FormulaNet+ M profile places nearly all warm latency in ONNX `ses
 
 1. **Smaller exported model (completed and rejected).** The docparser split S graph has a valid encoder/prep/decoder-step contract and is about 65% faster in a fixed batch-8 model-only microbenchmark, but it loses 5/64 exact and normalized matches, raises mean CER from 0.06716 to 0.09682, and truncates one sample. Evidence is recorded in `stage-s-model-report.md`; no production session code was added.
 2. **Reduced precision (completed and rejected).** QInt8 `ConvInteger` cannot load on the CPU ORT build; runnable QUInt8 is 37% slower than M and changes 37/64 outputs; FP16 preserves outputs exactly but is 291% slower on CPU. Evidence is recorded in `stage-precision-report.md`; no precision branch was added.
-3. **Incremental decoding.** If the model graph remains the bottleneck, investigate exporting an encoder plus cached decoder state so each generated token does not rerun the complete ONNX `Loop`. This requires model/exporter support; wrapping the current graph in a Rust token loop is not an optimization.
+3. **Incremental decoding (completed and rejected as a performance change).** The M encoder/prep/one-token decoder preserves all 64 outputs exactly, but batch-8 CPU inference is 1401.4 ms/image versus 607.8 ms/image for the M monolith. Per-token ORT dispatch dominates the saved Loop work. Evidence is recorded in `stage-incremental-decoding-report.md`; no Rust split-session path was added.
 
 ## Acceptance gates
 
