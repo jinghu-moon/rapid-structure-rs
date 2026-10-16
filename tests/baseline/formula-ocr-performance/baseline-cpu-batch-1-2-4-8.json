@@ -1,0 +1,335 @@
+{
+  "tool": "formula_bench",
+  "provider_requested": "Cpu",
+  "provider_selected_ep": "Cpu",
+  "provider_fallback_used": false,
+  "rounds": 5,
+  "warmup": 1,
+  "model": {
+    "path": "models/formula/recognition/onnx/pp_formulanet_plus_m.onnx",
+    "file_name": "pp_formulanet_plus_m.onnx",
+    "size_bytes": 593915961,
+    "sha256": "71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b"
+  },
+  "images": [
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0053264.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0100521.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0146333.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0072788.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0002022.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0203664.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0208199.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0204453.png"
+  ],
+  "image_size": [
+    224,
+    32
+  ],
+  "threads": {
+    "intra_threads": null,
+    "inter_threads": null,
+    "auto_tune_threads": true,
+    "effective_intra_threads": 14,
+    "effective_inter_threads": 1,
+    "logical_cpus": 20,
+    "physical_cpus": 14
+  },
+  "session_create_ms": 1823.3336,
+  "first_inference_ms": 740.9701,
+  "warm_single": {
+    "preprocess": {
+      "samples": 5,
+      "min_ms": 7.007700000000001,
+      "max_ms": 12.713500000000002,
+      "mean_ms": 9.44236,
+      "p50_ms": 9.1027,
+      "p95_ms": 12.376700000000001,
+      "stddev_ms": 2.4292590327093566
+    },
+    "session_run": {
+      "samples": 5,
+      "min_ms": 475.5681,
+      "max_ms": 1379.0187,
+      "mean_ms": 912.22902,
+      "p50_ms": 830.706,
+      "p95_ms": 1338.0094199999999,
+      "stddev_ms": 363.3069026456103
+    },
+    "tokenizer_decode": {
+      "samples": 5,
+      "min_ms": 0.018199999999999997,
+      "max_ms": 0.036000000000000004,
+      "mean_ms": 0.027700000000000002,
+      "p50_ms": 0.0295,
+      "p95_ms": 0.03494,
+      "stddev_ms": 0.006788593374182904
+    },
+    "end_to_end": {
+      "samples": 5,
+      "min_ms": 482.9447,
+      "max_ms": 1388.1574,
+      "mean_ms": 921.69908,
+      "p50_ms": 841.7596,
+      "p95_ms": 1347.86898,
+      "stddev_ms": 364.6876421588166
+    }
+  },
+  "batches": [
+    {
+      "batch": 1,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 686.683,
+        "max_ms": 692.5454,
+        "mean_ms": 689.03054,
+        "p50_ms": 688.2323000000001,
+        "p95_ms": 692.0604599999999,
+        "stddev_ms": 2.3356049629592754
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 686.683,
+        "max_ms": 692.5454,
+        "mean_ms": 689.03054,
+        "p50_ms": 688.2323000000001,
+        "p95_ms": 692.0604599999999,
+        "stddev_ms": 2.3356049629592754
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 7.0355,
+          "max_ms": 7.3091,
+          "mean_ms": 7.1746,
+          "p50_ms": 7.167800000000001,
+          "p95_ms": 7.29008,
+          "stddev_ms": 0.09977682596675437
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 679.4933,
+          "max_ms": 685.2147,
+          "mean_ms": 681.83398,
+          "p50_ms": 680.9960000000001,
+          "p95_ms": 684.7621399999999,
+          "stddev_ms": 2.26949076821211
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.0216,
+          "max_ms": 0.0223,
+          "mean_ms": 0.02196,
+          "p50_ms": 0.0219,
+          "p95_ms": 0.022279999999999998,
+          "stddev_ms": 0.0002880972058177587
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 686.683,
+          "max_ms": 692.5454,
+          "mean_ms": 689.03054,
+          "p50_ms": 688.2323000000001,
+          "p95_ms": 692.0604599999999,
+          "stddev_ms": 2.3356049629592754
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    },
+    {
+      "batch": 2,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 580.0042000000001,
+        "max_ms": 610.1688,
+        "mean_ms": 590.2016600000001,
+        "p50_ms": 587.68035,
+        "p95_ms": 606.5683300000001,
+        "stddev_ms": 12.224714631403458
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 1160.0084000000002,
+        "max_ms": 1220.3376,
+        "mean_ms": 1180.4033200000001,
+        "p50_ms": 1175.3607,
+        "p95_ms": 1213.1366600000001,
+        "stddev_ms": 24.449429262806916
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 17.6976,
+          "max_ms": 18.4988,
+          "mean_ms": 18.17812,
+          "p50_ms": 18.2544,
+          "p95_ms": 18.47114,
+          "stddev_ms": 0.3092659163244463
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 1141.8919,
+          "max_ms": 1202.0445,
+          "mean_ms": 1162.18668,
+          "p50_ms": 1157.6249,
+          "p95_ms": 1194.8219,
+          "stddev_ms": 24.427305108054792
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.037200000000000004,
+          "max_ms": 0.0409,
+          "mean_ms": 0.03852,
+          "p50_ms": 0.0382,
+          "p95_ms": 0.040459999999999996,
+          "stddev_ms": 0.001448102206337659
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 1160.0084000000002,
+          "max_ms": 1220.3376,
+          "mean_ms": 1180.4033200000001,
+          "p50_ms": 1175.3607,
+          "p95_ms": 1213.1366600000001,
+          "stddev_ms": 24.449429262806916
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    },
+    {
+      "batch": 4,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 546.2296500000001,
+        "max_ms": 558.17935,
+        "mean_ms": 551.45795,
+        "p50_ms": 550.7883249999999,
+        "p95_ms": 557.570355,
+        "stddev_ms": 5.16541230883964
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 2184.9186000000004,
+        "max_ms": 2232.7174,
+        "mean_ms": 2205.8318,
+        "p50_ms": 2203.1532999999995,
+        "p95_ms": 2230.28142,
+        "stddev_ms": 20.66164923535856
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 37.5505,
+          "max_ms": 39.160599999999995,
+          "mean_ms": 38.27906,
+          "p50_ms": 38.3962,
+          "p95_ms": 39.03498,
+          "stddev_ms": 0.644201275223822
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 2145.6913000000004,
+          "max_ms": 2194.2527,
+          "mean_ms": 2167.48484,
+          "p50_ms": 2164.5532,
+          "p95_ms": 2191.98574,
+          "stddev_ms": 20.87852998484312
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.0667,
+          "max_ms": 0.0691,
+          "mean_ms": 0.0679,
+          "p50_ms": 0.06760000000000001,
+          "p95_ms": 0.06897999999999999,
+          "stddev_ms": 0.0009246621004453437
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 2184.9186000000004,
+          "max_ms": 2232.7174,
+          "mean_ms": 2205.8318,
+          "p50_ms": 2203.1532999999995,
+          "p95_ms": 2230.28142,
+          "stddev_ms": 20.66164923535856
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    },
+    {
+      "batch": 8,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 452.1795125,
+        "max_ms": 458.4392625,
+        "mean_ms": 455.9530525,
+        "p50_ms": 456.93802500000004,
+        "p95_ms": 458.289025,
+        "stddev_ms": 2.5716651803446133
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 3617.4361,
+        "max_ms": 3667.5141,
+        "mean_ms": 3647.62442,
+        "p50_ms": 3655.5042000000003,
+        "p95_ms": 3666.3122,
+        "stddev_ms": 20.573321442756907
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 65.9168,
+          "max_ms": 68.5655,
+          "mean_ms": 66.88528,
+          "p50_ms": 66.3889,
+          "p95_ms": 68.28748,
+          "stddev_ms": 1.0424928666422613
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 3551.411,
+          "max_ms": 3600.2315,
+          "mean_ms": 3580.632,
+          "p50_ms": 3586.8301,
+          "p95_ms": 3599.1888200000003,
+          "stddev_ms": 20.02226479047754
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.10490000000000001,
+          "max_ms": 0.1086,
+          "mean_ms": 0.10714000000000001,
+          "p50_ms": 0.1072,
+          "p95_ms": 0.10854,
+          "stddev_ms": 0.0014741099009232647
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 3617.4361,
+          "max_ms": 3667.5141,
+          "mean_ms": 3647.62442,
+          "p50_ms": 3655.5042000000003,
+          "p95_ms": 3666.3122,
+          "stddev_ms": 20.573321442756907
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    }
+  ],
+  "memory": {
+    "peak_working_set_start_bytes": 13934592,
+    "peak_working_set_after_session_bytes": 1930461184,
+    "peak_working_set_end_bytes": 2064199680,
+    "peak_working_set_delta_bytes": 2050265088,
+    "source": "windows:GetProcessMemoryInfo.PeakWorkingSetSize"
+  },
+  "ocr_baseline": null,
+  "notes": [
+    "公式模型的吞吐与普通 OCR 分开报告；`ocr_baseline` 仅作并列展示，不做加权合并。",
+    "`deterministic_tokens` 逐行比较 batch 输出与同图单图推理的 token 序列；batch 不应改变结果。"
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "tool": "formula_bench",
+  "provider_requested": "Cpu",
+  "provider_selected_ep": "Cpu",
+  "provider_fallback_used": false,
+  "rounds": 9,
+  "warmup": 2,
+  "model": {
+    "path": "models/formula/recognition/onnx/pp_formulanet_plus_m.onnx",
+    "file_name": "pp_formulanet_plus_m.onnx",
+    "size_bytes": 593915961,
+    "sha256": "71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b"
+  },
+  "images": [
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0002022.png"
+  ],
+  "image_size": [
+    544,
+    64
+  ],
+  "threads": {
+    "intra_threads": 14,
+    "inter_threads": null,
+    "auto_tune_threads": false,
+    "effective_intra_threads": 14,
+    "effective_inter_threads": null,
+    "logical_cpus": 20,
+    "physical_cpus": 14
+  },
+  "session_create_ms": 1363.6581999999999,
+  "first_inference_ms": 1383.6671000000001,
+  "warm_single": {
+    "preprocess": {
+      "samples": 9,
+      "min_ms": 8.795900000000001,
+      "max_ms": 9.6435,
+      "mean_ms": 9.127733333333333,
+      "p50_ms": 9.1147,
+      "p95_ms": 9.459859999999999,
+      "stddev_ms": 0.2248902454531983
+    },
+    "session_run": {
+      "samples": 9,
+      "min_ms": 1361.9254,
+      "max_ms": 1373.8373,
+      "mean_ms": 1367.6801444444443,
+      "p50_ms": 1366.9343000000001,
+      "p95_ms": 1372.76258,
+      "stddev_ms": 3.681870976525078
+    },
+    "tokenizer_decode": {
+      "samples": 9,
+      "min_ms": 0.0379,
+      "max_ms": 0.044199999999999996,
+      "mean_ms": 0.03942222222222222,
+      "p50_ms": 0.0392,
+      "p95_ms": 0.042359999999999995,
+      "stddev_ms": 0.0018912811648309831
+    },
+    "end_to_end": {
+      "samples": 9,
+      "min_ms": 1371.0996,
+      "max_ms": 1382.8637999999999,
+      "mean_ms": 1376.8473000000001,
+      "p50_ms": 1376.0319000000002,
+      "p95_ms": 1381.8401199999998,
+      "stddev_ms": 3.650656169444058
+    }
+  },
+  "batches": [
+    {
+      "batch": 1,
+      "per_image_e2e_ms": {
+        "samples": 9,
+        "min_ms": 1372.3572000000001,
+        "max_ms": 1468.0538000000001,
+        "mean_ms": 1400.129777777778,
+        "p50_ms": 1400.5211,
+        "p95_ms": 1445.5898,
+        "stddev_ms": 29.781547020671088
+      },
+      "batch_e2e_ms": {
+        "samples": 9,
+        "min_ms": 1372.3572000000001,
+        "max_ms": 1468.0538000000001,
+        "mean_ms": 1400.129777777778,
+        "p50_ms": 1400.5211,
+        "p95_ms": 1445.5898,
+        "stddev_ms": 29.781547020671088
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 9,
+          "min_ms": 9.0373,
+          "max_ms": 9.282399999999999,
+          "mean_ms": 9.171344444444443,
+          "p50_ms": 9.1918,
+          "p95_ms": 9.27348,
+          "stddev_ms": 0.07898585492211703
+        },
+        "session_run": {
+          "samples": 9,
+          "min_ms": 1363.2309,
+          "max_ms": 1458.9696000000001,
+          "mean_ms": 1390.9194,
+          "p50_ms": 1391.2755,
+          "p95_ms": 1436.41968,
+          "stddev_ms": 29.819700388417736
+        },
+        "tokenizer_decode": {
+          "samples": 9,
+          "min_ms": 0.0371,
+          "max_ms": 0.046900000000000004,
+          "mean_ms": 0.03903333333333334,
+          "p50_ms": 0.038099999999999995,
+          "p95_ms": 0.04374,
+          "stddev_ms": 0.0030166206257996723
+        },
+        "end_to_end": {
+          "samples": 9,
+          "min_ms": 1372.3572000000001,
+          "max_ms": 1468.0538000000001,
+          "mean_ms": 1400.129777777778,
+          "p50_ms": 1400.5211,
+          "p95_ms": 1445.5898,
+          "stddev_ms": 29.781547020671088
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\tilde { \\chi } ^ { ( 3 ) } \\left( e _ { i } , e _ { j } \\right) = \\chi _ { F } ^ { ( 3 ) } \\left( e _ { i } , e _ { j } \\right) + \\sum _ { k = 1 } ^ { 3 h - 3 } a _ { k } \\oint _ { C } \\Omega ^ { k + 1 - h _ { 0 } } \\left[ e _ { i } , e _ { j } \\right]   , \\qquad h _ { 0 } \\equiv \\frac { 3 } { 2 } h ."
+    }
+  ],
+  "memory": {
+    "peak_working_set_start_bytes": 13369344,
+    "peak_working_set_after_session_bytes": 1929084928,
+    "peak_working_set_end_bytes": 1929084928,
+    "peak_working_set_delta_bytes": 1915715584,
+    "source": "windows:GetProcessMemoryInfo.PeakWorkingSetSize"
+  },
+  "ocr_baseline": null,
+  "notes": [
+    "公式模型的吞吐与普通 OCR 分开报告；`ocr_baseline` 仅作并列展示，不做加权合并。",
+    "`deterministic_tokens` 逐行比较 batch 输出与同图单图推理的 token 序列；batch 不应改变结果。"
+  ]
+}

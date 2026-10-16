@@ -1,0 +1,404 @@
+{
+  "tool": "formula_bench",
+  "provider_requested": "Cpu",
+  "provider_selected_ep": "Cpu",
+  "provider_fallback_used": false,
+  "rounds": 5,
+  "warmup": 1,
+  "model": {
+    "path": "models/formula/recognition/onnx/pp_formulanet_plus_m.onnx",
+    "file_name": "pp_formulanet_plus_m.onnx",
+    "size_bytes": 593915961,
+    "sha256": "71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b"
+  },
+  "images": [
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0053264.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0100521.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0146333.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0072788.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0002022.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0203664.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0208199.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0204453.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0111236.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0198512.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0054699.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0123213.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0131952.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0211343.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0120011.png",
+    "datasets/formula/ocr_rec_latexocr_dataset_example/images/val_0146333.png"
+  ],
+  "image_size": [
+    224,
+    32
+  ],
+  "threads": {
+    "intra_threads": null,
+    "inter_threads": null,
+    "auto_tune_threads": true,
+    "effective_intra_threads": 14,
+    "effective_inter_threads": 1,
+    "logical_cpus": 20,
+    "physical_cpus": 14
+  },
+  "session_create_ms": 1358.0912999999998,
+  "first_inference_ms": 701.7512,
+  "warm_single": {
+    "preprocess": {
+      "samples": 5,
+      "min_ms": 14.1175,
+      "max_ms": 23.4286,
+      "mean_ms": 18.42226,
+      "p50_ms": 18.1216,
+      "p95_ms": 23.12062,
+      "stddev_ms": 4.202900038425849
+    },
+    "session_run": {
+      "samples": 5,
+      "min_ms": 707.9121,
+      "max_ms": 2137.2885,
+      "mean_ms": 1384.70946,
+      "p50_ms": 1243.9602,
+      "p95_ms": 2069.5771,
+      "stddev_ms": 578.2502697345874
+    },
+    "tokenizer_decode": {
+      "samples": 5,
+      "min_ms": 0.0314,
+      "max_ms": 0.0627,
+      "mean_ms": 0.04576,
+      "p50_ms": 0.0426,
+      "p95_ms": 0.061360000000000005,
+      "stddev_ms": 0.013241336790520815
+    },
+    "end_to_end": {
+      "samples": 5,
+      "min_ms": 722.4984,
+      "max_ms": 2155.4728,
+      "mean_ms": 1403.1774799999998,
+      "p50_ms": 1265.8915,
+      "p95_ms": 2088.82146,
+      "stddev_ms": 580.6424521924116
+    }
+  },
+  "batches": [
+    {
+      "batch": 1,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 1039.7245,
+        "max_ms": 1092.8197,
+        "mean_ms": 1057.7047,
+        "p50_ms": 1051.6701,
+        "p95_ms": 1085.84414,
+        "stddev_ms": 20.744638565181102
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 1039.7245,
+        "max_ms": 1092.8197,
+        "mean_ms": 1057.7047,
+        "p50_ms": 1051.6701,
+        "p95_ms": 1085.84414,
+        "stddev_ms": 20.744638565181102
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 13.027099999999999,
+          "max_ms": 16.0067,
+          "mean_ms": 14.33184,
+          "p50_ms": 14.2811,
+          "p95_ms": 15.66628,
+          "stddev_ms": 1.0719333971847316
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 1025.4038,
+          "max_ms": 1079.7526,
+          "mean_ms": 1043.3352,
+          "p50_ms": 1037.5942,
+          "p95_ms": 1072.5221999999999,
+          "stddev_ms": 21.50617443340399
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.035800000000000005,
+          "max_ms": 0.04,
+          "mean_ms": 0.037660000000000006,
+          "p50_ms": 0.036699999999999997,
+          "p95_ms": 0.03992,
+          "stddev_ms": 0.0019844394674567436
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 1039.7245,
+          "max_ms": 1092.8197,
+          "mean_ms": 1057.7047,
+          "p50_ms": 1051.6701,
+          "p95_ms": 1085.84414,
+          "stddev_ms": 20.744638565181102
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    },
+    {
+      "batch": 2,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 856.6974,
+        "max_ms": 885.3503000000001,
+        "mean_ms": 872.20136,
+        "p50_ms": 873.2448,
+        "p95_ms": 883.3810900000001,
+        "stddev_ms": 10.358940144954522
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 1713.3948,
+        "max_ms": 1770.7006000000001,
+        "mean_ms": 1744.40272,
+        "p50_ms": 1746.4896,
+        "p95_ms": 1766.7621800000002,
+        "stddev_ms": 20.717880289909044
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 30.8633,
+          "max_ms": 37.49,
+          "mean_ms": 34.5982,
+          "p50_ms": 35.3248,
+          "p95_ms": 37.108,
+          "stddev_ms": 2.477529421621468
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 1677.7777,
+          "max_ms": 1736.902,
+          "mean_ms": 1709.7451,
+          "p50_ms": 1711.0991,
+          "p95_ms": 1733.5378400000002,
+          "stddev_ms": 21.882693251403015
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.0371,
+          "max_ms": 0.0657,
+          "mean_ms": 0.059419999999999994,
+          "p50_ms": 0.0646,
+          "p95_ms": 0.0657,
+          "stddev_ms": 0.012498679930296639
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 1713.3948,
+          "max_ms": 1770.7006000000001,
+          "mean_ms": 1744.40272,
+          "p50_ms": 1746.4896,
+          "p95_ms": 1766.7621800000002,
+          "stddev_ms": 20.717880289909044
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    },
+    {
+      "batch": 4,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 847.740825,
+        "max_ms": 857.1713750000001,
+        "mean_ms": 852.7142200000001,
+        "p50_ms": 852.86535,
+        "p95_ms": 856.7448750000001,
+        "stddev_ms": 3.6697263614948397
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 3390.9633,
+        "max_ms": 3428.6855000000005,
+        "mean_ms": 3410.8568800000003,
+        "p50_ms": 3411.4614,
+        "p95_ms": 3426.9795000000004,
+        "stddev_ms": 14.678905445979359
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 57.2325,
+          "max_ms": 74.4831,
+          "mean_ms": 63.25676,
+          "p50_ms": 59.0617,
+          "p95_ms": 73.23625999999999,
+          "stddev_ms": 7.7593867224156305
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 3331.7688,
+          "max_ms": 3362.7805999999996,
+          "mean_ms": 3347.4754000000003,
+          "p50_ms": 3345.6641,
+          "p95_ms": 3362.2877799999997,
+          "stddev_ms": 13.80293423569784
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.1173,
+          "max_ms": 0.1328,
+          "mean_ms": 0.12472000000000001,
+          "p50_ms": 0.12210000000000001,
+          "p95_ms": 0.1325,
+          "stddev_ms": 0.006925460273512508
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 3390.9633,
+          "max_ms": 3428.6855000000005,
+          "mean_ms": 3410.8568800000003,
+          "p50_ms": 3411.4614,
+          "p95_ms": 3426.9795000000004,
+          "stddev_ms": 14.678905445979359
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    },
+    {
+      "batch": 8,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 704.0297375,
+        "max_ms": 707.4536625000001,
+        "mean_ms": 706.4622625,
+        "p50_ms": 707.08915,
+        "p95_ms": 707.4529425000001,
+        "stddev_ms": 1.4403916615531809
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 5632.2379,
+        "max_ms": 5659.6293000000005,
+        "mean_ms": 5651.6981,
+        "p50_ms": 5656.7132,
+        "p95_ms": 5659.6235400000005,
+        "stddev_ms": 11.523133292425447
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 87.92070000000001,
+          "max_ms": 106.9654,
+          "mean_ms": 100.53822,
+          "p50_ms": 101.4532,
+          "p95_ms": 106.8066,
+          "stddev_ms": 7.635581087382935
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 5543.1456,
+          "max_ms": 5557.9785,
+          "mean_ms": 5550.9615,
+          "p50_ms": 5553.227,
+          "p95_ms": 5557.65016,
+          "stddev_ms": 6.913112861801204
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.196,
+          "max_ms": 0.2021,
+          "mean_ms": 0.19838,
+          "p50_ms": 0.1976,
+          "p95_ms": 0.2014,
+          "stddev_ms": 0.0022785960589801774
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 5632.2379,
+          "max_ms": 5659.6293000000005,
+          "mean_ms": 5651.6981,
+          "p50_ms": 5656.7132,
+          "p95_ms": 5659.6235400000005,
+          "stddev_ms": 11.523133292425447
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    },
+    {
+      "batch": 16,
+      "per_image_e2e_ms": {
+        "samples": 5,
+        "min_ms": 588.81356875,
+        "max_ms": 596.3700437499999,
+        "mean_ms": 592.984325,
+        "p50_ms": 592.9851625,
+        "p95_ms": 595.9372175,
+        "stddev_ms": 2.7632355897450274
+      },
+      "batch_e2e_ms": {
+        "samples": 5,
+        "min_ms": 9421.0171,
+        "max_ms": 9541.920699999999,
+        "mean_ms": 9487.7492,
+        "p50_ms": 9487.7626,
+        "p95_ms": 9534.99548,
+        "stddev_ms": 44.21176943592044
+      },
+      "stages": {
+        "preprocess": {
+          "samples": 5,
+          "min_ms": 130.7104,
+          "max_ms": 175.25959999999998,
+          "mean_ms": 160.62552,
+          "p50_ms": 164.0397,
+          "p95_ms": 174.16809999999998,
+          "stddev_ms": 17.408148624336825
+        },
+        "session_run": {
+          "samples": 5,
+          "min_ms": 9289.9396,
+          "max_ms": 9366.0068,
+          "mean_ms": 9326.64846,
+          "p50_ms": 9317.165799999999,
+          "p95_ms": 9361.528499999999,
+          "stddev_ms": 29.05643171189447
+        },
+        "tokenizer_decode": {
+          "samples": 5,
+          "min_ms": 0.1965,
+          "max_ms": 0.7947,
+          "mean_ms": 0.47522000000000003,
+          "p50_ms": 0.3671,
+          "p95_ms": 0.76662,
+          "stddev_ms": 0.24289568131195746
+        },
+        "end_to_end": {
+          "samples": 5,
+          "min_ms": 9421.0171,
+          "max_ms": 9541.920699999999,
+          "mean_ms": 9487.7492,
+          "p50_ms": 9487.7626,
+          "p95_ms": 9534.99548,
+          "stddev_ms": 44.21176943592044
+        }
+      },
+      "deterministic_tokens": true,
+      "latex": "\\vec { X } ^ { \\prime \\prime } \\Lambda \\vec { X } = \\vec { x } ^ { \\prime \\prime } \\Lambda _ { a } \\vec { x } + \\vec { y } ^ { \\prime \\prime } \\Lambda _ { b } \\vec { y }"
+    }
+  ],
+  "memory": {
+    "peak_working_set_start_bytes": 13410304,
+    "peak_working_set_after_session_bytes": 1930416128,
+    "peak_working_set_end_bytes": 3115855872,
+    "peak_working_set_delta_bytes": 3102445568,
+    "source": "windows:GetProcessMemoryInfo.PeakWorkingSetSize"
+  },
+  "ocr_baseline": null,
+  "notes": [
+    "公式模型的吞吐与普通 OCR 分开报告；`ocr_baseline` 仅作并列展示，不做加权合并。",
+    "`deterministic_tokens` 逐行比较 batch 输出与同图单图推理的 token 序列；batch 不应改变结果。"
+  ]
+}
