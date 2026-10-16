@@ -6,7 +6,7 @@ The current PP-FormulaNet+ M profile places nearly all warm latency in ONNX `ses
 
 ## Ordered experiments
 
-1. **Smaller exported model.** Determine whether the existing PP-FormulaNet+ S inference weights can be exported to ONNX with the current tokenizer contract. Verify the graph contract and output behavior before timing it. Compare it against M using the pinned manifest, CPU single-image p50/p95, batch throughput, peak working set, and full 501-sample exact/normalized match, CER, truncation, and per-record outputs.
+1. **Smaller exported model (completed and rejected).** The docparser split S graph has a valid encoder/prep/decoder-step contract and is about 65% faster in a fixed batch-8 model-only microbenchmark, but it loses 5/64 exact and normalized matches, raises mean CER from 0.06716 to 0.09682, and truncates one sample. Evidence is recorded in `stage-s-model-report.md`; no production session code was added.
 2. **Reduced precision.** If model export is not a practical candidate, create one FP16 or INT8 variant at a time. Confirm provider placement and runtime support, then apply the same benchmark and quality suite. Do not accept a faster artifact if it changes predictions beyond an explicitly approved quality budget.
 3. **Incremental decoding.** If the model graph remains the bottleneck, investigate exporting an encoder plus cached decoder state so each generated token does not rerun the complete ONNX `Loop`. This requires model/exporter support; wrapping the current graph in a Rust token loop is not an optimization.
 
