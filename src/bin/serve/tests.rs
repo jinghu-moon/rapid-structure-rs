@@ -2363,34 +2363,38 @@ fn run_flood(
     let warmup_id = warmup.json()["job_id"].as_str().expect("id").to_string();
     server.wait_terminal(&warmup_id, Duration::from_secs(20));
 
-    let flooder = {
-        let stop = Arc::clone(&stop);
-        let flooded = Arc::clone(&flooded);
-        let addr = server.addr;
-        let host = server.host.clone();
-        let origin = server.origin.clone();
-        let token = server.token.clone();
-        let url = url.clone();
-        std::thread::spawn(move || {
-            while !stop.load(Ordering::SeqCst) {
-                let raw = format!(
-                    "POST {url} HTTP/1.1\r\nConnection: close\r\nHost: {host}\r\nOrigin: {origin}\r\n\
+    let mut flood_handles = Vec::new();
+    for _ in 0..8 {
+        let flooder = {
+            let stop = Arc::clone(&stop);
+            let flooded = Arc::clone(&flooded);
+            let addr = server.addr;
+            let host = server.host.clone();
+            let origin = server.origin.clone();
+            let token = server.token.clone();
+            let url = url.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let raw = format!(
+                        "POST {url} HTTP/1.1\r\nConnection: close\r\nHost: {host}\r\nOrigin: {origin}\r\n\
                      X-RapidStructure-Token: {token}\r\nContent-Type: application/octet-stream\r\n\
                      Content-Length: 5\r\n\r\nimage"
-                );
-                let response = send(addr, raw.as_bytes());
-                if response.status == 202 {
-                    flooded.fetch_add(1, Ordering::SeqCst);
-                } else {
-                    // 队列满（503）：让出一点时间，避免把 accept 线程打满。
-                    std::thread::sleep(Duration::from_millis(2));
+                    );
+                    let response = send(addr, raw.as_bytes());
+                    if response.status == 202 {
+                        flooded.fetch_add(1, Ordering::SeqCst);
+                    } else {
+                        // 队列满（503）：让出一点时间，避免把 accept 线程打满。
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
                 }
-            }
-        })
-    };
+            })
+        };
+        flood_handles.push(flooder);
+    }
     let mut flooder = Flooder {
         stop: Arc::clone(&stop),
-        handle: Some(flooder),
+        handles: flood_handles,
     };
 
     // 等洪水真的把**目标队列灌满**（`used == capacity`）：只有这样，"受害者仍在界内被服务"
@@ -2453,13 +2457,13 @@ fn run_flood(
 /// Ensures a flood thread cannot outlive a failed assertion and interfere with later tests.
 struct Flooder {
     stop: Arc<AtomicBool>,
-    handle: Option<std::thread::JoinHandle<()>>,
+    handles: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl Flooder {
     fn stop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.handle.take() {
+        for handle in self.handles.drain(..) {
             let _ = handle.join();
         }
     }
