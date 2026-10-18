@@ -2396,7 +2396,9 @@ fn run_flood(
     // 等洪水真的把**目标队列灌满**（`used == capacity`）：只有这样，"受害者仍在界内被服务"
     // 才能证明双向配额在生效，而不是因为另一队列恰好是空的。
     let saturated = wait_until(Duration::from_secs(10), || {
-        let status = server.get("/api/status").json();
+        // The HTTP status endpoint is tested separately. Use the same shared snapshot here so
+        // scheduler saturation is not hidden by a slow Windows TCP round trip.
+        let status = server.shared().status_json();
         let queues = &status["queues"][flood.as_str()];
         let used = queues["used"].as_u64().unwrap_or(0);
         let capacity = queues["capacity"].as_u64().unwrap_or(0);
