@@ -326,7 +326,7 @@ rg -n "linux|macOS|macos|CANN|cann-provider|unsupported platform|OpenCV|turbojpe
 ### 11.1 构建与包验收
 
 - [x] 在干净 Windows x64 clone 中执行 `cargo test --all-targets`、fmt、clippy、release build。
-- [x] 执行 `cargo package --allow-dirty=false`，检查包内没有模型、测试数据、开发机绝对路径或生成报告。（`--allow-dirty` 用于本地检查；154 文件 / 2.6 MB 压缩，0 处开发机路径）
+- [x] 在干净工作树执行 `cargo package`，检查包内没有模型、测试数据、开发机绝对路径或生成报告。（`--allow-dirty` 仅用于本地脏工作树检查；发布门禁不使用该开关）
 - [x] 验证 default features：CPU 可运行，不下载隐式模型，不要求 OpenCV（阶段 3 已删除 OpenCV）。
 - [x] 验证 `cli-default`：按文档复制 ORT dylib，DirectML feature 与 Windows DLL 说明一致。（`cargo check --features cli-default` 通过）
 - [x] 验证 CUDA feature：在有 NVIDIA 环境运行；无 CUDA 环境必须返回可定位错误或按普通 OCR 约定 fallback。**本机缺 cuDNN，实测无加速，记为未验证**；不出现伪成功（检查器会 FAIL 该声明）。

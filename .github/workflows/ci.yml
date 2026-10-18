@@ -52,7 +52,7 @@ jobs:
         run: cargo doc --no-deps --all-features
 
       - name: Package
-        run: cargo package --allow-dirty=false
+        run: cargo package
 
       - name: Publish dry run
-        run: cargo publish --dry-run --allow-dirty=false
+        run: cargo publish --dry-run
