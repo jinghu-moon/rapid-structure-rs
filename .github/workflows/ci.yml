@@ -32,7 +32,9 @@ jobs:
         run: cargo test --all-targets
 
       - name: Test serve feature
-        run: cargo test --all-targets --features serve
+        # Serve E2E tests share process-level model verification state and
+        # exercise many ephemeral TCP servers; serialize them on Windows.
+        run: cargo test --all-targets --features serve -- --test-threads=1
 
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
