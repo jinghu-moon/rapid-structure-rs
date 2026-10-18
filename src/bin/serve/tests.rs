@@ -2290,7 +2290,8 @@ fn the_download_endpoint_refuses_disabled_unknown_and_url_bearing_requests() {
 /// 公式洪水下普通任务不被饿死（§8.3 方向一）。
 #[test]
 fn a_formula_flood_does_not_starve_text_jobs() {
-    let delay = Duration::from_millis(25);
+    // Keep the queue full long enough for a Windows runner to observe it over TCP.
+    let delay = Duration::from_millis(100);
     let dir = complete_model_dir("fair-formula");
     let scripted = Scripted::slow(delay);
     let server = TestServer::start(
@@ -2317,7 +2318,8 @@ fn a_formula_flood_does_not_starve_text_jobs() {
 /// 普通洪水下公式任务不被饿死（§8.3 方向二）。
 #[test]
 fn a_text_flood_does_not_starve_formula_jobs() {
-    let delay = Duration::from_millis(25);
+    // Keep the queue full long enough for a Windows runner to observe it over TCP.
+    let delay = Duration::from_millis(100);
     let dir = complete_model_dir("fair-text");
     let scripted = Scripted::slow(delay);
     let server = TestServer::start(
@@ -2386,6 +2388,10 @@ fn run_flood(
             }
         })
     };
+    let mut flooder = Flooder {
+        stop: Arc::clone(&stop),
+        handle: Some(flooder),
+    };
 
     // 等洪水真的把**目标队列灌满**（`used == capacity`）：只有这样，"受害者仍在界内被服务"
     // 才能证明双向配额在生效，而不是因为另一队列恰好是空的。
@@ -2427,8 +2433,7 @@ fn run_flood(
     let elapsed = started.elapsed();
     // 计时窗口里洪水一直在被服务（否则"没被饿死"就没有意义）。
     let flooded_during_wait = flooded.load(Ordering::SeqCst);
-    stop.store(true, Ordering::SeqCst);
-    let _ = flooder.join();
+    flooder.stop();
 
     assert_eq!(view["state"], "succeeded", "{view}");
     assert!(
@@ -2441,6 +2446,27 @@ fn run_flood(
         return Some(elapsed.as_millis());
     }
     None
+}
+
+/// Ensures a flood thread cannot outlive a failed assertion and interfere with later tests.
+struct Flooder {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Flooder {
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for Flooder {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 // ---------------------------------------------------------------- 路由守卫
