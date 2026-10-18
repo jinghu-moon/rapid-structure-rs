@@ -711,17 +711,18 @@ pub struct FormulaOutcome {
 ///    并合并调用方通过 `input_regions` 显式声明的区域；
 /// 2. 候选区域先按 `min_area_ratio` 过滤、再按 `iou_threshold` 与包含关系消解重叠、
 ///    按分数排序并由 `max_regions` 截断（见 `formula::route`）；
-/// 3. **整块公式区域**在送入普通文本管线之前被抹白，因此该区域内的像素根本不会
-///    进入检测/识别，也就不会产生 CTC 文本（执行层面跳过 CTC，而不是事后丢弃结果）；
+/// 3. 检测器有候选时先在原图上跑一次普通 OCR，把覆盖的文本作为代码误检证据；
+///    明显代码候选会被拒绝。保留的候选才会在普通文本管线前抹白，因此公式像素
+///    不进入最终 CTC 识别；如果候选全部被拒绝，则直接复用证据 OCR 结果；
 /// 4. 公式区域使用原图（未抹白）裁剪后交给 `FormulaRecognizer` 识别；
 /// 5. 结果是独立的 [`RegionKind::Formula`] 区域，保留 crop 坐标与模型信息。
 ///
-/// 抹白是**按区域**而非“按文本检测框覆盖比例”进行的：实现不会先跑一遍文本检测再
-/// 逐个文本框判断覆盖率（那需要额外的检测前向）。因此：
+/// 抹白仍是**按区域**而非“按文本检测框覆盖比例”进行的：文本证据只用于拒绝明显
+/// 代码误检，不改变保留公式区域的整块抹白语义。因此：
 ///
-/// - 一个误检的公式区域会把区域内的**全部**像素（含其中的普通文字）从文本通道移除，
-///   不只是其中被检测到的文本框；召回/精度取舍只能通过 `confidence_threshold` 与
-///   `min_area_ratio` 完成（README 的公式限制一节记录了实测误检率）；
+/// - 无法从普通 OCR 文本判断语义的误检仍会把区域内的**全部**像素（含其中的普通文字）
+///   从文本通道移除，不只是其中被检测到的文本框；召回/精度取舍还可通过
+///   `confidence_threshold` 与 `min_area_ratio` 控制；
 /// - 区域内没有被文本检测器识别为文本的内容同样会消失；
 /// - 由于文本检测的输入像素被改变，**区域外**的文本也可能被重新分割
 ///   （实测：“42.7 ms” 被重新切成 “42.7” 与 “ms” 两个区域，内容不丢但区域边界变化）。
@@ -848,7 +849,7 @@ pub enum TableTextPolicy {
 /// [`Self::intra_threads`] 决定的是已创建的**结构会话本身**（线程选项与 free-dimension
 /// override 都在 `open` 时一次性施加，没有第二次机会），因此它们跟声明摘要一样是会话缓存
 /// 键的一部分：引擎实例复用、模型文件一个字节没变、只改这三只旋钮的前后两次请求，第二次
-/// 一定拿到按新配置重建的会话（见 [`crate::ocr::pipeline::rapid_structure`] 的
+/// 一定拿到按新配置重建的会话（见 `ocr::pipeline::rapid_structure` 的
 /// `a_changed_table_config_is_not_answered_by_a_hot_session`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TablePolicy {
@@ -1541,7 +1542,7 @@ where
 /// **不代表**模型真的在该 EP 上逐节点执行（ORT 不通过该 API 暴露逐节点分配）。
 /// 字段名刻意不用 `resolved`：那读起来像“已证明在该 EP 上运行”，而本 API 只能证明
 /// “这条链被选中并交给了 ORT”。任何加速结论都必须有实测耗时支撑，见
-/// [`crate::runtime::provider`] 与 `docs/04-windows-phase-reports.md` 的阶段 0/2 记录。
+/// `runtime::provider` 与 `docs/04-windows-phase-reports.md` 的阶段 0/2 记录。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResolvedProvider {
     Cpu,

@@ -12,10 +12,7 @@ use crate::{
     error::{RapidOcrError, Result},
     formula::contract::validate_formula_contract,
     model_verify::VerifiedModel,
-    runtime::{
-        provider::{ProviderResolution, require_requested_provider},
-        session::OrtSession,
-    },
+    runtime::{provider::ProviderResolution, session::OrtSession},
 };
 #[derive(Debug)]
 pub struct FormulaSession {
@@ -30,10 +27,6 @@ impl FormulaSession {
         let model_path = model.path();
         // 会话从凭证的**内容快照**打开：校验过的字节就是交给 ORT 的字节（审核点 1）。
         let inner = OrtSession::open_verified(model, runtime_cfg, &[])?;
-        // 公式域契约：请求了加速器却只拿到 CPU 回退时必须失败，不能静默降级。
-        // 这里不依赖 `RuntimeConfig::fail_if_provider_unavailable`，因为那是进程级
-        // 默认策略，而调用方无法从 API 返回值观察到发生了回退。
-        require_requested_provider(inner.provider_resolution())?;
         let probe = inner.probe_io()?;
         let contract = validate_formula_contract(&probe, model_path)?;
 
@@ -118,6 +111,18 @@ mod tests {
             .expect("formula fixture should run");
         assert_eq!(output.nrows(), 1);
         assert!(output.ncols() >= 1);
+        let resolution = session.provider_resolution();
+        assert_eq!(
+            resolution.requested,
+            RuntimeConfig::default().provider_preference
+        );
+        if resolution.selected_ep == crate::runtime::provider::ResolvedExecutionProvider::Cpu {
+            assert!(
+                resolution.fallback_used
+                    || resolution.requested == crate::config::ProviderPreference::Cpu,
+                "a CPU session requested through the default DirectML path must report fallback"
+            );
+        }
     }
 
     #[test]
@@ -185,14 +190,13 @@ mod tests {
         );
     }
 
-    /// 公式域不接受静默回退：即使 `fail_if_provider_unavailable=false`，
-    /// 请求了当前构建未启用的 provider 也必须返回结构化错误。
+    /// 显式严格模式仍拒绝不可用的 provider；非严格模式由统一解析器回退 CPU。
     #[test]
     #[cfg(not(feature = "cuda-provider"))]
     fn unavailable_provider_is_rejected_even_without_strict_flag() {
         let runtime = RuntimeConfig {
             provider_preference: crate::config::ProviderPreference::Cuda { device_id: 0 },
-            fail_if_provider_unavailable: false,
+            fail_if_provider_unavailable: true,
             ..RuntimeConfig::default()
         };
         let error = FormulaSession::new(&cred("formula_ok.onnx"), &runtime)

@@ -123,7 +123,7 @@ pub struct BackfillOutcome {
     pub lines_considered: usize,
     /// 匹配成功的 `(单元格, 行)` 对数。
     pub matched_lines_total: usize,
-    /// 本次匹配是否用了**文本行带**来定行边界（[`assign_row_bands`]）。
+    /// 本次匹配是否用了**文本行带**来定行边界（`assign_row_bands`）。
     ///
     /// `false` 表示退回了逐行几何匹配（间隙互相交错、或网格行数比文本行还多）。
     /// 这个量存在的唯一理由是让"修法有没有在这张图上生效"变成可断言的：否则
@@ -319,6 +319,61 @@ pub fn join_line_texts(texts: &[&str]) -> String {
     out
 }
 
+/// Join matched OCR lines while preserving visual line breaks inside a cell.
+///
+/// OCR can split one visual line into several horizontally adjacent boxes, so a newline
+/// must be based on vertical geometry rather than on the number of matched boxes. The
+/// threshold is derived from the selected line heights and therefore scales with the page.
+pub fn join_text_lines(lines: &[TextLine], indices: &[usize]) -> String {
+    if indices.is_empty() {
+        return String::new();
+    }
+    if indices.len() == 1 {
+        return lines[indices[0]].text.clone();
+    }
+
+    let mut selected: Vec<&TextLine> = indices.iter().map(|&index| &lines[index]).collect();
+    selected.sort_by(|a, b| {
+        let a_center = (a.bbox[1] + a.bbox[3]) / 2.0;
+        let b_center = (b.bbox[1] + b.bbox[3]) / 2.0;
+        a_center
+            .total_cmp(&b_center)
+            .then_with(|| a.bbox[0].total_cmp(&b.bbox[0]))
+    });
+
+    let mut heights: Vec<f32> = selected
+        .iter()
+        .map(|line| (line.bbox[3] - line.bbox[1]).max(0.0))
+        .filter(|height| height.is_finite() && *height > 0.0)
+        .collect();
+    heights.sort_by(f32::total_cmp);
+    let median_height = heights.get(heights.len() / 2).copied().unwrap_or(1.0);
+    let same_line_center_delta = (median_height * 0.75).max(1.0);
+
+    let mut visual_lines: Vec<Vec<&str>> = Vec::new();
+    let mut previous_center: Option<f32> = None;
+    for line in selected {
+        let center = (line.bbox[1] + line.bbox[3]) / 2.0;
+        let same_visual_line = previous_center
+            .is_some_and(|previous| (center - previous).abs() <= same_line_center_delta);
+        if same_visual_line {
+            visual_lines
+                .last_mut()
+                .expect("a previous center implies a visual line")
+                .push(line.text.as_str());
+        } else {
+            visual_lines.push(vec![line.text.as_str()]);
+        }
+        previous_center = Some(center);
+    }
+
+    visual_lines
+        .iter()
+        .map(|texts| join_line_texts(texts))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// 几何匹配，`min_iou` 取参考实现的默认值 [`TABLE_MATCH_MIN_IOU`]，不施加偏移。
 pub fn match_cells(cells: &[CellSlot], lines: &[TextLine]) -> BackfillOutcome {
     match_cells_with_min_iou(cells, lines, [0.0, 0.0], TABLE_MATCH_MIN_IOU)
@@ -448,7 +503,7 @@ fn assign_rows_from_text(
 /// **一个行只进一个单元格；一个单元格可以收多行。** 这不是对称的，参考实现也不对称。
 ///
 /// 第二步与参考实现的分工不同（参考实现只有一步、直接对所有单元格取最优）：见
-/// [`assign_rows_from_text`] 的实测依据。行归属不可用时（返回 `None`）退回"对所有单元格
+/// `assign_rows_from_text` 的实测依据。行归属不可用时（返回 `None`）退回"对所有单元格
 /// 取最优"，也就是参考实现的行为 —— 这条退路是刻意的：修法不能在它不适用的图上制造新错误。
 pub fn match_cells_with_min_iou(
     cells: &[CellSlot],
@@ -600,8 +655,7 @@ pub fn match_cells_with_min_iou(
         if rows.is_empty() {
             continue;
         }
-        let texts: Vec<&str> = rows.iter().map(|&row| lines[row].text.as_str()).collect();
-        outcome.texts[index] = join_line_texts(&texts);
+        outcome.texts[index] = join_text_lines(lines, rows);
 
         let sum: f64 = rows.iter().map(|&row| lines[row].score as f64).sum();
         outcome.text_scores[index] = Some((sum / rows.len() as f64) as f32);
@@ -861,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cell_can_receive_several_lines_and_they_are_joined_with_spaces() {
+    fn a_cell_can_receive_several_lines_and_they_are_joined_with_line_breaks() {
         let cells = vec![slot(0, Some([0.0, 0.0, 100.0, 60.0]))];
         let lines = vec![
             line([5.0, 2.0, 95.0, 18.0], "first"),
@@ -870,7 +924,7 @@ mod tests {
         ];
         let outcome = match_cells(&cells, &lines);
 
-        assert_eq!(outcome.texts, vec!["first second third".to_string()]);
+        assert_eq!(outcome.texts, vec!["first\nsecond\nthird".to_string()]);
         assert_eq!(outcome.kinds, vec![CellMatchKind::Multiple]);
         assert_eq!(outcome.multi_line_cells, 1);
         assert_eq!(outcome.matched_lines_total, 3);
@@ -888,6 +942,24 @@ mod tests {
         // 末项为空串被跳过 → 前一项已经补过空格 → 留下尾随空格（参考实现的行为）
         assert_eq!(join_line_texts(&["a", ""]), "a ");
         assert_eq!(join_line_texts(&[]), "");
+    }
+
+    #[test]
+    fn horizontally_split_boxes_stay_on_one_visual_line() {
+        let lines = vec![
+            line([0.0, 2.0, 30.0, 18.0], "left"),
+            line([31.0, 3.0, 60.0, 19.0], "right"),
+        ];
+        assert_eq!(join_text_lines(&lines, &[0, 1]), "left right");
+    }
+
+    #[test]
+    fn vertically_separated_boxes_keep_a_cell_line_break() {
+        let lines = vec![
+            line([0.0, 2.0, 60.0, 18.0], "first"),
+            line([0.0, 22.0, 60.0, 38.0], "second"),
+        ];
+        assert_eq!(join_text_lines(&lines, &[0, 1]), "first\nsecond");
     }
 
     #[test]
@@ -1194,11 +1266,11 @@ mod tests {
         assert_eq!(outcome.texts[0], "12：00~13：00");
         assert_eq!(outcome.texts[2], "13：00~14：00");
         assert_eq!(
-            outcome.texts[1], "申博康第二批吃饭，内径 磨冷却液小，打维修",
+            outcome.texts[1], "申博康第二批吃饭，内径\n磨冷却液小，打维修",
             "the 12:00 cell must hold the 12:00 row only"
         );
         assert_eq!(
-            outcome.texts[3], "大圈正常出料，内径精磨 序",
+            outcome.texts[3], "大圈正常出料，内径精磨\n序",
             "the 13:00 cell must hold the 13:00 row only — this is the E25 defect: before the \
              fix the 13:00 first line landed in the 12:00 cell (IoU 0.195 vs 0.189)"
         );
@@ -1243,7 +1315,7 @@ mod tests {
         assert_eq!(outcome.texts[0], "h0");
         assert_eq!(outcome.texts[1], "h1");
         assert_eq!(outcome.texts[2], "t1");
-        assert_eq!(outcome.texts[3], "r1a r1b");
+        assert_eq!(outcome.texts[3], "r1a\nr1b");
         assert_eq!(outcome.texts[4], "t2");
         assert_eq!(outcome.texts[5], "r2");
         assert_eq!(outcome.kinds[3], CellMatchKind::Multiple);
@@ -1274,7 +1346,7 @@ mod tests {
 
         assert!(outcome.text_bands_applied);
         assert_eq!(
-            outcome.texts[0], "merged-a merged-b",
+            outcome.texts[0], "merged-a\nmerged-b",
             "a rowspan=2 cell must be a candidate in every row it covers"
         );
         assert_eq!(outcome.kinds[0], CellMatchKind::Multiple);
@@ -1298,7 +1370,7 @@ mod tests {
         let outcome = match_cells(&cells, &lines);
 
         assert!(outcome.text_bands_applied, "gaps 14 px / 21 px → rows = 2");
-        assert_eq!(outcome.texts[0], "a b c");
+        assert_eq!(outcome.texts[0], "a\nb\nc");
         assert_eq!(outcome.kinds[0], CellMatchKind::Multiple);
         assert_eq!(outcome.kinds[1], CellMatchKind::Unmatched);
         assert_eq!(
@@ -1420,7 +1492,7 @@ mod tests {
 
         assert!(outcome.text_bands_applied);
         assert_eq!(
-            outcome.texts[0], "标号 张数 箱",
+            outcome.texts[0], "标号\n张数\n箱",
             "a tall cell must collect every stacked line inside it"
         );
         assert_eq!(outcome.kinds[0], CellMatchKind::Multiple);

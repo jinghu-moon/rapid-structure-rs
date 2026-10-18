@@ -1,6 +1,29 @@
-# 变更记录（开发期）
+# 变更记录
 
-本 crate 处于开发期，**不承诺向后兼容**。这里只记录结构性的、会影响下游的变更。
+## 1.0.0 - 2026-10-18
+
+首个公开版本。支持平台固定为 Windows x64 + MSVC ABI
+（`x86_64-pc-windows-msvc`）；Linux、macOS、Windows GNU、Windows ARM64 和
+Windows x86 不在支持范围内。
+
+### 发布内容
+
+- 提供文本 OCR、表格结构识别和公式识别的统一 Rust API。
+- 默认请求 DirectML；运行时或模型不支持时，普通 OCR 和表格管线可报告并回退到 CPU。
+- 公式识别使用图优化后的 PP-FormulaNet_plus-M ONNX 模型，模型权重不随 crate 分发。
+- 提供模型清单、SHA-256 校验、`rapidstruct` CLI 和可选的本地 `serve` 功能。
+- crate 不包含 ONNX Runtime、执行 provider DLL、OCR/公式/表格模型或词典；这些是独立资产，
+  需要按 `README.md` 和 `THIRD_PARTY_NOTES.md` 的许可与校验说明获取。
+
+### 破坏性变更
+
+- crate 名称为 `rapid-structure-rs`，库名为 `rapid_structure_rs`，二进制为 `rapidstruct`。
+- 移除旧的后端、OpenCV、CANN 和跨平台实现；平台门槛在编译期拒绝不支持的目标。
+- 运行时、provider、线程计划、模型凭证和三条识别管线使用新的统一接口。
+
+后续条目保留开发阶段的结构性变更记录，适用于 `1.0.0` 之前的实现历史。
+
+本 crate 处于持续开发阶段；`1.0.0` 之后仍可能发生需要新主版本的破坏性变更。
 
 ## 改名：`rapid-ocr-rs` → `rapid-structure-rs`（未发布）
 

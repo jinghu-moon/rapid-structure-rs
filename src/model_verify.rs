@@ -580,6 +580,10 @@ impl VerifiedModel {
         &self.content
     }
 
+    pub(crate) fn content_arc(&self) -> Arc<[u8]> {
+        Arc::clone(&self.content)
+    }
+
     /// 部署声明的期望摘要；`None` = 调用方没有可信期望。
     pub fn expected_sha256(&self) -> Option<&str> {
         self.expected_sha256.as_deref()

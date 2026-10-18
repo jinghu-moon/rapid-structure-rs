@@ -41,7 +41,7 @@ use crate::{
             ModelIoProbe, TensorSpec, require_fixed_dim, require_single_input,
             require_single_output, require_tensor,
         },
-        provider::{ProviderResolution, require_requested_provider},
+        provider::ProviderResolution,
         session::OrtSession,
     },
 };
@@ -109,14 +109,11 @@ impl FormulaDetector {
     /// 构造，因而绝不静默加载一个损坏的检测模型；本构造器不再接受裸路径，也没有
     /// “不校验”的默认入口。
     ///
-    /// provider 语义与 `formula::session::FormulaSession` 一致：请求了加速器却只拿到
-    /// CPU 回退时必须失败，不能静默降级。
+    /// provider 语义与其它 ONNX 会话一致：非严格配置允许不可用加速器回退 CPU。
     pub fn from_model(model: &VerifiedModel, runtime_cfg: &RuntimeConfig) -> Result<Self> {
         let model_path = model.path();
         // 会话从凭证的**内容快照**打开：校验过的字节就是交给 ORT 的字节（审核点 1）。
         let inner = OrtSession::open_verified(model, runtime_cfg, &[])?;
-        // 公式域契约：请求了加速器却只拿到 CPU 回退时必须失败，不能静默降级。
-        require_requested_provider(inner.provider_resolution())?;
         let probe = inner.probe_io()?;
         let contract = validate_detect_contract(&probe, model_path)?;
         let names_raw = inner.metadata_custom("names")?;

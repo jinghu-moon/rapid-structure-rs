@@ -60,9 +60,12 @@ pub const DEFAULT_JOB_TTL_SECS: u64 = 600;
 pub const DEFAULT_MAX_EVAL_CASES: usize = 32;
 /// `--allow-download` 默认关闭（§0.1：模型下载默认关闭、显式触发）。
 pub const DEFAULT_ALLOW_DOWNLOAD: bool = false;
-/// `--allow-provider-fallback` 默认关闭（§7.5：非 cpu provider 默认强制不回退）。
+/// `--allow-provider-fallback` 默认关闭；它只用于放宽显式严格 YAML。
 pub const DEFAULT_ALLOW_PROVIDER_FALLBACK: bool = false;
-/// 内置默认 provider（§3 的 `--provider` 默认 `cpu`）。
+/// 内置默认 provider，与库的 feature-aware `RuntimeConfig::default()` 保持一致。
+#[cfg(feature = "directml-provider")]
+pub const DEFAULT_PROVIDER: &str = "directml";
+#[cfg(not(feature = "directml-provider"))]
 pub const DEFAULT_PROVIDER: &str = "cpu";
 
 /// 可定位的 serve 配置错误。

@@ -29,9 +29,9 @@
     {
       "name": "pp_formulanet_plus_m.onnx",
       "role": "formula_recognizer",
-      "sha256": "71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b",
-      "size_bytes": 593915961,
-      "source_url": "https://www.modelscope.cn/models/RapidAI/RapidDoc/resolve/v1.0.0/formula/PP-FormulaNet_plus-M/pp_formulanet_plus_m.onnx"
+      "sha256": "6e509ec4b7cda604dc9bf80a876ae6494693deea4c7f4157a4dc0eba0ebda745",
+      "size_bytes": 593916167,
+      "source_url": "https://www.modelscope.cn/seeyuer/pp-formulanet-plus-m-optimized/resolve/0bb8154e3583d24613eaa74448de43ecf4ae73ec/pp_formulanet_plus_m.onnx"
     },
     {
       "name": "pix2text-mfd-1.5.onnx",

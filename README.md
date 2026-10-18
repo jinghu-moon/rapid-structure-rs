@@ -12,7 +12,7 @@ sessions, the three output channels (JSON / HTML / Markdown), an evaluation
 harness, and a local web demo (`rapidstruct serve`). It does not depend on
 Tauri, SQLite, a clipboard implementation, or a specific application.
 
-> **Renamed**: this crate was `rapid-ocr-rs` up to v0.7.0 — the name only
+> **Renamed**: this crate was `rapid-ocr-rs` before v1.0.0 — the name only
 > described the text half of it. See `CHANGELOG.md` for the rename entry.
 
 ## Platform support
@@ -44,13 +44,39 @@ ONNX Runtime binaries, OCR model weights, and model dictionaries have separate
 license and redistribution terms; see [THIRD_PARTY_NOTES.md](THIRD_PARTY_NOTES.md)
 before redistributing a complete application or model bundle.
 
+## Installation and external assets
+
+Add the crate from crates.io:
+
+```text
+cargo add rapid-structure-rs
+```
+
+The crate publishes Rust code and small contract fixtures only. It does not
+bundle ONNX Runtime DLLs, execution-provider DLLs, OCR models, formula models,
+table models, or dictionaries. The application must download those assets,
+verify their declared SHA-256 values, and place the runtime DLLs where Windows
+can load them. The model manifests and the `rapidstruct` model-management
+commands provide the authoritative URLs and checksums.
+
+The optimized PP-FormulaNet model is mirrored at
+[ModelScope](https://www.modelscope.cn/seeyuer/pp-formulanet-plus-m-optimized)
+and [Hugging Face](https://huggingface.co/seeyuer/pp-formulanet-plus-m-optimized).
+The default manifest uses a pinned ModelScope revision; both copies must match
+the SHA-256 recorded in `assets/default_models.yaml` before use.
+
 ## Current baseline
 
 - PP-OCRv6 detector + recognizer; direction classifier disabled unless a
   compatible classifier artifact is explicitly configured.
-- CPU is the default provider. DirectML and CUDA are opt-in Cargo features and
-  must be benchmarked on the target machine; CANN is not a Windows target and has
-  been removed.
+- DirectML is requested by the default feature set on Windows x64. If DirectML
+  cannot load or reject the model, the ordinary OCR and table sessions rebuild
+  with CPU and expose that fallback in provider resolution. Formula sessions
+  also report provider resolution and reject an unavailable accelerator when
+  strict provider behavior is required. Select `ProviderPreference::Cpu`
+  explicitly for a CPU-only deployment; CUDA remains an opt-in feature and all
+  providers should be benchmarked on the target machine. CANN is not a Windows
+  target and has been removed.
 - The stable application-neutral API is `OcrEngine::recognize(OcrRequest)`.
   `OwnedPixelBuffer` accepts BGRA/RGBA/RGB/Gray pixels, padding stride,
   bottom-up buffers, and an optional ROI.
@@ -179,11 +205,10 @@ println!("{}", result.latex);
   batch to 2561 columns when any sample fails to emit EOS, so a limit at or
   below that value would reject an entire batch and lose the samples that did
   recognize correctly. Set a larger limit only if a different model needs it.
-- **Provider strictness**: the formula session rejects a silent CPU fallback.
-  Requesting an accelerator that is unavailable returns
-  `RapidOcrError::UnsupportedProvider` even when
-  `RuntimeConfig::fail_if_provider_unavailable` is `false`. Request
-  `ProviderPreference::Cpu` explicitly if CPU is intended.
+- **Provider strictness**: a formula session reports the requested and selected
+  provider. With `fail_if_provider_unavailable = true`, an unavailable
+  accelerator returns `RapidOcrError::UnsupportedProvider` instead of falling
+  back. Request `ProviderPreference::Cpu` explicitly if CPU is intended.
 
 ### Page-level formula routing
 
@@ -261,11 +286,10 @@ Known limitations (explicit, and pinned by tests):
 
 - Detector precision is not perfect. On the repository's 12 smoke pages the
   detector reports false positives on non-formula pages (code listings, dense
-  prose) at the default `confidence_threshold = 0.25`. A false-positive region
-  removes the text underneath it from the text channel. Raise
-  `confidence_threshold`/`min_area_ratio` to trade recall for precision; at
-  `0.95` the integration test shows the output returns to the
-  formula-disabled baseline.
+  prose) at the default `confidence_threshold = 0.25`. The route now runs one
+  original-image OCR pass as evidence and rejects candidates whose covered text
+  is clearly code; ambiguous candidates still remove the whole covered region.
+  Raise `confidence_threshold`/`min_area_ratio` to trade recall for precision.
 - Whitening changes the pixels the text detector sees, so text regions **outside**
   the formula region can be re-segmented. Measured on `08数字公式与符号.png`:
   whitening one row merges/splits a distant row (`42.7 ms` becomes `42.7` + `ms`).
@@ -273,16 +297,16 @@ Known limitations (explicit, and pinned by tests):
   Callers that require byte-stable text segmentation should not enable formula
   routing.
 - A **missed** formula (below threshold, or a detector that returned nothing)
-  stays in the text channel, so ordinary CTC will emit garbage for it. There is
-  no cross-model arbitration.
+  stays in the text channel, so ordinary CTC will emit its best text result. The
+  arbitration path is conservative and does not invent a formula region.
 - Formula crops use the axis-aligned bounding box of the region quadrilateral.
 
 Model assets:
 
 ```text
 formula recognizer:
-https://www.modelscope.cn/models/RapidAI/RapidDoc/resolve/v1.0.0/formula/PP-FormulaNet_plus-M/pp_formulanet_plus_m.onnx
-SHA-256 71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b
+https://www.modelscope.cn/seeyuer/pp-formulanet-plus-m-optimized/resolve/0bb8154e3583d24613eaa74448de43ecf4ae73ec/pp_formulanet_plus_m.onnx
+SHA-256 6e509ec4b7cda604dc9bf80a876ae6494693deea4c7f4157a4dc0eba0ebda745
 
 page formula detector:
 models/formula/detection/pix2text-mfd-1.5.onnx (Pix2Text-MFD-1.5, YOLO11m detect)
@@ -585,16 +609,17 @@ not library-wide guarantees; rerun the benchmark on the target GPU before
 changing an application default.
 
 For an application or CLI that wants the ONNX Runtime binaries copied during
-build and DirectML enabled, use the opt-in convenience feature:
+build, use the convenience feature:
 
 ```text
 cargo run --features cli-default --bin rapidstruct -- run --img-path screen.png
 ```
 
 `cli-default` expands to `download-binaries`, `copy-dylibs`, and
-`directml-provider`. The library's default feature set remains
-`ort-runtime`; it does not download runtime binaries or enable a GPU provider
-implicitly.
+`directml-provider`. The library's default feature set requests DirectML but
+does not copy runtime binaries; applications that need a CPU-only build can
+use `--no-default-features --features ort-runtime` and set
+`ProviderPreference::Cpu`.
 
 ### Local web UI in one command
 

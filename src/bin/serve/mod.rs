@@ -19,26 +19,26 @@
 //!
 //! | 模块 | 内容 | 文档 |
 //! | --- | --- | --- |
-//! | [`limits`] | MiB→字节换算与全部取值校验（唯一实现） | §3、§4.4、§4.6、§6.2 |
-//! | [`error`] | `ServeError`、状态码/`code` 映射、JSON 错误体 | §11.1 |
-//! | [`state`] | `ServiceState` / `EngineState` 状态机、启动期配置校验 | §7.5、§7.6 |
-//! | [`queue`] | 双队列容量与双向公平调度 | §8.2、§8.3 |
-//! | [`jobs`] | 有界任务存储、TTL、tombstone、404/410、下载进度与取消 | §4.3、§4.5、§6.6 |
-//! | [`security`] | 硬编码 loopback、Host/Origin、令牌、注入契约 | §7.1–§7.3、§9 |
-//! | [`admit`] | 准入顺序、有界读取、字节账本 | §4.4 |
-//! | [`assets`] | `GET /static/*`：编译期嵌入的公式渲染引擎（表由 build.rs 生成） | §4.2、§9.5 |
-//! | [`cli`] | `serve` 的选项面与默认值（无行为） | §3 |
-//! | [`model_plan`] | 模型集的单一来源解析、逐文件状态、引擎路径绑定 | §5.3、§5.4、§7.6 |
-//! | [`engine`] | `OcrBackend` + 引擎工厂（测试可替换） | §8.2 |
-//! | [`results`] | 有界结果存储与有界序列化 | §4.5、§4.6 |
-//! | [`export`] | 标注 PNG、base64、JSON/Markdown/HTML 导出文档与时间账本 | §4.2、§9.5 |
-//! | [`download`] | 独立下载 worker + 可注入执行体 + `--allow-download-host` 校验 | §8.1、§6 |
-//! | [`evaluate`] | `POST /api/evaluate`：复用库的 `evaluation`（CER/精确匹配） | §4.2、§12 |
-//! | [`flowlog`] | 流动日志：请求行 + 任务生命周期行（`--log-level`/`RAPID_STRUCTURE_SERVE_LOG`，默认关闭） | §17 |
-//! | [`server`] | 运行期核心：共享状态、worker、TTL 清理、端点语义、惰性建引擎 | §4、§7.6、§8 |
-//! | [`http`] | `tiny_http` 接线：路由、准入、响应头 | §4.2、§4.4、§7 |
-//! | [`run`] | 启动编排、静态页注入、启动日志、`--open` | §3、§7.1、§7.6、§9 |
-//! | [`tests`] | 真实绑定端口的端到端测试（HTTP + 双队列 + 安全 + M2 下载） | §12 |
+//! | `limits` | MiB→字节换算与全部取值校验（唯一实现） | §3、§4.4、§4.6、§6.2 |
+//! | `error` | `ServeError`、状态码/`code` 映射、JSON 错误体 | §11.1 |
+//! | `state` | `ServiceState` / `EngineState` 状态机、启动期配置校验 | §7.5、§7.6 |
+//! | `queue` | 双队列容量与双向公平调度 | §8.2、§8.3 |
+//! | `jobs` | 有界任务存储、TTL、tombstone、404/410、下载进度与取消 | §4.3、§4.5、§6.6 |
+//! | `security` | 硬编码 loopback、Host/Origin、令牌、注入契约 | §7.1–§7.3、§9 |
+//! | `admit` | 准入顺序、有界读取、字节账本 | §4.4 |
+//! | `assets` | `GET /static/*`：编译期嵌入的公式渲染引擎（表由 build.rs 生成） | §4.2、§9.5 |
+//! | `cli` | `serve` 的选项面与默认值（无行为） | §3 |
+//! | `model_plan` | 模型集的单一来源解析、逐文件状态、引擎路径绑定 | §5.3、§5.4、§7.6 |
+//! | `engine` | `OcrBackend` + 引擎工厂（测试可替换） | §8.2 |
+//! | `results` | 有界结果存储与有界序列化 | §4.5、§4.6 |
+//! | `export` | 标注 PNG、base64、JSON/Markdown/HTML 导出文档与时间账本 | §4.2、§9.5 |
+//! | `download` | 独立下载 worker + 可注入执行体 + `--allow-download-host` 校验 | §8.1、§6 |
+//! | `evaluate` | `POST /api/evaluate`：复用库的 `evaluation`（CER/精确匹配） | §4.2、§12 |
+//! | `flowlog` | 流动日志：请求行 + 任务生命周期行（`--log-level`/`RAPID_STRUCTURE_SERVE_LOG`，默认关闭） | §17 |
+//! | `server` | 运行期核心：共享状态、worker、TTL 清理、端点语义、惰性建引擎 | §4、§7.6、§8 |
+//! | `http` | `tiny_http` 接线：路由、准入、响应头 | §4.2、§4.4、§7 |
+//! | `run` | 启动编排、静态页注入、启动日志、`--open` | §3、§7.1、§7.6、§9 |
+//! | `tests` | 真实绑定端口的端到端测试（HTTP + 双队列 + 安全 + M2 下载） | §12 |
 //!
 //! # M2 的范围（模型管理）
 //!
@@ -50,7 +50,7 @@
 //!
 //! # HTTP 依赖的边界（M1 的硬约束）
 //!
-//! `tiny_http` 是 `optional` 依赖且不进 `default`；它**只**能在 [`http`] 里被引用。
+//! `tiny_http` 是 `optional` 依赖且不进 `default`；它**只**能在 `http` 里被引用。
 //! 下面的 `dependency_boundary` 测试会扫描整个 `serve/` 子树的代码行并断言这一点，
 //! 同时断言 `Cargo.toml` 里它是 `optional = true` 且 `serve` feature 通过 `dep:`
 //! 引入——§12 的"依赖隔离"因此有编译期与源码级两条独立证据。

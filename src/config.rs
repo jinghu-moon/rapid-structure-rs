@@ -136,19 +136,29 @@ impl LangRec {
 
 /// 执行提供者偏好。
 ///
-/// Windows x64 收窄之后只剩三个：CPU（默认）、CUDA、DirectML。
+/// Windows x64 收窄之后只剩三个：DirectML（默认）、CPU、CUDA。
 /// CANN 不是 Windows x64 目标，已整体删除（feature、枚举变体、序列化与测试）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderPreference {
-    #[default]
     Cpu,
-    Cuda {
-        device_id: usize,
-    },
-    DirectMl {
-        device_id: usize,
-    },
+    Cuda { device_id: usize },
+    DirectMl { device_id: usize },
+}
+
+impl Default for ProviderPreference {
+    fn default() -> Self {
+        // The default build includes DirectML.  A deliberately reduced build
+        // without that feature remains usable by selecting CPU at compile time.
+        #[cfg(feature = "directml-provider")]
+        {
+            Self::DirectMl { device_id: 0 }
+        }
+        #[cfg(not(feature = "directml-provider"))]
+        {
+            Self::Cpu
+        }
+    }
 }
 
 /// 单个 ONNX Runtime 会话的运行时配置。
@@ -259,7 +269,7 @@ impl RuntimeConfig {
     /// [`Self::effective_session_threads`] 的自动推导填成 1、`auto_tune_threads` 仍为
     /// `true`。那样得到的 `(intra, inter)` 恰好一样，但**语义不同** —— 它表示"运行时
     /// 觉得合适"，而不是"调用方要求这个数字"。两者在下一次有人改动
-    /// [`crate::runtime::profile::auto_tuned_thread_budget`] 或 inter 推导规则时会分叉，
+    /// `runtime::profile::auto_tuned_thread_budget` 或 inter 推导规则时会分叉，
     /// 而分叉的那一侧是"实验记录里的线程数悄悄变了"。
     ///
     /// 因此这里一次性把三个字段写成**自洽的显式请求**：`intra = n`、`inter = 1`
@@ -460,7 +470,11 @@ mod tests {
         assert_eq!(cfg.rayon_threads, None);
         assert!(cfg.enable_cpu_mem_arena);
         assert!(!cfg.fail_if_provider_unavailable);
-        assert_eq!(cfg.provider_preference, ProviderPreference::Cpu);
+        assert_eq!(
+            cfg.provider_preference,
+            ProviderPreference::default(),
+            "the default preference follows the DirectML feature"
+        );
         assert_eq!(cfg.formula_batch, 16);
     }
 

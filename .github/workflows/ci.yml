@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x64 MSVC
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Test default features
+        run: cargo test --all-targets
+
+      - name: Test serve feature
+        run: cargo test --all-targets --features serve
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Check CPU-only build
+        run: cargo check --no-default-features --features ort-runtime
+
+      - name: Check CLI runtime build
+        run: cargo check --features cli-default
+
+      - name: Check provider features
+        run: cargo check --features directml-provider,cuda-provider
+
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --all-features
+
+      - name: Package
+        run: cargo package --allow-dirty=false
+
+      - name: Publish dry run
+        run: cargo publish --dry-run --allow-dirty=false

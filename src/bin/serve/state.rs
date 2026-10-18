@@ -431,8 +431,8 @@ impl ServeStartup {
 /// 字段含义：
 /// - `engine`：**已应用 CLI 覆盖**的引擎配置（§3 的优先级 CLI > YAML > 内建默认）；
 /// - `requested`：本次进程请求的 provider（写进 `/api/status` 的 `requested`）；
-/// - `fail_if_provider_unavailable`：serve 侧冻结的回退语义——非 cpu provider 默认**强制**
-///   不回退，只有显式 `--allow-provider-fallback` 才允许回退（§7.5）。
+/// - `fail_if_provider_unavailable`：沿用 `RuntimeConfig` 的严格开关；默认 DirectML
+///   请求在不可用时回退 CPU，只有配置显式设为 `true` 才拒绝回退。
 #[derive(Debug, Clone)]
 pub struct ServeConfigPlan {
     pub engine: EngineConfig,
@@ -469,10 +469,12 @@ impl ServeConfigPlan {
         engine.validate().map_err(StartupConfigError::Engine)?;
 
         let requested = engine.runtime.provider_preference;
-        // serve 侧冻结的回退语义（§7.5）：cpu 无所谓；加速 provider 默认强制不回退。
-        let fail_if_provider_unavailable =
-            requested != ProviderPreference::Cpu && !allow_provider_fallback;
-        engine.runtime.fail_if_provider_unavailable = fail_if_provider_unavailable;
+        // `RuntimeConfig` 默认允许 DirectML 回退 CPU。显式 CLI 开关保留为
+        // “允许回退”覆盖，用于启动一个严格配置的 YAML 而不修改文件。
+        if allow_provider_fallback {
+            engine.runtime.fail_if_provider_unavailable = false;
+        }
+        let fail_if_provider_unavailable = engine.runtime.fail_if_provider_unavailable;
 
         // 只用库里的**同一套**实现做配置探测，因此"feature 未编译进来"这句话
         // 与 `run`/`evaluate` 完全一致。
@@ -512,8 +514,8 @@ impl ServeConfigPlan {
     /// `cli_max_side = None`，即保留当前 `max_side_len`），因此：
     ///
     /// - provider 名称非法 / 对应 feature 未编译进来 → 与启动期**同一句**可定位错误；
-    /// - `fail_if_provider_unavailable` 的冻结语义（§7.5：非 cpu provider 默认强制不回退，
-    ///   只有显式 `--allow-provider-fallback` 才允许回退）逐字沿用，
+    /// - `fail_if_provider_unavailable` 沿用 YAML 的严格值；
+    ///   `--allow-provider-fallback` 可将其放宽，
     ///   `allow_provider_fallback` 由调用方传入**启动期的那个开关值**；
     /// - 其余配置（模型路径、线程、`max_side_len`…）保持不变。
     ///
@@ -534,7 +536,7 @@ impl ServeConfigPlan {
 
 #[cfg(test)]
 mod tests {
-    use rapid_structure_rs::{EngineConfig, ProviderPreference, RapidOcrError};
+    use rapid_structure_rs::{EngineConfig, ProviderPreference};
 
     use super::{
         EngineState, EngineStateMachine, ModelReadiness, OcrAdmission, ProviderStatus,
@@ -878,39 +880,38 @@ mod tests {
         }
     }
 
-    /// §7.5 第 3 条：请求一个本次构建没有编译进来的 provider 必须在启动期失败，
-    /// 且错误文本来自库里的 `runtime::provider`（"not compiled in"）。
+    /// 未编译的 DirectML 在非严格模式仍是可启动的 CPU 回退；严格模式才拒绝。
     #[test]
     #[cfg(not(feature = "directml-provider"))]
-    fn startup_rejects_a_provider_whose_feature_is_not_compiled_in() {
-        let error = ServeStartup::validate(
+    fn startup_allows_uncompiled_directml_to_fall_back_when_non_strict() {
+        let plan = ServeStartup::validate(
             RawServeLimits::default(),
             EngineConfig::default(),
             Some(ProviderPreference::DirectMl { device_id: 0 }),
             None,
             false,
         )
-        .expect_err("directml without the feature must be fatal");
-        let text = error.to_string();
-        assert!(text.contains("not compiled in"), "{text}");
-        assert!(text.contains("directml-provider"), "{text}");
-        match error {
-            StartupConfigError::Provider(RapidOcrError::UnsupportedProvider(_)) => {}
-            other => panic!("expected a provider config error, got {other}"),
-        }
+        .expect("uncompiled directml should use CPU fallback");
+        assert_eq!(
+            plan.requested,
+            ProviderPreference::DirectMl { device_id: 0 }
+        );
+        assert!(!plan.fail_if_provider_unavailable);
     }
 
-    /// §7.5：`--provider directml` 默认强制不回退；显式 `--allow-provider-fallback` 才允许。
-    /// CPU 不受该规则影响。
+    /// 默认配置请求 DirectML，并允许不可用时回退 CPU。
     #[test]
     fn provider_fallback_policy_is_frozen_by_default() {
         let cpu = ServeConfigPlan::validate(EngineConfig::default(), None, None, false)
             .expect("the default config must be valid");
-        assert_eq!(cpu.requested, ProviderPreference::Cpu);
-        assert_eq!(cpu.requested_label(), "cpu");
+        assert_eq!(cpu.requested, ProviderPreference::default());
+        assert_eq!(
+            cpu.requested_label(),
+            rapid_structure_rs::format_provider_preference(ProviderPreference::default())
+        );
         assert!(
             !cpu.fail_if_provider_unavailable,
-            "cpu must not carry the accelerator fallback policy"
+            "the default provider must allow CPU fallback"
         );
 
         let plan = ServeConfigPlan::validate(
@@ -927,8 +928,8 @@ mod tests {
     ///
     /// 这里只断言两件与 provider 无关、因此与 feature 编译情况无关的事：
     /// 1. 目标 provider 合法时，新计划的 `requested` 就是它，`max_side_len` 等其余配置**不变**；
-    /// 2. `fail_if_provider_unavailable` 的冻结语义逐字沿用（非 cpu 默认强制不回退，
-    ///    只有显式回退开关时才允许）。
+    /// 2. `fail_if_provider_unavailable` follows the YAML value; the CLI flag can
+    ///    relax a strict YAML configuration.
     #[test]
     fn switching_a_provider_reuses_the_frozen_startup_rules() {
         let mut engine = EngineConfig::default();
@@ -945,12 +946,11 @@ mod tests {
         assert_eq!(same.engine.global.max_side_len, 1600);
         assert!(!same.fail_if_provider_unavailable);
 
-        // 关闭回退开关时，非 cpu provider 必须携带"强制不回退"（§7.5）。
-        // 该请求能不能真的建立会话与这里的规则无关：名称/feature 非法会返回 Err。
+        // The default runtime policy allows fallback for an accelerator.
         match base.with_provider(ProviderPreference::DirectMl { device_id: 0 }, false) {
             Ok(plan) => assert!(
-                plan.fail_if_provider_unavailable,
-                "a non-cpu provider must fail rather than silently fall back"
+                !plan.fail_if_provider_unavailable,
+                "a non-strict provider switch must allow CPU fallback"
             ),
             Err(error) => assert!(
                 error.to_string().contains("provider"),
@@ -960,7 +960,7 @@ mod tests {
         match base.with_provider(ProviderPreference::DirectMl { device_id: 0 }, true) {
             Ok(plan) => assert!(
                 !plan.fail_if_provider_unavailable,
-                "--allow-provider-fallback keeps its documented meaning"
+                "--allow-provider-fallback must keep fallback enabled"
             ),
             Err(error) => assert!(
                 error.to_string().contains("provider"),

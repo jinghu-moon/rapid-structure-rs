@@ -17,22 +17,47 @@ claim that their model artifacts are licensed under this crate's license:
   projects. Their weights, dictionaries, tokenizer metadata, and test images
   retain their own licenses and are not relicensed by this crate.
 
+## Embedded web assets (the `serve` feature)
+
+The optional `serve` feature embeds the following browser assets under
+`src/bin/web/static/`. They are distributed as separate third-party works; the
+crate's Apache-2.0 license does not relicense them.
+
+- **KaTeX 0.19.0** (`katex.min.js`, `katex.min.css`): MIT License, from
+  <https://github.com/KaTeX/KaTeX>.
+- **KaTeX fonts** (`src/bin/web/static/katex/fonts/*.woff2`): MIT License,
+  from <https://github.com/KaTeX/katex-fonts>.
+- **MathJax 4.1.3** (`mathjax/tex-svg.js`): Apache License 2.0, from
+  <https://github.com/mathjax/MathJax>. Its complete license text is
+  `licenses/MathJax-Apache-2.0.txt`.
+
+The complete MIT license texts for KaTeX and its fonts, and the complete
+Apache-2.0 text for MathJax, are included under `licenses/`. A downstream
+application can retain the applicable notices without
+relying on a network connection. The source repositories and exact versions
+are recorded here so the asset bundle can be reproduced.
+
 ## PP-FormulaNet_plus-M model
 
-- ModelScope URL:
-  `https://www.modelscope.cn/models/RapidAI/RapidDoc/resolve/v1.0.0/formula/PP-FormulaNet_plus-M/pp_formulanet_plus_m.onnx`
-- Version: RapidDoc `v1.0.0`
+- ModelScope optimized artifact:
+  `https://www.modelscope.cn/seeyuer/pp-formulanet-plus-m-optimized`
+- Pinned file URL:
+  `https://www.modelscope.cn/seeyuer/pp-formulanet-plus-m-optimized/resolve/0bb8154e3583d24613eaa74448de43ecf4ae73ec/pp_formulanet_plus_m.onnx`
+- Artifact: graph-rewritten ONNX derived from RapidDoc `v1.0.0`; the model was
+  not fine-tuned and learned weights are unchanged.
 - SHA-256:
-  `71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b`
-- On-disk size: 593,915,961 bytes (about 594 MB).
+  `6e509ec4b7cda604dc9bf80a876ae6494693deea4c7f4157a4dc0eba0ebda745`
+- On-disk size: 593,916,167 bytes (about 594 MB).
 - ONNX contract: input `x` `FLOAT32 [N, 1, 384, 384]`, output `fetch_name_0`
   `INT64 [N, L]`, IR 10, opset 18, in-graph `Loop` whose maximum output width is
   2561 columns.
 - Tokenizer: the model's `character` metadata embeds `fast_tokenizer_file`
   (vocab 50,000; `<s>`/`<pad>`/`</s>`/`<unk>` = 0/1/2/3) and
   `tokenizer_config_file`.
-- License: the RapidDoc repository and ModelScope model page identify
-  Apache-2.0; verify the current upstream page before redistribution.
+- Source model SHA-256:
+  `71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b`
+- License: the RapidDoc repository and upstream ModelScope model page identify
+  Apache-2.0; the optimized repository includes its Apache-2.0 license text.
 - The crate does not bundle the ~594 MB ONNX model. Applications must download
   it separately, verify the SHA-256, and accept the upstream terms.
 

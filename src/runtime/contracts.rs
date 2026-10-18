@@ -19,7 +19,7 @@ pub const DYNAMIC_DIM: i64 = -1;
 pub struct TensorSpec {
     pub name: String,
     pub rank: usize,
-    /// 每个维度的定长值；动态维度为 [`DYNAMIC_DIM`]。
+    /// 每个维度的定长值；动态维度为 `DYNAMIC_DIM`。
     pub dims: Vec<i64>,
     /// 每个维度的 `dim_param`（符号）名，长度等于 [`Self::rank`]；定长或未命名的维度为 `None`。
     ///
@@ -35,8 +35,8 @@ pub struct TensorSpec {
 impl TensorSpec {
     /// 构造一个**没有符号名**的签名，供测试与合成 fixture 使用。
     ///
-    /// 只有当 `dims` 里没有 [`DYNAMIC_DIM`] 时它才是完整描述：动态维度若没有符号名，
-    /// [`require_dynamic_dim_symbol`] 会拒绝，因为那种维度无法被 override 寻址。
+    /// 只有当 `dims` 里没有 `DYNAMIC_DIM` 时它才是完整描述：动态维度若没有符号名，
+    /// `require_dynamic_dim_symbol` 会拒绝，因为那种维度无法被 override 寻址。
     pub fn new(name: impl Into<String>, dims: Vec<i64>, element_type: TensorElementType) -> Self {
         let rank = dims.len();
         Self {

@@ -247,7 +247,7 @@ pub(super) struct ServeContext {
     /// `--allow-download-host` 的**显式**扩展（§6.1 第 3 条；库常量不被修改）。
     pub allow_download_hosts: Vec<String>,
     /// `--allow-provider-fallback`（§7.5）。运行期切换 provider 时**必须**沿用同一个开关，
-    /// 否则同一条冻结规则会有两种解释（见 [`ServeShared::switch_provider`]）。
+    /// 否则同一条冻结规则会有两种解释（见 `ServeShared::switch_provider`）。
     pub allow_provider_fallback: bool,
     /// `--eval-root` 沙箱（M1 评审 P2-3）：`None` = `/api/evaluate` 整体关闭。
     pub eval_root: Option<EvalRoot>,
@@ -1496,7 +1496,7 @@ impl ServeShared {
     /// - `json`：与 `/result` **同一份** JSON（库的 `to_output_json` + `plain_text` +
     ///   `timing_ledger`），上限仍是 `--max-result-mb`（§4.6）且不得超过 `--max-export-mb`；
     /// - `md`：库的 `to_output_markdown`；
-    /// - `html`：库的报告渲染器 + **[`ReportMode::Static`]**（正文不含任何 `<script`）+
+    /// - `html`：库的报告渲染器 + **`ReportMode::Static`**（正文不含任何 `<script`）+
     ///   标注图 `data:` 内嵌，因此导出文件脱离服务仍可查看（§9.5 第 5 条）。
     ///
     /// 三者都经**有界写入器**：超限是 413 `export_too_large`（`detail` 指向

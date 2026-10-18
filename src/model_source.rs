@@ -681,7 +681,7 @@ mod tests {
             );
         }
         // 公式集合只有一个 594 MB 的文件，其大小已知。
-        assert_eq!(statuses[1].download_bytes_total, Some(593_915_961));
+        assert_eq!(statuses[1].download_bytes_total, Some(593_916_167));
         // v6 的模型与字典在默认表里都记录了大小，因此文本集合的总量可核算。
         assert_eq!(statuses[0].download_bytes_total, Some(138_824_385));
 

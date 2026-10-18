@@ -448,7 +448,7 @@ fn evaluate_cmd(
 /// 表格域评测（`docs/09-table-recognition-execution.md` §9.2）。
 ///
 /// 链路在库里（`evaluation::table::run`），与 `src/bin/table_eval.rs` 是**同一份**
-/// 实现。这里只做两件事：把 manifest 合成 [`TableEvalConfig`]、把报告打出来。
+/// 实现。这里只做两件事：把 manifest 合成 `TableEvalConfig`、把报告打出来。
 ///
 /// `--config`（OCR 引擎配置）与 `--iou-threshold` 在表格域**不适用**：表格域不跑
 /// 页级 OCR 引擎，也没有多边形 IoU 指标。给了它们说明调用方拿错了 manifest，

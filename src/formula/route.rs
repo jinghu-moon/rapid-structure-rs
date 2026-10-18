@@ -23,6 +23,16 @@ pub struct FormulaCandidate {
     pub detected: bool,
 }
 
+/// 普通 OCR 对一个候选区域给出的文本证据。
+///
+/// 公式检测器只回答“这里像不像公式”，而普通 OCR 能回答“这里实际更像什么”。
+/// 两者必须在路由层合并，否则一个代码行误检就会在抹白阶段删除正文。
+#[derive(Debug, Clone, Copy)]
+pub struct TextEvidence<'a> {
+    pub polygon: Polygon,
+    pub text: &'a str,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Rect {
     x0: f32,
@@ -169,6 +179,73 @@ pub fn resolve_formula_regions(
     kept.into_iter().map(|(candidate, _)| candidate).collect()
 }
 
+/// 用普通 OCR 的文本证据拒绝明显的代码误检。
+///
+/// 这是保守仲裁：没有文本证据、显式输入区域、或看起来像数学文本的候选都会保留；
+/// 只有候选覆盖的文本证据全部呈现出代码结构时才拒绝。这样漏检仍然按原有普通 OCR
+/// 路径退化，而代码页不会因为一次检测误检被整段抹掉。
+pub fn arbitrate_formula_regions<'a>(
+    candidates: Vec<FormulaCandidate>,
+    evidence: &[TextEvidence<'a>],
+) -> Vec<FormulaCandidate> {
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            if !candidate.detected {
+                return true;
+            }
+            let formula = Rect::from_polygon(candidate.polygon);
+            // The detector box can cover only a fragment of a long code line. A
+            // 50% text-box coverage requirement would let the measured false
+            // positive through, so use a conservative 20% evidence threshold.
+            let overlapping: Vec<&TextEvidence<'_>> = evidence
+                .iter()
+                .filter(|item| {
+                    let text = Rect::from_polygon(item.polygon);
+                    let area = text.area();
+                    area > 0.0 && formula.intersection(text) / area >= 0.2
+                })
+                .collect();
+            !(!overlapping.is_empty()
+                && overlapping
+                    .iter()
+                    .all(|item| looks_like_code_text(item.text)))
+        })
+        .collect()
+}
+
+/// 判断文本是否带有足够强的代码语法证据。
+///
+/// 单个 `=` 或括号不能作为依据，因为它们同样常见于公式；组合出现的代码词法
+/// （注释、索引、路径、调用和结构分隔符）才足以拒绝一个检测候选。
+fn looks_like_code_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let markers = [
+        "//",
+        "/*",
+        "*/",
+        "::",
+        "->",
+        "=>",
+        "box[",
+        ".onnx",
+        "println",
+        "rapidocr",
+        "rapid_ocr",
+        "engine.",
+        "result.",
+        "#[",
+    ];
+    if markers.iter().any(|marker| lower.contains(marker)) {
+        return true;
+    }
+    let structural = text
+        .chars()
+        .filter(|ch| matches!(ch, '{' | '}' | ';'))
+        .count();
+    structural >= 2
+}
+
 /// 抹白公式区域后的图像（RGB8），用于在送入普通文本管线**之前**移除公式像素。
 ///
 /// 这是“公式区域跳过普通 CTC”的实现方式：公式像素根本不进入检测/识别，
@@ -220,6 +297,51 @@ mod tests {
             width: 100,
             height: 100,
         }
+    }
+
+    #[test]
+    fn code_text_evidence_rejects_a_formula_false_positive() {
+        let candidate = FormulaCandidate {
+            polygon: polygon(10.0, 10.0, 90.0, 30.0),
+            score: 0.7,
+            detected: true,
+        };
+        let evidence = [TextEvidence {
+            polygon: polygon(12.0, 11.0, 88.0, 29.0),
+            text: "x0, y0 = box[0]",
+        }];
+        assert!(arbitrate_formula_regions(vec![candidate], &evidence).is_empty());
+    }
+
+    #[test]
+    fn mathematical_text_evidence_keeps_a_formula_candidate() {
+        let candidate = FormulaCandidate {
+            polygon: polygon(10.0, 10.0, 90.0, 30.0),
+            score: 0.4,
+            detected: true,
+        };
+        let evidence = [TextEvidence {
+            polygon: polygon(12.0, 11.0, 88.0, 29.0),
+            text: "∫₀^∞ e^-x² dx = √π/2",
+        }];
+        assert_eq!(
+            arbitrate_formula_regions(vec![candidate], &evidence).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_partial_code_line_overlap_is_still_strong_evidence() {
+        let candidate = FormulaCandidate {
+            polygon: polygon(40.0, 10.0, 60.0, 30.0),
+            score: 0.7,
+            detected: true,
+        };
+        let evidence = [TextEvidence {
+            polygon: polygon(0.0, 10.0, 100.0, 30.0),
+            text: "let result = engine.run(&image)?;",
+        }];
+        assert!(arbitrate_formula_regions(vec![candidate], &evidence).is_empty());
     }
 
     #[test]

@@ -69,7 +69,7 @@
 | 无并发下载锁 | 无 | 同文件单飞（§6） |
 | 无 connect/read 超时区分 | 只有整体 `timeout(60s)` | 分项超时（§6） |
 | **Windows 原子替换不明** | 代码中无 `MoveFileExW` 用法 | 用 `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`（§6.7） |
-| provider 可能静默回退 | `fail_if_provider_unavailable` 默认 **`false`** | serve 侧默认强制失败（§7.5） |
+| provider 可能静默回退 | `fail_if_provider_unavailable` 默认 **`false`** | 默认 DirectML 不可用时回退 CPU；严格配置可拒绝回退 |
 
 ---
 
@@ -113,8 +113,8 @@ rapidstruct serve [OPTIONS]
                              （**没有 --host**：监听地址硬编码 127.0.0.1，见 §7.1）
   --model-dir <DIR>          默认 model_store::default_model_store_dir()
   --config <FILE>            EngineConfig YAML（与 run/evaluate 一致）
-  --provider <PROV>          cpu | directml | cuda（默认 cpu）；非 cpu 时默认强制不回退（§7.5）
-  --allow-provider-fallback  允许 provider 不可用时回退 CPU（默认不允许）
+  --provider <PROV>          cpu | directml | cuda（默认 directml；未编译/不可用时回退 cpu）
+  --allow-provider-fallback  放宽 YAML 的严格 provider 配置，允许回退 CPU
   --max-side <N>             覆盖 max_side_len
   --allow-download           允许下载模型（仍需 token，§7）
   --allow-download-host <H>  追加一个允许下载的 host（可重复；默认仅编译期白名单，§6.1）
@@ -1174,11 +1174,11 @@ pub fn download_verified(req: &DownloadRequest<'_>) -> Result<PathBuf>;
 
 ### 7.5 Provider 回退语义（**必须冻结**）
 
-现状：`RuntimeConfig::fail_if_provider_unavailable` 默认 **`false`**（`config.rs:195`），因此"启动时固定 provider"并不等于"真的用了该 provider"。
+现状：`RuntimeConfig::fail_if_provider_unavailable` 默认 **`false`**（`config.rs`），因此默认 DirectML 在运行库或模型不适配时会回退 CPU；报告中的 `selected_ep` 与 `fallback_to_cpu` 必须一起读取。
 
 规则：
 
-- `serve --provider directml|cuda` → **默认强制 `fail_if_provider_unavailable = true`**；
+- `serve --provider directml` → 使用配置中的严格值；默认值为允许回退，严格场景显式设置 `fail_if_provider_unavailable = true`；
 - 需要回退时显式加 `--allow-provider-fallback`（此时才沿用 `false`）；
 - **配置错误在启动期失败**：provider 名称非法、或对应 feature 未编译进来（如 `--provider directml` 但没启用 `directml-provider`）→ 立即退出并给可定位错误，**不进入服务**；
 - **provider 可用性在引擎创建期判定**：EP 是否真的可用只能通过建立会话得知，因此在 `Loading → Ready|Failed` 转换处暴露（§7.6），**不会**在首次 OCR 时才悄悄失败；
@@ -1799,7 +1799,7 @@ curl.exe -s -X POST http://127.0.0.1:8760/api/engine/reload `
 | tombstone 无界增长 | 内存泄漏 | 容量 + TTL 双上限（§4.5） |
 | 结果序列化爆内存 | OOM | `--max-result-mb` + 有界写入器（§4.6） |
 | Windows 覆盖语义 | 文件损坏/丢失 | `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` + 回归测试（§6.7） |
-| provider 静默回退 | 用户误判性能 | 默认强制失败 + 三字段展示（§7.5） |
+| provider 静默回退 | 用户误判性能 | 默认 DirectML 回退 CPU 时展示三字段；严格配置拒绝回退 |
 | 双权威模型来源 | 行为不一致 | 单一来源规则 + 缺 role 报错（§5.3） |
 | 公式任务饿死普通 OCR | 体验退化 | 双队列 + 连续上限（§8.3） |
 | `serve` 依赖泄漏进默认构建 | 影响发布 | feature 隔离 + `cargo tree`/`package` 验证 |

@@ -6,8 +6,8 @@
 //!
 //! | provider | feature | 说明 |
 //! | --- | --- | --- |
-//! | CPU | 默认（`ort-runtime`） | 基础路径，始终可用 |
-//! | DirectML | `directml-provider` | Windows GPU 加速 |
+//! | DirectML | 默认（`directml-provider`） | Windows GPU 加速，运行时不可用时回退 CPU |
+//! | CPU | `ort-runtime` | 基础路径，始终可用 |
 //! | CUDA | `cuda-provider` | NVIDIA GPU 加速 |
 //!
 //! CANN 不是 Windows x64 目标，已从 feature、枚举、序列化和测试中删除；
@@ -15,7 +15,7 @@
 //!
 //! # 错误语义（三类必须可区分）
 //!
-//! 1. **feature 未编译进来**：`UnsupportedProvider`，提示重新构建时加 feature；
+//! 1. **feature 未编译进来**：严格模式返回 `UnsupportedProvider`；非严格模式按默认策略回退 CPU；
 //! 2. **运行库不可用**：`is_available()` 报告 false 或报错 —— 严格模式返回
 //!    `Config` 错误，非严格模式回退 CPU 并置 `fallback_used = true`；
 //! 3. **严格模式拒绝回退**：`require_requested_provider` 在 `fallback_used` 时返回
@@ -207,17 +207,37 @@ pub fn resolve_execution_providers(
                     fail_if_provider_unavailable,
                     |id| {
                         let provider = DirectML::default().with_device_id(id);
-                        let available = provider.is_available().map_err(|e| {
-                            RapidOcrError::Config(runtime_unavailable("DirectML", &e.to_string()))
-                        })?;
+                        let available = match provider.is_available() {
+                            Ok(available) => available,
+                            Err(error) if fail_if_provider_unavailable => {
+                                return Err(RapidOcrError::Config(runtime_unavailable(
+                                    "DirectML",
+                                    &error.to_string(),
+                                )));
+                            }
+                            Err(_) => false,
+                        };
                         Ok((available, provider.build()))
                     },
                 )
             }
             #[cfg(not(feature = "directml-provider"))]
             {
-                let _ = (device_id, fail_if_provider_unavailable);
-                Err(feature_disabled("DirectML", "directml-provider"))
+                if fail_if_provider_unavailable {
+                    Err(feature_disabled("DirectML", "directml-provider"))
+                } else {
+                    let _ = device_id;
+                    Ok(ProviderChain {
+                        providers: vec![cpu_provider()],
+                        resolution: ProviderResolution {
+                            requested: ProviderPreference::DirectMl {
+                                device_id: *device_id,
+                            },
+                            selected_ep: ResolvedExecutionProvider::Cpu,
+                            fallback_used: true,
+                        },
+                    })
+                }
             }
         }
     }
@@ -316,7 +336,8 @@ fn strict_mode_message(requested: ProviderPreference) -> String {
 /// requires the requested accelerator (the formula token session) must call
 /// this instead of trusting that flag, so a caller can never observe a
 /// different execution provider than the one it asked for.
-pub fn require_requested_provider(resolution: ProviderResolution) -> Result<ProviderResolution> {
+#[cfg(test)]
+fn require_requested_provider(resolution: ProviderResolution) -> Result<ProviderResolution> {
     if resolution.fallback_used {
         return Err(RapidOcrError::UnsupportedProvider(format!(
             "requested execution provider {} is unavailable and this domain rejects silent CPU \
@@ -442,18 +463,27 @@ mod tests {
         );
     }
 
-    /// 未启用 feature 时，请求该 provider 必须返回明确的“未编译进来”错误，
-    /// 而不是“仅 Windows 可用”这类与本机事实矛盾的信息。
+    /// 未启用 feature 时，非严格请求仍必须产生可观察的 CPU 回退；严格请求
+    /// 才返回明确的“未编译进来”错误。
     #[test]
     #[cfg(not(feature = "directml-provider"))]
-    fn directml_without_feature_reports_the_missing_feature() {
+    fn directml_without_feature_falls_back_or_reports_missing_feature_in_strict_mode() {
         let error = super::resolve_execution_providers(
             &ProviderPreference::DirectMl { device_id: 0 },
             false,
             false,
         )
-        .expect_err("DirectML must not resolve without the feature");
-        let message = error.to_string();
+        .expect("non-strict DirectML must fall back to CPU without the feature");
+        assert_eq!(error.resolution.selected_ep, ResolvedExecutionProvider::Cpu);
+        assert!(error.resolution.fallback_used);
+
+        let strict = super::resolve_execution_providers(
+            &ProviderPreference::DirectMl { device_id: 0 },
+            false,
+            true,
+        )
+        .expect_err("strict DirectML must report the missing feature");
+        let message = strict.to_string();
         assert!(message.contains("not compiled in"), "{message}");
         assert!(message.contains("directml-provider"), "{message}");
     }

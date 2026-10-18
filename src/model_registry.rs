@@ -754,16 +754,20 @@ onnxruntime:
 
         assert_eq!(set.id, "PP-FormulaNet_plus-M");
         assert_eq!(set.family, "RapidDoc");
-        assert_eq!(set.version, "v1.0.0");
+        assert_eq!(set.version, "rapid-structure-rs-optimized");
         assert_eq!(set.files.len(), 1);
         let file = &set.files[0];
         assert_eq!(file.role, crate::model_set::ModelRole::FormulaRecognizer);
         assert_eq!(file.name, "pp_formulanet_plus_m.onnx");
         assert_eq!(
             file.sha256,
-            "71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b"
+            "6e509ec4b7cda604dc9bf80a876ae6494693deea4c7f4157a4dc0eba0ebda745"
         );
-        assert_eq!(file.size_bytes, Some(593_915_961));
+        assert_eq!(file.size_bytes, Some(593_916_167));
+        assert_eq!(
+            file.source_url,
+            "https://www.modelscope.cn/seeyuer/pp-formulanet-plus-m-optimized/resolve/0bb8154e3583d24613eaa74448de43ecf4ae73ec/pp_formulanet_plus_m.onnx"
+        );
         // 页面公式检测模型在 FormulaPolicy 里是可选的，且没有可信公开下载来源，
         // 因此它不是集合成员（否则会把可选文件变成“模型不齐备”）。
         assert!(!set.has_role(crate::model_set::ModelRole::FormulaDetector));
@@ -821,15 +825,22 @@ onnxruntime:
     /// P0-0 模型摘要清单：三个域（文本 / 公式 / 表格）用到的模型路径 + 期望
     /// SHA-256 必须写在一进仓库就能读的清单里。`assets/default_models.yaml` 已覆盖文本
     /// 与公式（由上面 `every_default_table_entry_carries_a_sha256` 钉住），表格域则重用到
-    /// 已入库的 `models/serve/manifest.json` 与 `models/table/manifest.json`。
+    /// 仓库模型目录中的 `models/serve/manifest.json` 与 `models/table/manifest.json`。
     ///
-    /// 这份用例只读 JSON 清单（不依赖未入库的 `.onnx` 二进制），因此任何
-    /// 干净 clone 都能跑；它把“三域都有可校验摘要”钉成硬契约。
+    /// 这份用例只读仓库开发资料里的 JSON 清单，不依赖未入库的 `.onnx` 二进制。
+    /// crates.io 包不携带 `models/`，因此在发行包里跳过这条仓库清单审计；包内模型
+    /// 元数据契约由 `assets/default_models.yaml` 与 manifest fixture 测试覆盖。
     #[test]
     fn all_three_domains_declare_model_digests_in_tracked_manifests() {
         let is_sha256 =
             |value: &str| value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit());
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        if !root.join("models/serve/manifest.json").is_file()
+            || !root.join("models/table/manifest.json").is_file()
+        {
+            eprintln!("skipping repository model-manifest audit: model manifests are not packaged");
+            return;
+        }
 
         // 把一份 manifest.json 解析为 (role -> sha256)，顺便断言每个条目都带名称与摘要。
         let read_manifest = |rel: &str| -> std::collections::HashMap<String, String> {

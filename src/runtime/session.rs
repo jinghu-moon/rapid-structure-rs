@@ -180,6 +180,9 @@ pub enum SessionBuildOption {
 pub struct OrtSession {
     session: Session,
     model_path: String,
+    fallback_model_bytes: Option<std::sync::Arc<[u8]>>,
+    dimension_overrides: Vec<DimensionOverride>,
+    runtime_config: RuntimeConfig,
     provider_resolution: ProviderResolution,
     /// 打开会话时下发给 ONNX Runtime 的 `(intra, inter)` 线程数；`None` 表示**没有配置**
     /// 该线程数（没有调用对应的 `with_*_threads`），ONNX Runtime 保留自己的默认值，
@@ -218,8 +221,8 @@ impl OrtSession {
         runtime_cfg: &RuntimeConfig,
         dimension_overrides: &[DimensionOverride],
     ) -> Result<Self> {
-        let bytes = std::fs::read(model_path)?;
-        Self::open_bytes(model_path, &bytes, runtime_cfg, dimension_overrides)
+        let bytes: std::sync::Arc<[u8]> = std::fs::read(model_path)?.into();
+        Self::open_bytes(model_path, bytes, runtime_cfg, dimension_overrides)
     }
 
     /// 从**已验证内容**打开会话（审核点 1：校验对象 = 加载对象）。
@@ -237,7 +240,7 @@ impl OrtSession {
     ) -> Result<Self> {
         Self::open_bytes(
             model.path(),
-            model.content(),
+            model.content_arc(),
             runtime_cfg,
             dimension_overrides,
         )
@@ -246,11 +249,11 @@ impl OrtSession {
     /// 字节加载的**唯一**出口：`open_unchecked`（测试专用）/ `open_verified` 都汇到这里。
     fn open_bytes(
         model_path: &Path,
-        model_bytes: &[u8],
+        model_bytes: std::sync::Arc<[u8]>,
         runtime_cfg: &RuntimeConfig,
         dimension_overrides: &[DimensionOverride],
     ) -> Result<Self> {
-        let opened = open_session(model_path, model_bytes, runtime_cfg, dimension_overrides)?;
+        let opened = open_session(model_path, &model_bytes, runtime_cfg, dimension_overrides)?;
         let output_names = opened
             .session
             .outputs()
@@ -260,6 +263,13 @@ impl OrtSession {
         Ok(Self {
             session: opened.session,
             model_path: model_path.display().to_string(),
+            fallback_model_bytes: (matches!(
+                runtime_cfg.provider_preference,
+                crate::config::ProviderPreference::DirectMl { .. }
+            ) && !runtime_cfg.fail_if_provider_unavailable)
+                .then_some(model_bytes),
+            dimension_overrides: dimension_overrides.to_vec(),
+            runtime_config: runtime_cfg.clone(),
             provider_resolution: opened.provider_resolution,
             session_threads: opened.session_threads,
             onnx_opset: opened.onnx_opset,
@@ -269,7 +279,7 @@ impl OrtSession {
 
     /// 模型的 ONNX 域 opset（`ai.onnx`）；后端不支持 Model Editor API 时为 `None`。
     ///
-    /// 它是 DirectML 的 opset 约束（[`DIRECT_ML_MAX_OPSET`]）唯一可观测的来源：
+    /// 它是 DirectML 的 opset 约束（`DIRECT_ML_MAX_OPSET`）唯一可观测的来源：
     /// 没有它，"这个模型能不能交给 DirectML"就只能等 ORT 在某个算子上失败。
     pub fn onnx_opset(&self) -> Option<u32> {
         self.onnx_opset
@@ -312,11 +322,24 @@ impl OrtSession {
         input: ndarray::ArrayView4<'_, f32>,
     ) -> Result<Array2<i64>> {
         let input_tensor = TensorRef::from_array_view(input).map_err(ort_error)?;
-        let outputs = self
-            .session
-            .run(inputs![input_name => input_tensor])
-            .map_err(ort_error)?;
-        Self::output_i64_2d(outputs, &self.model_path, &self.output_names)
+        let first_error = match self.session.run(inputs![input_name => input_tensor]) {
+            Ok(outputs) => {
+                return Self::output_i64_2d(outputs, &self.model_path, &self.output_names);
+            }
+            Err(error) => error,
+        };
+        if self.provider_resolution.selected_ep == ResolvedExecutionProvider::DirectMl
+            && !self.runtime_config.fail_if_provider_unavailable
+        {
+            self.fallback_to_cpu()?;
+            let input_tensor = TensorRef::from_array_view(input).map_err(ort_error)?;
+            let outputs = self
+                .session
+                .run(inputs![input_name => input_tensor])
+                .map_err(ort_error)?;
+            return Self::output_i64_2d(outputs, &self.model_path, &self.output_names);
+        }
+        Err(ort_error(first_error))
     }
 
     fn output_i64_2d(
@@ -365,26 +388,29 @@ impl OrtSession {
     where
         F: for<'a> FnOnce(ArrayViewD<'a, f32>) -> Result<T>,
     {
-        let outputs = Self::run_raw(&mut self.session, input)?;
-        let output_name = self.output_names.first().ok_or_else(|| {
-            RapidOcrError::Decode(format!(
-                "ONNX session has no output names (model={})",
-                self.model_path
-            ))
-        })?;
-        let output = outputs.get(output_name.as_str()).ok_or_else(|| {
-            RapidOcrError::Decode(format!(
-                "ONNX session output `{output_name}` not found in run results (model={})",
-                self.model_path
-            ))
-        })?;
-        let arr = output.try_extract_array::<f32>().map_err(|error| {
-            RapidOcrError::Decode(format!(
-                "failed to extract output `{output_name}` as f32 tensor (model={}): {error}",
-                self.model_path
-            ))
-        })?;
-        f(arr.view())
+        let output_names = self.output_names.clone();
+        let model_path = self.model_path.clone();
+        self.run_with_fallback(input, |outputs| {
+            let output_name = output_names.first().ok_or_else(|| {
+                RapidOcrError::Decode(format!(
+                    "ONNX session has no output names (model={})",
+                    model_path
+                ))
+            })?;
+            let output = outputs.get(output_name.as_str()).ok_or_else(|| {
+                RapidOcrError::Decode(format!(
+                    "ONNX session output `{output_name}` not found in run results (model={})",
+                    model_path
+                ))
+            })?;
+            let arr = output.try_extract_array::<f32>().map_err(|error| {
+                RapidOcrError::Decode(format!(
+                    "failed to extract output `{output_name}` as f32 tensor (model={}): {error}",
+                    model_path
+                ))
+            })?;
+            f(arr.view())
+        })
     }
 
     /// 多输出域用：一次 `run` 的**全部** f32 输出，按模型声明的输出顺序，零拷贝。
@@ -405,39 +431,72 @@ impl OrtSession {
     where
         F: for<'a> FnOnce(&'a [(&'a str, ArrayViewD<'a, f32>)]) -> Result<T>,
     {
-        let outputs = Self::run_raw(&mut self.session, input)?;
-        let mut views: Vec<(&str, ArrayViewD<'_, f32>)> =
-            Vec::with_capacity(self.output_names.len());
-        for name in &self.output_names {
-            let output = outputs.get(name.as_str()).ok_or_else(|| {
-                RapidOcrError::Decode(format!(
-                    "ONNX session output `{name}` not found in run results (model={})",
-                    self.model_path
-                ))
-            })?;
-            let arr = output.try_extract_array::<f32>().map_err(|error| {
-                RapidOcrError::Decode(format!(
-                    "failed to extract output `{name}` as f32 tensor (model={}): {error}",
-                    self.model_path
-                ))
-            })?;
-            // `try_extract_array` 已经把视图借到 ORT 的输出缓冲上（`ArrayViewD<'outputs, f32>`），
-            // 直接把它移进 `views`；再调一次 `.view()` 会把生命周期缩到 `arr` 这个局部变量上。
-            views.push((name.as_str(), arr));
-        }
-        f(&views)
+        let output_names = self.output_names.clone();
+        let model_path = self.model_path.clone();
+        self.run_with_fallback(input, |outputs| {
+            let mut views: Vec<(&str, ArrayViewD<'_, f32>)> =
+                Vec::with_capacity(output_names.len());
+            for name in &output_names {
+                let output = outputs.get(name.as_str()).ok_or_else(|| {
+                    RapidOcrError::Decode(format!(
+                        "ONNX session output `{name}` not found in run results (model={})",
+                        model_path
+                    ))
+                })?;
+                let arr = output.try_extract_array::<f32>().map_err(|error| {
+                    RapidOcrError::Decode(format!(
+                        "failed to extract output `{name}` as f32 tensor (model={}): {error}",
+                        model_path
+                    ))
+                })?;
+                // `try_extract_array` 已经把视图借到 ORT 的输出缓冲上（`ArrayViewD<'outputs, f32>`），
+                // 直接把它移进 `views`；再调一次 `.view()` 会把生命周期缩到 `arr` 这个局部变量上。
+                views.push((name.as_str(), arr));
+            }
+            f(&views)
+        })
     }
 
-    /// [`Session::run`] 的**唯一**调用点。
-    ///
-    /// 单输出与多输出两条路径共用这里，是为了避免「两处各写一遍 run + 错误映射」
-    /// 那种会随时间漂移的重复。
-    fn run_raw<'s>(
-        session: &'s mut Session,
-        input: ndarray::ArrayView4<'_, f32>,
-    ) -> Result<ort::session::SessionOutputs<'s>> {
+    /// 执行单次模型调用，并在 DirectML 首次推理失败时将会话切换到 CPU。
+    fn run_with_fallback<T, F>(&mut self, input: ndarray::ArrayView4<'_, f32>, f: F) -> Result<T>
+    where
+        F: for<'a> FnOnce(ort::session::SessionOutputs<'a>) -> Result<T>,
+    {
         let input_tensor = TensorRef::from_array_view(input).map_err(ort_error)?;
-        session.run(inputs![input_tensor]).map_err(ort_error)
+        let first_error = match self.session.run(inputs![input_tensor]) {
+            Ok(outputs) => return f(outputs),
+            Err(error) => error,
+        };
+        if self.provider_resolution.selected_ep == ResolvedExecutionProvider::DirectMl
+            && !self.runtime_config.fail_if_provider_unavailable
+        {
+            self.fallback_to_cpu()?;
+            let input_tensor = TensorRef::from_array_view(input).map_err(ort_error)?;
+            let outputs = self.session.run(inputs![input_tensor]).map_err(ort_error)?;
+            return f(outputs);
+        }
+        Err(ort_error(first_error))
+    }
+
+    fn fallback_to_cpu(&mut self) -> Result<()> {
+        let mut cpu_config = self.runtime_config.clone();
+        cpu_config.provider_preference = crate::config::ProviderPreference::Cpu;
+        cpu_config.fail_if_provider_unavailable = false;
+        let opened = open_session_once(
+            Path::new(&self.model_path),
+            self.fallback_model_bytes
+                .as_deref()
+                .expect("non-strict DirectML sessions retain their verified model bytes"),
+            &cpu_config,
+            &self.dimension_overrides,
+        )?;
+        self.session = opened.session;
+        self.provider_resolution = ProviderResolution {
+            requested: self.runtime_config.provider_preference,
+            selected_ep: ResolvedExecutionProvider::Cpu,
+            fallback_used: true,
+        };
+        Ok(())
     }
 
     pub fn run_array2_view_with<T, F>(
@@ -546,6 +605,40 @@ struct OpenedSession {
 /// 真正交给 ORT 的是 `model_bytes` —— 这样凭证路径（[`OrtSession::open_verified`]）能
 /// 保证“校验的内容”与“加载的内容”是同一份字节。
 fn open_session(
+    model_path: &Path,
+    model_bytes: &[u8],
+    runtime_cfg: &RuntimeConfig,
+    dimension_overrides: &[DimensionOverride],
+) -> Result<OpenedSession> {
+    match open_session_once(model_path, model_bytes, runtime_cfg, dimension_overrides) {
+        Ok(opened) => Ok(opened),
+        Err(_accelerator_error)
+            if matches!(
+                runtime_cfg.provider_preference,
+                crate::config::ProviderPreference::DirectMl { .. }
+            ) && !runtime_cfg.fail_if_provider_unavailable =>
+        {
+            // DirectML can report itself available and still reject a model at
+            // graph creation or first execution.  Treat that as provider
+            // unavailability in the non-strict default path and rebuild the
+            // same model with the CPU provider.
+            let mut cpu_config = runtime_cfg.clone();
+            cpu_config.provider_preference = crate::config::ProviderPreference::Cpu;
+            cpu_config.fail_if_provider_unavailable = false;
+            let mut fallback =
+                open_session_once(model_path, model_bytes, &cpu_config, dimension_overrides)?;
+            fallback.provider_resolution = ProviderResolution {
+                requested: runtime_cfg.provider_preference,
+                selected_ep: ResolvedExecutionProvider::Cpu,
+                fallback_used: true,
+            };
+            Ok(fallback)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn open_session_once(
     model_path: &Path,
     model_bytes: &[u8],
     runtime_cfg: &RuntimeConfig,
@@ -752,10 +845,10 @@ mod tests {
     /// 剩下的风险只有一个：将来有人加了一个 `&self` 的 run 入口。所以这里把上面那几句话
     /// 变成对**源码本身**的断言（与 E11 的 G4 静态面同一手法）：
     ///
-    /// 1. `.run(inputs` 在 `session.rs` 的**生产代码**里恰好两处（`run_raw` 与 `run_i64_2d`），
-    ///    于是不存在"第三处没被下面两条覆盖的 `Run`"；
-    /// 2. `run_raw` 的第一个参数是 `&'s mut Session`（覆盖第一处）；
-    /// 3. 每个 `pub fn run_` 的接收者都是 `&mut self`（覆盖第二处）。
+    /// 1. `.run(inputs` 在 `session.rs` 的**生产代码**里恰好四处：普通会话的首次调用与
+    ///    CPU 重试、公式会话的首次调用与 CPU 重试；
+    /// 2. 普通会话调用统一收敛在 `run_with_fallback(&mut self, ...)`；
+    /// 3. 每个公开 `run_` 入口都持有 `&mut self`。
     ///
     /// 第 1 条只扫**测试模块之前**的部分：测试代码里可以出现任意字样，而这条不变量是关于
     /// 生产代码的。边界认“cfg 测试门 + 紧跟一个模块声明”这个形状，不认“第一个 cfg 测试门”：
@@ -796,13 +889,13 @@ mod tests {
         let run_call = [".run", "(inputs"].concat();
         assert_eq!(
             production.matches(&run_call).count(),
-            2,
-            "`{run_call}` must have exactly two call sites: `run_raw` and `run_i64_2d`"
+            4,
+            "`{run_call}` must have one DirectML attempt and one CPU retry in each inference path"
         );
-        let raw_signature = ["session: &'s ", "mut ", "Session"].concat();
+        let raw_signature = ["fn ", "run_with_fallback"].concat();
         assert!(
             production.contains(&raw_signature),
-            "`run_raw` must take `{raw_signature}`"
+            "all f32 run paths must share `{raw_signature}`"
         );
 
         // 每个 `pub fn run_` 的接收者必须是 `&mut self`。用 `match_indices` 而不是
@@ -895,13 +988,12 @@ mod tests {
         }
     }
 
-    /// `RuntimeConfig` 的 provider 字段与 `ResolvedExecutionProvider` 的映射是本模块的输入，
-    /// 这里钉住"默认 = CPU"，避免上面的策略测试在错误的 EP 上通过。
+    /// `RuntimeConfig` 的默认 provider follows the enabled default feature.
     #[test]
-    fn the_default_provider_is_cpu() {
+    fn the_default_provider_follows_the_directml_feature() {
         assert_eq!(
             RuntimeConfig::default().provider_preference,
-            ProviderPreference::Cpu
+            ProviderPreference::default()
         );
     }
 }

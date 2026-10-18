@@ -37,7 +37,7 @@ CUDA 仅比 CPU mean 快约 3.6%，在测量抖动范围内，不能据此认定
 
 **采纳 DirectML 作为显式 OCR 加速配置。**
 
-采纳内容是 ocr-provider-directml.yaml 和对应运行证据，不把 DirectML 改成所有机器的全局默认 provider。原因是 DirectML 依赖 Windows GPU；CPU 仍是通用默认和回退路径。
+当时仅采纳显式 DirectML 配置，保留 CPU 全局默认。该默认决策已由后续 medium OCR 重复基准（DirectML 约 669.4 ms，CPU 约 21,728.9 ms，识别 CER 一致）取代：项目现在默认请求 DirectML，并对未编译、运行库不可用、会话初始化失败或首次推理失败回退 CPU。此处的数据仍是当时的实测记录，不代表公式识别也已证明 DirectML 更快。
 
 **不采纳 CUDA。**
 

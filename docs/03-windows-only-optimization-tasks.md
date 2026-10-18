@@ -61,7 +61,7 @@
 
 - 不把 `target-cpu=native` 写入可发布 crate 的默认 profile；它会破坏跨机器分发，应只在应用或本机 benchmark profile 使用。
 - 不因为收窄到 Windows x64 就把所有纯 Rust 代码改成 Win32 API；OCR 数值算法仍应保持可测试、可复用和与模型契约解耦。
-- 不把 DirectML 强行设为默认 provider；当前已有数据表明 GPU 速度依赖图片集、动态 batch 和驱动，必须由基准决定。
+- DirectML 默认值由当前 OCR provider 基准决定：medium OCR 集实测约比 CPU 快 32.5 倍，因此默认请求 DirectML，并在运行库、模型初始化或首次推理不可用时回退 CPU；公式性能仍需单独基准确认。
 - 不用并发包围模型调用来“堆性能”；ORT、Rayon、DirectML 同时开线程可能造成过度订阅，先测量再改。
 - 不为了删除 Linux/macOS 而删除跨平台数据结构、序列化格式或算法测试；删除的是平台实现，不是业务能力。
 

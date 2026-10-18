@@ -1225,16 +1225,16 @@ impl RapidOcrEngine {
 }
 
 impl RapidOcrEngine {
-    /// 页面级公式路由：检测/接收公式区域，抹白后跑普通文本管线，再单独识别公式。
+    /// 页面级公式路由：先仲裁检测候选，再抹白保留区域并单独识别公式。
     ///
     /// 顺序说明：
     ///
     /// 1. 用共享输入层解码**原图**（公式裁剪需要未抹白的像素）；
     /// 2. 解析公式区域（检测模型 + 显式区域，见 `formula::route`）；
-    /// 3. 把公式区域抹白后交给普通文本管线：公式像素根本不进入检测/识别，
-    ///    因此“跳过普通 CTC”是执行层面的跳过，而不是事后丢弃结果；
-    /// 4. 从原图裁剪公式区域，批量送入 `FormulaRecognizer`；
-    /// 5. 公式区域作为独立 `RegionKind::Formula` 追加到输出，携带 polygon 与模型标识。
+    /// 3. 检测候选存在时先在原图上获取普通 OCR 文本证据，拒绝明显代码误检；
+    /// 4. 把保留的公式区域抹白后交给普通文本管线：公式像素根本不进入最终检测/识别；
+    /// 5. 从原图裁剪公式区域，批量送入 `FormulaRecognizer`；
+    /// 6. 公式区域作为独立 `RegionKind::Formula` 追加到输出，携带 polygon 与模型标识。
     fn recognize_text_with_formula(
         &mut self,
         request: &crate::api::OcrRequest,
@@ -1267,6 +1267,29 @@ impl RapidOcrEngine {
         );
         let formula_ms = formula_start.elapsed().as_secs_f32() * 1000.0;
 
+        // Detector confidence is not semantic evidence: code lines can score as formulas.
+        // Use one original-image OCR pass to reject only candidates whose covered text is
+        // clearly code. If all candidates are rejected, reuse that pass and avoid a second
+        // OCR run; retained candidates keep the whitening path below.
+        let mut evidence_output = None;
+        let regions = if regions.iter().any(|candidate| candidate.detected) {
+            let original_output = self.recognize_text(request.clone())?;
+            let evidence: Vec<_> = original_output
+                .regions
+                .iter()
+                .filter_map(|region| {
+                    let polygon = region.polygon?;
+                    let text = region.recognition.as_ref()?.text.as_str();
+                    Some(crate::formula::route::TextEvidence { polygon, text })
+                })
+                .collect();
+            let arbitrated = crate::formula::route::arbitrate_formula_regions(regions, &evidence);
+            evidence_output = Some(original_output);
+            arbitrated
+        } else {
+            regions
+        };
+
         let mut text_request = request.clone();
         if !regions.is_empty() {
             // 抹白公式像素：普通文本管线看不到公式，也就不会对它们跑 CTC。
@@ -1275,7 +1298,10 @@ impl RapidOcrEngine {
             );
             text_request.roi = None;
         }
-        let mut output = self.recognize_text(text_request)?;
+        let mut output = match (regions.is_empty(), evidence_output) {
+            (true, Some(original_output)) => original_output,
+            (_, _) => self.recognize_text(text_request)?,
+        };
 
         if regions.is_empty() {
             output.stages.formula = crate::api::StageReport {
@@ -2770,12 +2796,12 @@ rec:
         );
     }
 
-    /// 误检可控性：在实测会误检的页面上，提高置信度阈值必须能恢复到完全基线行为。
+    /// 误检回归：普通 OCR 的代码文本证据必须阻止公式检测器抹白正文。
     ///
-    /// 这条测试同时把“检测器在非公式页面上会有误检”这一事实固定下来：
-    /// 调用方必须通过阈值/面积下限在召回与精度之间取舍，而不是假设检测器永远正确。
+    /// 这个页面在默认检测阈值下确实会产生候选；正确行为是仲裁后不再产生公式
+    /// 区域，并保持普通 OCR 的文本结果与公式关闭时一致。
     #[test]
-    fn strict_confidence_threshold_restores_baseline_on_a_noisy_page() {
+    fn code_text_evidence_rejects_formula_false_positives_in_the_pipeline() {
         let Some(mut assets) = assets() else {
             return;
         };
@@ -2785,33 +2811,20 @@ rec:
             .recognize(request(bytes.clone(), FormulaPolicy::default()))
             .expect("baseline recognize");
 
-        let default_threshold = assets
+        let routed = assets
             .engine
             .recognize(request(bytes.clone(), formula_policy(&assets)))
             .expect("routed recognize");
         assert!(
-            default_threshold.formula_count() > 0,
+            routed.formula_count() == 0,
             "this page is known to produce false positives at the default threshold; \
-             if that changed, update this test and the documented limitation"
+             text evidence arbitration must reject them"
         );
-
-        let strict = FormulaPolicy {
-            confidence_threshold: 0.95,
-            ..formula_policy(&assets)
-        };
-        let strict_output = assets
-            .engine
-            .recognize(request(bytes, strict))
-            .expect("strict recognize");
-        assert_eq!(strict_output.formula_count(), 0);
+        assert_eq!(routed.stages.formula.state, StageState::SkippedNoInput);
         assert_eq!(
-            strict_output.stages.formula.state,
-            StageState::SkippedNoInput
-        );
-        assert_eq!(
-            strict_output.plain_text(TextOrder::Reading),
+            routed.plain_text(TextOrder::Reading),
             baseline.plain_text(TextOrder::Reading),
-            "with a strict threshold the output must equal the formula-disabled baseline"
+            "rejecting a false positive must preserve the original OCR text"
         );
     }
 

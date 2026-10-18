@@ -705,7 +705,7 @@ fn spawn_engine_work(
 
 /// 在独立线程里执行一次评估，并由那个线程写响应（M4；见 `evaluate.rs` 的模块文档）。
 ///
-/// 与 [`spawn_provider_switch`] 同一形状：
+/// 与 `spawn_provider_switch` 同一形状：
 ///
 /// - 同一时刻只允许一个评估（[`ServeShared::begin_evaluation`]）：第二个请求立刻得到
 ///   503 `busy`，**不排队**；

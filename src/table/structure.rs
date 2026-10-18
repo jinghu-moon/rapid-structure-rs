@@ -90,7 +90,7 @@ pub struct TableStructureContract {
 ///
 /// 只校验计算图签名，**不读 metadata** —— 需要 metadata 的调用方用
 /// [`TableStructureModelInfo::probe`]，或自行读 `character` 后交给
-/// [`crate::table::metadata::parse_character_metadata`]。
+/// `crate::table::metadata::parse_character_metadata`。
 pub fn validate_table_structure_contract(
     probe: &ModelIoProbe,
     model_path: &Path,
@@ -176,7 +176,7 @@ pub struct TableStructureConfig {
     ///
     /// ORT 的 `session.intra_op.allow_spinning` 默认为 `"1"`：intra 线程池里的空闲线程
     /// **自旋**而不是休眠。进程里已经有页级 det + rec（公式路径还有更多）若干个会话，
-    /// 每个都按 [`crate::runtime::profile::auto_tuned_thread_budget`] 拿满核数；表格会话再拿
+    /// 每个都按 `crate::runtime::profile::auto_tuned_thread_budget` 拿满核数；表格会话再拿
     /// 一份，得到的是若干个都在自旋的池子争抢同一批核，而不是更多算力。
     ///
     /// 同时 SLANet-plus 只有 830 个节点（77 个 `Conv`、73 个 `HardSwish`），batch 固定为 1 ——
@@ -324,7 +324,7 @@ impl TableStructureSession {
     /// 从**已验证凭证**打开表格结构会话（审核点 1/2：与文本、公式域同一契约）。
     ///
     /// 完整性校验（存在性、可选的期望摘要）与内容绑定都发生在凭证构造点：调用方用
-    /// [`crate::table::registration::verified_registered_model`]（显式期望优先、否则取登记）
+    /// `crate::table::registration::verified_registered_model`（显式期望优先、否则取登记）
     /// 或 [`crate::model_verify::VerifiedModel::verify`] 自己解析“期望从哪来”。探针会话与
     /// 正式会话都从凭证的**内容快照**字节打开（`open_verified`）：同一次读取、同一个
     /// 对象，“校验与打开之间被替换”的窗口在表格路径（曾经最长）上不存在；而“拿不到
@@ -387,7 +387,7 @@ impl TableStructureSession {
 
     /// 模型的 `character` 词表（已与输出末维交叉校验，见 [`TableStructureSession::open`]）。
     ///
-    /// 解码器（[`crate::table::decode`]）需要它，而它只能从模型 metadata 得到；
+    /// 解码器（`crate::table::decode`）需要它，而它只能从模型 metadata 得到；
     /// 把它挂在会话上意味着"用这个会话解码"不需要第二个信息来源。
     pub fn vocabulary(&self) -> &crate::table::decode::StructureVocabulary {
         &self.vocabulary
@@ -404,7 +404,7 @@ impl TableStructureSession {
 
     /// 建这个会话时交给 ONNX Runtime 的 EP 链，以及它是否发生了回退。
     ///
-    /// 与 [`crate::runtime::provider::ProviderResolution::selected_ep`] 的告诫相同：这只描述
+    /// 与 `crate::runtime::provider::ProviderResolution::selected_ep` 的告诫相同：这只描述
     /// **我们交出去的那条链**，不描述模型逐节点最终在哪个 EP 上执行，因此**不能当作加速
     /// 证据**。它在这里的用途是另一个：DirectML 的 per-EP 构建选项（`DisableMemPattern` +
     /// `ORT_SEQUENTIAL`）与 opset 上限都是**按 EP 分支**的，于是"这个会话走的是哪条分支"
@@ -415,7 +415,7 @@ impl TableStructureSession {
 
     /// 模型的 ONNX opset；后端不支持 Model Editor API 时为 `None`。
     ///
-    /// 见 [`crate::runtime::session::require_direct_ml_opset`]：DirectML 要求 opset ≤ 20。
+    /// 见 `crate::runtime::session::require_direct_ml_opset`：DirectML 要求 opset ≤ 20。
     pub fn onnx_opset(&self) -> Option<u32> {
         self.session.onnx_opset()
     }
@@ -484,12 +484,12 @@ pub struct TableStructureModelInfo {
 impl TableStructureModelInfo {
     /// 探针入口：加载模型、校验签名与 `character` metadata，不执行推理。
     ///
-    /// metadata 校验复用 [`parse_character_metadata`]，并把词表宽度与计算图末维
+    /// metadata 校验复用 `parse_character_metadata`，并把词表宽度与计算图末维
     /// **交叉校验** —— 两个数字来源独立（metadata vs 计算图），因此能互相证伪。
     ///
     /// 与 [`TableStructureSession::open`] 一样在打开会话**之前**做完整性校验，并把会话
     /// 从凭证的**内容快照**打开（审核点 1）。这里没有配置可以传，所以用登记里的期望
-    /// 哈希（见 [`crate::table::registration`]）；模型旁边没有清单时校验退化为
+    /// 哈希（见 `crate::table::registration`）；模型旁边没有清单时校验退化为
     /// “无期望凭证”（存在性照查、内容照绑定），而不是"跳过校验"。
     pub fn probe(model_path: &Path, runtime_cfg: &RuntimeConfig) -> Result<Self> {
         if !model_path.is_file() {

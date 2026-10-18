@@ -372,7 +372,7 @@ pub struct DownloadRequest<'a> {
     pub url: &'a str,
     /// 期望的 SHA-256，**必填**（§6.4：不接受 `None`）。
     pub expected_sha256: &'a str,
-    /// 落盘目录；文件名取 URL 末段（[`extract_file_name`] 是唯一实现）。
+    /// 落盘目录；文件名取 URL 末段（`extract_file_name` 是唯一实现）。
     pub save_dir: &'a Path,
     /// 单文件上限，来自 `--max-download-mb`（§6.2）。
     pub max_bytes: u64,
@@ -506,7 +506,7 @@ impl DownloadBudget {
 /// 规则：
 ///
 /// 1. 每个文件的名字必须等于其 URL 末段：下载器按 URL 末段落盘
-///    （[`extract_file_name`] 是唯一实现），两者不一致会让下载产物与逐文件状态校验
+///    （`extract_file_name` 是唯一实现），两者不一致会让下载产物与逐文件状态校验
 ///    指向不同路径，因此这里直接报可定位错误；
 /// 2. 没有哈希的文件拒绝下载（§6.4 不允许无校验下载）；
 /// 3. 没有可信来源的文件拒绝下载；
@@ -1184,8 +1184,8 @@ fn replace_file(source: &Path, target: &Path) -> Result<()> {
 
 /// 目标目录所在卷的可用字节数（§6.5 的**任务级**空间核算）。
 ///
-/// 生产实现就是 [`DownloadPolicy`] 内部用的同一个 `GetDiskFreeSpaceExW` 探测
-/// （[`WindowsFreeSpace`]），因此"下载前的任务级预检"与"每个文件写入前的预检"
+/// 生产实现就是 `DownloadPolicy` 内部用的同一个 `GetDiskFreeSpaceExW` 探测
+/// （`WindowsFreeSpace`），因此"下载前的任务级预检"与"每个文件写入前的预检"
 /// 是同一个事实，不存在两套口径。调用方（serve 的下载端点）用它把
 /// `InsufficientSpace { required_bytes, available_bytes }` 里的两个数值都拿到手。
 pub fn available_disk_bytes(directory: impl AsRef<Path>) -> Result<u64> {

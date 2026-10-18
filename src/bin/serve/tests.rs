@@ -1693,7 +1693,12 @@ fn the_job_goes_from_202_to_succeeded_and_its_result_round_trips() {
     assert_eq!(status["state"], "ready");
     assert_eq!(status["engine"]["state"], "ready");
     assert_eq!(status["engine"]["fallback_to_cpu"], false);
-    assert_eq!(status["provider"]["requested"], "cpu");
+    assert_eq!(
+        status["provider"]["requested"],
+        rapid_structure_rs::format_provider_preference(
+            rapid_structure_rs::ProviderPreference::default()
+        )
+    );
     assert_eq!(status["provider"]["selected_ep"], "cpu");
     assert_eq!(status["provider"]["fallback_to_cpu"], false);
 
@@ -2119,10 +2124,14 @@ fn models_reports_every_file_state_and_matches_the_ocr_409() {
     assert_eq!(formula_files[0]["role"], "formula_recognizer");
     assert_eq!(formula_files[0]["name"], "pp_formulanet_plus_m.onnx");
     assert_eq!(formula_files[0]["state"], "missing");
-    assert_eq!(formula_files[0]["size_bytes"], 593_915_961u64);
+    assert_eq!(formula_files[0]["size_bytes"], 593_916_167u64);
     assert_eq!(
         formula_files[0]["sha256"],
-        "71b6d389cf7b857e45252a4b98cfced1a3ffca7bf24d9497d02d052a41d9493b"
+        "6e509ec4b7cda604dc9bf80a876ae6494693deea4c7f4157a4dc0eba0ebda745"
+    );
+    assert_eq!(
+        formula_files[0]["source_url"],
+        "https://www.modelscope.cn/seeyuer/pp-formulanet-plus-m-optimized/resolve/0bb8154e3583d24613eaa74448de43ecf4ae73ec/pp_formulanet_plus_m.onnx"
     );
 
     // 顶层四个字段是**文本管线**作用域（引擎要加载的那些文件）；
@@ -6976,7 +6985,12 @@ fn the_diagnostics_payload_reports_the_library_ledger_fingerprint_and_memory() {
         "{status}"
     );
     assert!(status["memory"]["source"].is_string(), "{status}");
-    assert_eq!(status["provider"]["requested"], "cpu");
+    assert_eq!(
+        status["provider"]["requested"],
+        rapid_structure_rs::format_provider_preference(
+            rapid_structure_rs::ProviderPreference::default()
+        )
+    );
     assert_eq!(status["provider"]["selected_ep"], "cpu");
     assert_eq!(status["provider"]["fallback_to_cpu"], false);
     assert!(status["queues"]["text"]["wait_bound"].as_u64().is_some());
@@ -7159,7 +7173,13 @@ fn a_failed_switch_rolls_back_to_the_previous_engine() {
     let status = server.get("/api/status").json();
     assert_eq!(status["engine"]["state"], "ready", "{status}");
     assert_eq!(status["provider"]["selected_ep"], "scripted-3", "{status}");
-    assert_eq!(status["provider"]["requested"], "cpu", "{status}");
+    assert_eq!(
+        status["provider"]["requested"],
+        rapid_structure_rs::format_provider_preference(
+            rapid_structure_rs::ProviderPreference::default()
+        ),
+        "{status}"
+    );
     // 服务仍然可用：一次识别照样成功。
     let id = server.submit_ocr(b"image").json()["job_id"]
         .as_str()
@@ -7275,7 +7295,13 @@ fn requesting_a_provider_that_is_not_compiled_in_is_a_400_and_changes_nothing() 
     let status = server.get("/api/status").json();
     assert_eq!(status["engine"]["state"], "ready", "{status}");
     assert_eq!(status["provider"]["selected_ep"], "scripted-1", "{status}");
-    assert_eq!(status["provider"]["requested"], "cpu", "{status}");
+    assert_eq!(
+        status["provider"]["requested"],
+        rapid_structure_rs::format_provider_preference(
+            rapid_structure_rs::ProviderPreference::default()
+        ),
+        "{status}"
+    );
     // 服务照常可用。
     let id = server.submit_ocr(b"image").json()["job_id"]
         .as_str()

@@ -66,7 +66,7 @@ pub struct ServeArgs {
     #[arg(long, value_name = "PROV")]
     pub provider: Option<ProviderChoice>,
 
-    /// 允许 provider 不可用时回退 CPU（默认不允许，§7.5）。
+    /// 允许 provider 不可用时回退 CPU；默认 RuntimeConfig 已允许 DirectML 回退。
     #[arg(long = "allow-provider-fallback")]
     pub allow_provider_fallback: bool,
 

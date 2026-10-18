@@ -375,7 +375,7 @@ const TABLE_RULES: SanitizerRules<'static> = SanitizerRules {
 ///
 /// # 它做什么
 ///
-/// 只保留 [`ALLOWED_TABLE_TAGS`] 里的标签与取值合法的 `colspan`/`rowspan`（整数 span 必须
+/// 只保留 `ALLOWED_TABLE_TAGS` 里的标签与取值合法的 `colspan`/`rowspan`（整数 span 必须
 /// 落在 `MIN_SPAN..=MAX_SPAN`，即 1..=64），丢掉 HTML 注释，其余标记一律从输出里移除。
 /// 白名单集合与上下界都不是本地字面量，而是 `table_whitelist`（由 `assets/table_html_whitelist.json`
 /// 生成）—— 页面渲染侧读同一规范，两侧判据因此不会漂移。含 `<html>` / `<body>`：引擎的
@@ -408,7 +408,7 @@ const TABLE_RULES: SanitizerRules<'static> = SanitizerRules {
 ///
 /// # 判据放在哪里
 ///
-/// 本函数是把判据固定为 [`TABLE_RULES`] 的薄封装，真正的解析走 `sanitize_table_html_with`。
+/// 本函数是把判据固定为 `TABLE_RULES` 的薄封装，真正的解析走 `sanitize_table_html_with`。
 /// 内核不认得任何具体白名单，所以测试能用旧判据（`legacy_rules()`）在**同一份解析器**上复现
 /// 收紧前的输出 —— 审核点 5 要求的“前后对比”因此不会掺入第二份实现的偏差。
 pub fn sanitize_table_html(raw: &str) -> String {

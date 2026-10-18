@@ -7,7 +7,7 @@
 //! 2. **校验运行配置**（[`ServeStartup::validate`]）：资源上限、provider 名称与对应
 //!    feature、引擎配置；任一非法立即退出；
 //! 3. **检查模型集**（[`ModelPlan`]）：不齐备 → 服务照常 Ready + `BlockedModelsMissing`；
-//!    齐备 → 预加载 `Loading → Ready|Failed`（发生在 [`ServeRuntime::new`] 里）。
+//!    齐备 → 预加载 `Loading → Ready|Failed`（发生在 `ServeRuntime::new` 里）。
 //!
 //! # 参数优先级（§3）
 //!

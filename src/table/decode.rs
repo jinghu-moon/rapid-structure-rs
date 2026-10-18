@@ -97,7 +97,7 @@ impl StructureVocabulary {
     /// 类别下标 → 片段。
     ///
     /// 越界是**必须报错**而不是 `unwrap_or_default()` 的情况：结构输出的末维与词表宽度
-    /// 在契约层已经交叉校验过（[`super::metadata::validate_vocabulary_width`]），
+    /// 在契约层已经交叉校验过（`super::metadata::validate_vocabulary_width`），
     /// 走到这里还越界意味着张量本身被读错了，静默返回空串会把读错变成错结果。
     pub fn token_at(&self, class_index: usize) -> Result<&str> {
         if class_index == self.sos_class_index() {
@@ -674,7 +674,7 @@ pub fn parse_cell_tag(tag: &str) -> Result<(Option<usize>, Option<usize>)> {
 /// `steps` 中 `is_cell_start == true` 的个数。这一点由 [`decode_token_steps`] 的
 /// `is_cell_start` 与模型输出的 `scale_0` 输出（每步一行 8 个值）一一对应。
 ///
-/// 返回的 [`StructureResult::cells`] 与 [`StructureResult::logic`] 通过 `cell_index` 对齐，
+/// 返回的 [`StructureResult::cells`] 与 [`CellSlot::logic`] 通过 `cell_index` 对齐，
 /// 那些被丢弃的全零占位框**不会**出现在 `cells` 里 —— 与参考实现 `filter_blank_bbox`
 /// 的位置一致（它也是在 `decode` 末尾过滤）。因此 `cells.len() <= logic.len()`
 /// 是本函数可能出现的正常状态…… **但本实现刻意让两者严格相等**：占位框保留在

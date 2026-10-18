@@ -163,7 +163,7 @@ const MARKDOWN_SPAN_NOTE: &str = "<!-- 表格含跨行/跨列，Markdown 无法�
 /// # 跨度不是静默丢失的
 ///
 /// 只要网格里存在 `rowspan > 1` 或 `colspan > 1` 的单元格，输出就会在表格**前后各加一行**
-/// [`MARKDOWN_SPAN_NOTE`]。没有跨度时不加任何说明 —— 无病呻吟会让所有正常表格都带上噪声。
+/// `MARKDOWN_SPAN_NOTE`。没有跨度时不加任何说明 —— 无病呻吟会让所有正常表格都带上噪声。
 ///
 /// 单元格里的 `|` 会被转义（否则会凭空多出一列），换行变成 `<br>`（Markdown 表格不支持
 /// 多行单元格）。其余字符原样保留 —— 与 [`TextPolicy::Raw`] 同理，单元格文本里的 HTML
@@ -374,7 +374,8 @@ fn encode_text(text: &str, policy: TextPolicy) -> String {
         TextPolicy::Raw => text.to_string(),
         // 与页面/报告出口共用同一份 HTML 转义（`crate::output::html::escape_html`）：
         // 同形五映射（`& < > " '`），合并前后逐字节相同，避免两处转义漂移。
-        TextPolicy::Escape => crate::output::html::escape_html(text),
+        // HTML 折叠普通文本节点中的换行，因此把识别出的视觉折行发射为 `<br>`。
+        TextPolicy::Escape => crate::output::html::escape_html(text).replace('\n', "<br>"),
     }
 }
 
@@ -887,6 +888,18 @@ mod tests {
         assert!(out.rendered.contains("back\\\\slash"));
         // 分隔行恰好两列 —— 文本里注入的 `|` 没有撑开表格（否则这里会出现第三个 `---`）。
         assert_eq!(out.rendered.lines().nth(1).unwrap(), "| --- | --- |");
+    }
+
+    #[test]
+    fn escaped_html_preserves_cell_line_breaks() {
+        let result = flat_two_by_two();
+        let rendered = emit_html(
+            &result,
+            &four_texts(["first\nsecond", "", "", ""]),
+            TextPolicy::Escape,
+        )
+        .expect("escaped HTML");
+        assert!(rendered.rendered.contains("first<br>second"));
     }
 
     #[test]

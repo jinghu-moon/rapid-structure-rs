@@ -6288,7 +6288,7 @@
         function demoInitialModels() {
           /* 离线预览必须能看出"文本就绪 / 公式缺失"这个区分，因此刻意给两个集合：
        · PP-OCRv5（演示）        → **齐备**（detector + recognizer + dictionary 全 present）
-       · PP-FormulaNet（演示）   → **不齐备**（566 MB 公式模型 missing，且带 source_url）
+       · PP-FormulaNet（演示）   → **不齐备**（约 566 MiB 公式模型 missing，且带 source_url）
      与 docs/05 一致：公式模型默认不下载（§10.8），普通 OCR 不依赖它（M4 公式独立）。 */
           return normalizeModels({
             model_dir: "<redacted>",
@@ -6415,16 +6415,16 @@
               {
                 id: "PP-FormulaNet（演示）",
                 complete: false,
-                download_bytes_total: 566231040,
+                download_bytes_total: 593916167,
                 files: [
                   {
                     name: "pp_formulanet_plus_m.onnx",
                     role: "formula_recognizer",
                     state: "missing",
-                    size_bytes: 566231040,
-                    sha256: "d4e8f0b31c2…",
+                    size_bytes: 593916167,
+                    sha256: "6e509ec4b7cda604dc9bf80a876ae6494693deea4c7f4157a4dc0eba0ebda745",
                     source_url:
-                      "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/pp_formulanet_plus_m.onnx",
+                      "https://www.modelscope.cn/seeyuer/pp-formulanet-plus-m-optimized/resolve/0bb8154e3583d24613eaa74448de43ecf4ae73ec/pp_formulanet_plus_m.onnx",
                   },
                 ],
               },

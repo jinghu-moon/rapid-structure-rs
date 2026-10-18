@@ -228,7 +228,7 @@ pub struct TimingLedger {
     ///
     /// 与 [`TimingLedger::table_structure_infer_ms`] / [`TimingLedger::table_backfill_ms`]
     /// 一起构成表格域的命名分量。三者与 [`OcrTimings`] 的同名字段一一对应，也在
-    /// [`StageReports::table`] 里以 preprocess/infer/postprocess 三段呈现。
+    /// `StageReports::table` 里以 preprocess/infer/postprocess 三段呈现。
     pub table_detect_ms: f64,
     /// 表格结构识别的 ONNX Runtime 推理；未启用表格时为 0。
     ///
@@ -1382,6 +1382,12 @@ mod baseline_schema_tests {
     #[test]
     fn committed_provider_reports_are_schema_labelled() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/baseline/windows-baseline");
+        if !dir.is_dir() {
+            eprintln!(
+                "skipping committed provider-report audit: benchmark evidence is not packaged"
+            );
+            return;
+        }
         let mut checked = 0usize;
         let mut unlabelled: Vec<String> = Vec::new();
         for entry in fs::read_dir(&dir).expect("baseline directory must exist") {

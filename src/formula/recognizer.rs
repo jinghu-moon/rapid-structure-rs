@@ -706,13 +706,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
     }
 
-    /// 公式域严格 provider 语义：请求不可用的加速器必须失败，不能静默用 CPU。
+    /// 显式严格模式仍拒绝不可用的加速器；默认非严格模式允许回退 CPU。
     #[test]
     #[cfg(not(feature = "cuda-provider"))]
     fn unavailable_provider_is_rejected_not_silently_fallen_back() {
         let runtime = RuntimeConfig {
             provider_preference: crate::config::ProviderPreference::Cuda { device_id: 0 },
-            fail_if_provider_unavailable: false,
+            fail_if_provider_unavailable: true,
             ..RuntimeConfig::default()
         };
         let error = FormulaRecognizer::from_model(&cred("formula_recognizer_ok.onnx"), &runtime)

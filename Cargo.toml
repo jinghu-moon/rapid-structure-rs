@@ -1,6 +1,6 @@
 [package]
 name = "rapid-structure-rs"
-version = "0.7.0"
+version = "1.0.0"
 edition = "2024"
 readme = "README.md"
 # 平台收窄：crate 只在 x86_64-pc-windows-msvc 上编译（见 src/platform_gate.rs）。
@@ -13,31 +13,31 @@ license = "Apache-2.0"
 description = "Rust document-structure engine for PaddleOCR-family ONNX models: text detection/recognition (PP-OCRv6), table structure (SLANet-plus) and formula recognition (PP-FormulaNet) on Windows x64 via ONNX Runtime."
 repository = "https://github.com/jinghu-moon/rapid-structure-rs"
 authors = ["mg-chao <chao@mgchao.top>"]
-# 打进 crate 包的内容必须自包含：`tests/baseline/**` 是仓库证据（记录了采集机器的
-# 绝对路径与 benchmark 结果），属于生成产物而不是 crate 内容，因此排除。
-# `tests/fixtures/**` 反之必须保留：契约 fixture 是干净 clone 能跑测试的前提。
-#
-# 下面四项是 E13 §14.2③「包内没有模型、数据集、开发机绝对路径」的落点。它们都**不被
-# `.gitignore` 覆盖**（`.gitignore` 只忽略 `*.onnx` 这类扩展名），所以 `cargo package`
-# 会把它们算进包内容：实测 `git ls-files --cached --others --exclude-standard` 列出
-# 214,934 个文件，其中 `datasets/` 214,194 个（TabRecSet + UniMER 全量图）、`Temp/` 282 个
-# （含采集机器的绝对路径与中间 JSON）、`refer/` 56 个（第三方 checkout 与 20 MB 压缩包）、
-# `models/` 27 个。靠扩展名忽略挡不住它们，必须在这里排除。
-exclude = [
-    "tests/baseline/**",
-    "datasets/**",
-    "refer/**",
-    "Temp/**",
-    # `benchmarks/**` 与 `tests/baseline/**` 同类：**未入库的采集产物**，记录了采集机器的
-    # 绝对路径（实测 `benchmarks/model-bench/bench-reference-*-cpu-r3.json` 三个文件）。
-    "benchmarks/**",
-    # `prototypes/**` 是浏览器原型（含指向本机 ONNX 的绝对路径），不是 crate 内容。
-    "prototypes/**",
-    # `models/**` 是**运行时模型目录**：权重由应用下载，`manifest.json` 必须与权重同目录
-    # 才符合 `src/model_source.rs` 的单一来源规则。测试读的是**工作树**里的
-    # `models/configs/*.yaml`（`src/test_support.rs`），不是包里的副本。
-    "models/**",
+# 发布包使用白名单，而不是依赖工作树的 `.gitignore` 或不断增长的排除列表。
+# `tests/fixtures/**` 必须保留：源码测试通过 `include_str!` 或运行时路径读取这些
+# 小型契约 fixture；模型权重、数据集、第三方 checkout 和 benchmark 证据不在白名单中。
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/NOTICE",
+    "/THIRD_PARTY_NOTES.md",
+    "/CHANGELOG.md",
+    "/build.rs",
+    "/licenses/**/*",
+    "assets/**/*",
+    "src/**/*",
+    "tests/*.rs",
+    "tests/fixtures/**/*",
 ]
+
+[package.metadata.docs.rs]
+# 业务代码有意只支持 Windows x64 + MSVC；docs.rs 必须使用同一目标，避免在其
+# Linux 默认目标上触发平台门槛。关闭默认 feature 后显式保留 ORT 编译所需的运行时。
+targets = ["x86_64-pc-windows-msvc"]
+no-default-features = true
+features = ["ort-runtime"]
 
 [dependencies]
 geo-clipper = "0.9.0"
@@ -67,7 +67,9 @@ unicode-normalization = { version = "0.1.25", default-features = false }
 tiny_http = { version = "0.12", optional = true }
 
 [features]
-default = ["ort-runtime"]
+# Windows x64 builds request DirectML by default.  Runtime provider resolution
+# still falls back to CPU when the provider is unavailable.
+default = ["ort-runtime", "directml-provider"]
 cli-default = ["download-binaries", "copy-dylibs", "directml-provider"]
 ort-runtime = ["ort/default"]
 download-binaries = ["ort/download-binaries"]
