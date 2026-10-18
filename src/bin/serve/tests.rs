@@ -851,7 +851,7 @@ fn raw_request(
 fn send(addr: SocketAddr, raw: &[u8]) -> RawResponse {
     let mut stream = TcpStream::connect(addr).expect("connect");
     stream
-        .set_read_timeout(Some(Duration::from_secs(20)))
+        .set_read_timeout(Some(Duration::from_secs(60)))
         .expect("read timeout");
     stream.write_all(raw).expect("write request");
     stream.flush().expect("flush");
