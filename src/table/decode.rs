@@ -1264,15 +1264,15 @@ mod tests {
     fn wide_tables_leave_the_horizontal_axis_unscaled() {
         // docs/07 §12 R1：w >= h 时 w_ratio == 1。这条反直觉，单独断言。
         let ratios = rescale_ratios(600.0, 300.0, 488.0);
-        assert!((ratios.w_ratio - 1.0).abs() < 1e-6, "{:?}", ratios);
-        assert!((ratios.h_ratio - 2.0).abs() < 1e-6, "{:?}", ratios);
+        assert!((ratios.w_ratio - 1.0).abs() < 1e-6, "{ratios:?}");
+        assert!((ratios.h_ratio - 2.0).abs() < 1e-6, "{ratios:?}");
     }
 
     #[test]
     fn tall_tables_leave_the_vertical_axis_unscaled() {
         let ratios = rescale_ratios(300.0, 600.0, 488.0);
-        assert!((ratios.h_ratio - 1.0).abs() < 1e-6, "{:?}", ratios);
-        assert!((ratios.w_ratio - 2.0).abs() < 1e-6, "{:?}", ratios);
+        assert!((ratios.h_ratio - 1.0).abs() < 1e-6, "{ratios:?}");
+        assert!((ratios.w_ratio - 2.0).abs() < 1e-6, "{ratios:?}");
     }
 
     #[test]

@@ -525,8 +525,7 @@ impl Polygon {
                 || y > size.height as f32
             {
                 return Err(RapidOcrError::InvalidInput(format!(
-                    "polygon point ({x}, {y}) is outside image {:?}",
-                    size
+                    "polygon point ({x}, {y}) is outside image {size:?}"
                 )));
             }
         }

@@ -207,16 +207,15 @@ impl Case {
         for (line_index, line) in self.lines.iter().enumerate() {
             let located = format!("{} line[{line_index}] ({:?})", self.image, line.text);
             if line.chars.is_empty() {
-                problems.push(format!("{} has no ground-truth characters", located));
+                problems.push(format!("{located} has no ground-truth characters"));
                 continue;
             }
             let joined: String = line.chars.iter().map(|ch| ch.ch.as_str()).collect();
             let expected: String = line.text.chars().filter(|ch| !ch.is_whitespace()).collect();
             if joined != expected {
                 problems.push(format!(
-                    "{}: concatenating the character boxes gives {joined:?}, the line text \
-                     without spaces is {expected:?}",
-                    located
+                    "{located}: concatenating the character boxes gives {joined:?}, the line text \
+                     without spaces is {expected:?}"
                 ));
             }
             for ch in &line.chars {
@@ -228,18 +227,17 @@ impl Case {
                     && derived != "metric"
                 {
                     problems.push(format!(
-                        "{}: derived is {derived:?}, which is neither \"ink\" nor \"metric\"",
-                        located
+                        "{located}: derived is {derived:?}, which is neither \"ink\" nor \"metric\""
                     ));
                 }
             }
             let Some(frame) = LineFrame::from_quad(&line.quad, &line.layout) else {
-                problems.push(format!("{}: its line quad is degenerate", located));
+                problems.push(format!("{located}: its line quad is degenerate"));
                 continue;
             };
             let line_extent = frame.project(&line.quad);
             if !line.quad.iter().flatten().all(|value| value.is_finite()) {
-                problems.push(format!("{}: its line quad has a non-finite point", located));
+                problems.push(format!("{located}: its line quad has a non-finite point"));
                 continue;
             }
             let mut previous_center: Option<f32> = None;

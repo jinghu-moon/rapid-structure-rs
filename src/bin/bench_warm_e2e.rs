@@ -176,7 +176,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 provider_resolution = Some(serde_json::json!({
                     "model_id": out.engine.model_id,
                     "detector": describe(&out.engine.provider.detector),
-                    "classifier": out.engine.provider.classifier.as_ref().map(&describe),
+                    "classifier": out.engine.provider.classifier.as_ref().map(describe),
                     "recognizer": describe(&out.engine.provider.recognizer),
                 }));
             }

@@ -518,7 +518,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         model_id,
         ort_version.as_deref().unwrap_or("unknown")
     );
-    println!("Throughput: {:.2} images/s", throughput);
+    println!("Throughput: {throughput:.2} images/s");
     println!(
         "Wall: mean={:.1} p50={:.1} p90={:.1} min={:.1} max={:.1} stddev={:.1} ms",
         mean(&all_wall),

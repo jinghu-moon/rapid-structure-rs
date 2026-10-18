@@ -206,10 +206,10 @@ pub fn arbitrate_formula_regions<'a>(
                     area > 0.0 && formula.intersection(text) / area >= 0.2
                 })
                 .collect();
-            !(!overlapping.is_empty()
-                && overlapping
+            overlapping.is_empty()
+                || overlapping
                     .iter()
-                    .all(|item| looks_like_code_text(item.text)))
+                    .any(|item| !looks_like_code_text(item.text))
         })
         .collect()
 }

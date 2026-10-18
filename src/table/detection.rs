@@ -544,8 +544,7 @@ pub fn clamped_rect(
     let bottom = bounds.bottom.clamp(0.0, max_y).ceil() as usize;
     if right <= left || bottom <= top {
         return Err(RapidOcrError::InvalidImage(format!(
-            "table region {:?} does not intersect the {width}x{height} image",
-            bounds
+            "table region {bounds:?} does not intersect the {width}x{height} image"
         )));
     }
     Ok((left, top, right, bottom))

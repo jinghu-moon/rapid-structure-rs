@@ -204,9 +204,9 @@ fn build_bicubic_remap_tab() -> Vec<[i16; 16]> {
         for fx in 0..INTER_TAB_SIZE {
             let x_coeff = interpolate_cubic_coeffs(fx as f32 / INTER_TAB_SIZE as f32);
             let mut isum = 0_i32;
-            for ky in 0..4 {
-                for kx in 0..4 {
-                    let v = y_coeff[ky] * x_coeff[kx];
+            for (ky, y_value) in y_coeff.iter().enumerate() {
+                for (kx, x_value) in x_coeff.iter().enumerate() {
+                    let v = y_value * x_value;
                     let it = saturate_cast_i16_from_f32(v * INTER_REMAP_COEF_SCALE as f32);
                     tab[fy * INTER_TAB_SIZE + fx][ky * 4 + kx] = it;
                     isum += it as i32;
@@ -329,8 +329,8 @@ fn lu_solve_8x8(a: &mut [[f64; 8]; 8], b: &mut [f64; 8]) -> bool {
 
     for i in (0..M).rev() {
         let mut s = b[i];
-        for k in i + 1..M {
-            s -= a[i][k] * b[k];
+        for (k, value) in b.iter().enumerate().skip(i + 1) {
+            s -= a[i][k] * value;
         }
         b[i] = s / a[i][i];
     }

@@ -393,20 +393,17 @@ impl OrtSession {
         self.run_with_fallback(input, |outputs| {
             let output_name = output_names.first().ok_or_else(|| {
                 RapidOcrError::Decode(format!(
-                    "ONNX session has no output names (model={})",
-                    model_path
+                    "ONNX session has no output names (model={model_path})"
                 ))
             })?;
             let output = outputs.get(output_name.as_str()).ok_or_else(|| {
                 RapidOcrError::Decode(format!(
-                    "ONNX session output `{output_name}` not found in run results (model={})",
-                    model_path
+                    "ONNX session output `{output_name}` not found in run results (model={model_path})"
                 ))
             })?;
             let arr = output.try_extract_array::<f32>().map_err(|error| {
                 RapidOcrError::Decode(format!(
-                    "failed to extract output `{output_name}` as f32 tensor (model={}): {error}",
-                    model_path
+                    "failed to extract output `{output_name}` as f32 tensor (model={model_path}): {error}"
                 ))
             })?;
             f(arr.view())
@@ -439,14 +436,12 @@ impl OrtSession {
             for name in &output_names {
                 let output = outputs.get(name.as_str()).ok_or_else(|| {
                     RapidOcrError::Decode(format!(
-                        "ONNX session output `{name}` not found in run results (model={})",
-                        model_path
+                        "ONNX session output `{name}` not found in run results (model={model_path})"
                     ))
                 })?;
                 let arr = output.try_extract_array::<f32>().map_err(|error| {
                     RapidOcrError::Decode(format!(
-                        "failed to extract output `{name}` as f32 tensor (model={}): {error}",
-                        model_path
+                        "failed to extract output `{name}` as f32 tensor (model={model_path}): {error}"
                     ))
                 })?;
                 // `try_extract_array` 已经把视图借到 ORT 的输出缓冲上（`ArrayViewD<'outputs, f32>`），
